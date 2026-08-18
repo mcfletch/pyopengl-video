@@ -187,7 +187,7 @@ checked against it by a test (see *Testing*).
 The concrete call sequences, the surface import and the size of the job are in
 [VAAPI-BACKEND.md](VAAPI-BACKEND.md).
 
-### Intel — VA-API, and oneVPL above it
+### Intel — VA-API, the same as AMD
 
 `libva` is the interface every Linux Intel part has had since Gen9, driven by the
 `iHD` media driver. The zero-copy handoff:
@@ -206,21 +206,20 @@ The concrete call sequences, the surface import and the size of the job are in
    sequence, picture and slice parameter buffers, `vaRenderPicture`,
    `vaEndPicture`, then `vaMapBuffer` on the coded buffer to read the bitstream.
 
-The alternative front end is **oneVPL** (`libvpl.so.2`, already present here),
-which is a much smaller API — it hides sequence/picture parameter assembly — and
-sits on VA-API underneath, taking `VASurfaceID`s through `mfxFrameSurface1`. It
-is the pleasanter binding to write and the shorter path to a working Intel
-encoder, at the cost of one more optional runtime to find. The plan is VA-API
-first, because it is also the AMD path and one binding then serves both, with
-oneVPL as a later addition if the raw parameter assembly proves fragile across
-driver versions.
+Intel also has **oneVPL** (`libvpl.so.2`, already present here), a smaller
+interface that hides the sequence and picture parameter assembly and sits on
+VA-API underneath. It is the pleasanter binding to write, and it is not the one
+being written: what it saves has to be built for AMD in any case, and once it
+exists, Intel is that same code against a different driver. One interface, one
+control layer, both vendors — the reasoning, and what would reopen it, is in
+[VAAPI-BACKEND.md](VAAPI-BACKEND.md).
 
 ### AMD — VA-API on Mesa, AMF where it exists
 
 Mesa's VA-API state tracker exposes the VCN encoder on `radeonsi`, so **the
 Intel path above is the AMD path**, unchanged apart from which driver `libva`
-loads. That is the main reason to write the VA-API backend rather than two
-vendor SDKs: one binding, two vendors, and it is the configuration most Linux
+loads. That is why there is one backend rather than two vendor SDKs: one
+binding, one control layer, two vendors, and it is the configuration most Linux
 users are actually in.
 
 AMD's own SDK, [AMF](https://github.com/GPUOpen-LibrariesAndSDKs/AMF) (MIT), is

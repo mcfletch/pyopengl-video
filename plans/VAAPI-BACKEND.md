@@ -36,13 +36,22 @@ of the work, and none of it is shared with the NVENC backend. Budget for it
 accordingly, and keep it in its own module — `vaapi/h264.py` — so the libva
 plumbing and the codec logic are not tangled.
 
-**oneVPL is the way out of that for Intel.** Intel's newer interface
-(`libvpl.so.2`, the runtime is `libmfx-gen` over VA-API) does the parameter
-sets, the GOP and the DPB itself, the way NVENC does, and takes
-`VASurfaceID`s as input. If the control layer proves the expensive part, the
-sequence to consider is: write the surface-import half against libva, then reach
-the encoder through oneVPL on Intel and through libva on AMD, sharing the import
-and the interface but not the control layer.
+**One control layer, both vendors.** Intel has a newer interface, oneVPL
+(`libvpl.so.2`, over VA-API underneath), which does the parameter sets, the GOP
+and the DPB itself the way NVENC does, and it would avoid the control layer
+entirely — for Intel. It buys nothing here, because the control layer has to be
+written for AMD in any case, and once it exists Intel costs no more code than
+choosing a different driver. Splitting the vendors across two encoder interfaces
+would mean two control paths to maintain, two sets of bugs, and a difference in
+behaviour between vendors that callers would eventually notice.
+
+So: **libva for both**, and the marginal cost of supporting Intel is testing
+rather than implementation.
+
+What would reopen the question is an Intel-specific capability that libva does
+not reach — a rate control mode, a lookahead, or a codec that the media driver
+exposes only through oneVPL. That is a reason to add a second Intel backend
+later, beside this one, not a reason to start with two.
 
 ## The frame's journey
 
