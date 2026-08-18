@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyopengl-video"
+dynamic = ["version"]
+description = "Hardware video encoding of OpenGL colour buffers, with the frame never leaving the GPU"
+readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["license.txt"]
+requires-python = ">=3.10"
+authors = [
+    { name = "Mike C. Fletcher", email = "mcfletch@vrplumber.com" }
+]
+keywords = ["OpenGL", "video", "H.264", "NVENC", "VA-API", "encoding", "capture", "recording"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Multimedia :: Graphics :: 3D Rendering",
+]
+
+# The encoders themselves ship with the graphics driver and are loaded by name;
+# PyOpenGL is what gives us the texture and framebuffer calls to feed them.
+dependencies = [
+    "PyOpenGL>=3.1.7",
+]
+
+[project.optional-dependencies]
+# numpy is what the tests build synthetic frames with, and what a caller reads
+# decoded pixels back into; the encoders need none of it.
+dev = ["pytest", "pytest-timeout", "numpy>=1.24", "glfw", "ruff", "mypy"]
+
+[project.urls]
+Repository = "https://github.com/mcfletch/pyopengl-video"
+
+[tool.setuptools.dynamic]
+version = { attr = "pyopengl_video.__version__" }
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "B",    # flake8-bugbear
+    "I",    # import ordering
+    "UP",   # pyupgrade
+    "BLE",  # no blind except
+    "S110", # no silent try/except/pass
+]
+ignore = [
+    "E501",   # line too long -- kept readable by hand
+]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+timeout = 300
+markers = [
+    "gl: needs a live OpenGL context",
+    "nvenc: needs an NVIDIA encoder",
+]
