@@ -30,7 +30,14 @@ def gl_context():
 def nvenc_available(gl_context):
     """Skip unless this machine has an NVIDIA encoder to talk to."""
     if not nvenc.probe():
-        pytest.skip('no NVIDIA encoder library on this machine')
+        # Two different things fail this, and naming only the library sends a
+        # reader looking for a file that is very often sitting right there:
+        # NVIDIA supports the encoder's OpenGL device type on Linux alone, so
+        # every other platform reports unavailable however good the hardware.
+        pytest.skip('no NVENC encoder reachable from OpenGL here: either the '
+                    'driver library is absent, or this is not Linux, where '
+                    "NVENC's OpenGL device type is the only one supported "
+                    '(see plans/WINDOWS-SUPPORT.md)')
     return True
 
 
