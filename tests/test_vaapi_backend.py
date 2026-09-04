@@ -101,6 +101,10 @@ class TestProbe:
 
     def test_the_answer_is_kept_rather_than_asked_again(self, monkeypatch):
         """Opening a driver costs enough that discovery must not repeat it."""
+        # What is under test is the caching, which is the same wherever it
+        # runs; the platform gate would otherwise answer before the counted
+        # call is reached, and this file is written to run with no libva.
+        monkeypatch.setattr(vaapi, 'SUPPORTED_PLATFORM', True)
         monkeypatch.setattr(vaapi, '_context_can_export', lambda: True)
         asked = []
 
@@ -113,6 +117,7 @@ class TestProbe:
         assert len(asked) == 1
 
     def test_forgetting_the_answer_asks_again(self, monkeypatch):
+        monkeypatch.setattr(vaapi, 'SUPPORTED_PLATFORM', True)
         monkeypatch.setattr(vaapi, '_context_can_export', lambda: True)
         asked = []
         monkeypatch.setattr(vaapi, '_any_device_encodes',
