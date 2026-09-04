@@ -39,7 +39,10 @@ from ctypes import (
 )
 from typing import TYPE_CHECKING
 
+from pyopengl_video.encoder import EncoderError
+
 log = logging.getLogger(__name__)
+
 
 def library_name() -> str:
     """The driver's encoder library on this platform."""
@@ -127,11 +130,15 @@ NV_ENC_SUCCESS = 0
 NV_ENC_ERR_NEED_MORE_INPUT = STATUS_NAMES.index('ERR_NEED_MORE_INPUT')
 
 
-class NVENCError(RuntimeError):
+class NVENCError(EncoderError):
     """An NvEncodeAPI call failed.
 
     Carries the numeric status, its name, and whatever the driver put in its
     last-error string for the session.
+
+    An :class:`~pyopengl_video.encoder.EncoderError`, so a caller that only
+    wants to know whether recording failed catches the one -- which is what
+    ``docs/usage.md`` tells them and what the oneVPL backend does too.
     """
 
     def __init__(self, status: int, call: str, detail: str = ''):

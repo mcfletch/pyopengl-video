@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import ctypes
 import dataclasses
+import functools
 import logging
 import os
+from collections.abc import Callable
 from typing import Any
 
 from pyopengl_video import inputs
@@ -51,7 +53,7 @@ from pyopengl_video.vaapi.h264 import (
 log = logging.getLogger(__name__)
 
 __all__ = ['VAAPIEncoder', 'InputHandle', 'RATE_CONTROL_MODES',
-           'PIPELINE_DEPTH', 'colour_pipeline']
+           'PIPELINE_DEPTH', 'colour_pipeline', 'as_encoder_error']
 
 #: How many pictures are in flight at once. One means :meth:`encode` returns the
 #: previous picture's packet, which is what keeps the GPU from being waited on
@@ -83,6 +85,34 @@ VBR_TARGET_PERCENTAGE = 70
 #: How much video the hypothetical reference decoder's buffer holds, as a
 #: multiple of one second's bits.
 HRD_BUFFER_SECONDS = 2
+
+
+def as_encoder_error(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Let a method raise only :class:`EncoderError`, keeping the cause.
+
+    Two error types come from underneath this backend: libva's, raised by every
+    driver call through :meth:`~pyopengl_video.vaapi.api.VA.check`, and the
+    DMA-BUF shim's, raised when a texture will not export. Both say something
+    worth reading and neither is an :class:`EncoderError`, so a caller who
+    wrapped a recording in one ``except`` clause would have them go straight
+    past.
+
+    They are translated here rather than being made encoder errors in
+    themselves: :mod:`pyopengl_video.linux.dmabuf` serves more than encoders,
+    and libva decodes as well as encodes, so neither is an encoder's error
+    until an encoder is what raised it. The original stays on ``__cause__``,
+    which is where a traceback shows it.
+    """
+    @functools.wraps(method)
+    def translating(*arguments: Any, **named: Any) -> Any:
+        try:
+            return method(*arguments, **named)
+        except EncoderError:
+            raise
+        except (api.VAError, dmabuf.DMABufError) as error:
+            raise EncoderError(str(error)) from error
+    return translating
+
 
 def colour_pipeline(surface: int) -> api.VAProcPipelineParameterBuffer:
     """The video processing pass that turns a full-range RGB surface into NV12.
@@ -196,6 +226,7 @@ class VAAPIEncoder(Encoder):
     zero_copy = True
     reorders_frames = False
 
+    @as_encoder_error
     def __init__(self, width: int, height: int, codec: str = 'h264', *,
                  fps: float | tuple[int, int] = 30,
                  bitrate: int | None = None, gop: int | None = None,
@@ -487,6 +518,7 @@ class VAAPIEncoder(Encoder):
 
     # ------------------------------------------------------------- registering
 
+    @as_encoder_error
     def register(self, texture: int, target: int | None = None) -> InputHandle:
         """Export `texture` as a DMA-BUF and import it as a VA surface.
 
@@ -558,6 +590,7 @@ class VAAPIEncoder(Encoder):
 
     # ---------------------------------------------------------------- encoding
 
+    @as_encoder_error
     def encode(self, handle: InputHandle, timestamp: int, duration: int = 0,
                force_idr: bool = False) -> list[Packet]:
         """Submit the picture in `handle`, and return the one before it.
@@ -926,6 +959,7 @@ class VAAPIEncoder(Encoder):
             if kind in (7, 8):
                 self._coded_sets[kind] = unit
 
+    @as_encoder_error
     def flush(self) -> list[Packet]:
         """Read back every picture still inside the encoder."""
         self._check_open()

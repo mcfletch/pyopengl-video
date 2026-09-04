@@ -277,12 +277,22 @@ To mux with something else, `Packet` carries everything a container needs:
 
 | Raised | When |
 | --- | --- |
-| `EncoderUnavailable` | Nothing on this machine can encode what was asked for. The message lists what was available. |
-| `EncoderError` | A texture still in flight was handed back; an unknown preset, tuning or rate control; encoding after `close()`. |
-| `NVENCError` | The driver refused a call. Carries the status code, its name, and the driver's own explanation. |
+| `EncoderUnavailable` | Nothing on this machine can encode what was asked for. The message lists what was available, and why any backend that declined for a fixable reason did so. |
+| `EncoderError` | A texture still in flight was handed back; an unknown preset, tuning or rate control; a size or setting the driver refuses; encoding after `close()`. |
+| `NVENCError` | NVIDIA's driver refused a call. Carries the status code, its name, and the driver's own explanation. |
+| `VPLError` | Intel's runtime refused a call, with the same. |
 
-`NVENCError` is an `EncoderError`, so a caller that only wants to know whether
-recording failed can catch the one.
+**One `except EncoderError` is enough** to know whether recording failed, on
+every backend. `NVENCError` and `VPLError` are `EncoderError`s. The VA-API
+backend reaches the same place from the other direction: libva's own `VAError`
+and the DMA-BUF shim's `DMABufError` are deliberately *not* encoder errors —
+that shim is shared by every Linux backend and libva decodes as well as
+encodes, so neither is an encoder's failure until an encoder is what raised it —
+and `VAAPIEncoder` translates them at its own boundary, leaving the original on
+`__cause__` where a traceback shows it.
+
+So a caller catches one thing, and whoever reads the traceback still sees which
+driver said no and what it said.
 
 ## Performance
 

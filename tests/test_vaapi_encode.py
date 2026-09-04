@@ -647,3 +647,91 @@ class TestTheDrawingFence:
         first = handles[0].fence
         paint(handles[0], (0.4, 0.5, 0.6, 1.0))
         assert handles[0].fence is not first
+
+
+class TestEverythingItRaisesIsAnEncoderError:
+    """The interface promises `EncoderError`, so that is what comes out.
+
+    Underneath are two error types of their own -- libva's, and the DMA-BUF
+    shim's -- and both are useful to whoever is reading a traceback. Neither is
+    an `EncoderError`, and a caller wrapping a recording in one `except` clause
+    would let a failed export or a driver refusal straight through. They are
+    translated at the backend's own boundary rather than being made encoder
+    errors in themselves, because the shim serves more than encoders and libva
+    decodes as well as encodes.
+    """
+
+    def test_a_texture_that_cannot_be_exported_is_an_encoder_error(
+            self, encoder, upload_texture, monkeypatch):
+        from pyopengl_video.linux import dmabuf
+
+        def refuse(*arguments):
+            raise dmabuf.DMABufError('this context cannot export')
+
+        monkeypatch.setattr(dmabuf, 'export_texture', refuse)
+        with pytest.raises(EncoderError, match='cannot export'):
+            encoder.register(upload_texture(gradient_frame(*SIZE)))
+
+    def test_asking_the_encoder_for_an_input_is_the_same(self, encoder,
+                                                         monkeypatch):
+        """`new_input` registers, so it has to answer the same way."""
+        from pyopengl_video.linux import dmabuf
+
+        def refuse(*arguments):
+            raise dmabuf.DMABufError('this context cannot export')
+
+        monkeypatch.setattr(dmabuf, 'export_texture', refuse)
+        with pytest.raises(EncoderError):
+            encoder.new_input()
+
+    def test_the_original_error_is_kept_as_the_cause(self, encoder,
+                                                     upload_texture,
+                                                     monkeypatch):
+        """Translating must not throw away what actually went wrong."""
+        from pyopengl_video.linux import dmabuf
+
+        original = dmabuf.DMABufError('the EGL display would not export')
+
+        def refuse(*arguments):
+            raise original
+
+        monkeypatch.setattr(dmabuf, 'export_texture', refuse)
+        with pytest.raises(EncoderError) as raised:
+            encoder.register(upload_texture(gradient_frame(*SIZE)))
+        assert raised.value.__cause__ is original
+
+    def test_a_driver_refusal_while_encoding_is_an_encoder_error(
+            self, encoder, handles, monkeypatch):
+        """Every libva call goes through `check`, so this covers all of them."""
+        def refuse(*arguments, **named):
+            raise api.VAError(-1, 'vaRenderPicture', 'a picture')
+
+        monkeypatch.setattr(encoder, '_convert', refuse)
+        paint(handles[0], (0.2, 0.4, 0.6, 1.0))
+        with pytest.raises(EncoderError, match='vaRenderPicture'):
+            encoder.encode(handles[0], timestamp=0)
+
+    def test_a_driver_refusal_while_flushing_is_an_encoder_error(
+            self, encoder, handles, monkeypatch):
+        paint(handles[0], (0.2, 0.4, 0.6, 1.0))
+        encoder.encode(handles[0], timestamp=0)
+
+        def refuse(*arguments, **named):
+            raise api.VAError(-1, 'vaSyncSurface', 'waiting')
+
+        monkeypatch.setattr(encoder, '_read', refuse)
+        with pytest.raises(EncoderError, match='vaSyncSurface'):
+            encoder.flush()
+
+    def test_a_device_that_refuses_at_open_is_an_encoder_error(self,
+                                                               vaapi_available,
+                                                               monkeypatch):
+        """Building the encoder is where most driver refusals land."""
+        from pyopengl_video.vaapi import encoder as encoder_module
+
+        def refuse(self):
+            raise api.VAError(-1, 'vaGetConfigAttributes', 'H264High/EncSlice')
+
+        monkeypatch.setattr(encoder_module.VAAPIEncoder, '_negotiate', refuse)
+        with pytest.raises(EncoderError, match='vaGetConfigAttributes'):
+            VAAPIEncoder(*SIZE, fps=30)

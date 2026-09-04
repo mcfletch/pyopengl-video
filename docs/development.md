@@ -25,6 +25,10 @@ Linux-only, and each is invisible to the other's platform, so the Windows shim
 and the oneVPL backend are checked with `--platform win32` and everything else
 as the host sees it.
 
+The hardware tests open a hidden GLFW window. Nothing is presented — encoding
+reads a texture and never swaps a buffer — so a test run does not flash over
+whatever else is on screen.
+
 ## Releasing
 
 The version in `src/pyopengl_video/__init__.py` is the release, and pushing it
@@ -41,10 +45,6 @@ rather than guessing.
 
 Every other branch is built by `test.yml` on push, so work in progress is
 checked as it goes.
-
-The hardware tests open a hidden GLFW window. Nothing is presented — encoding
-reads a texture and never swaps a buffer — so a test run does not flash over
-whatever else is on screen.
 
 ## What is where
 
@@ -183,6 +183,17 @@ backends interchangeable:
 - **`flush()`** returns everything still held.
 - **`headers()`** returns the parameter sets as an Annex-B fragment.
 - **`close()`** releases everything and is safe to call twice.
+
+**Everything a backend raises at a caller is an `EncoderError`.** One `except`
+clause has to be enough to know whether recording failed, so a driver error
+class either subclasses it -- which is what `NVENCError` and `VPLError` do --
+or is translated where it crosses into the encoder's own methods, which is what
+`VAAPIEncoder` does for libva's error and the DMA-BUF shim's. Translate rather
+than subclass when the error comes from something shared: `linux/dmabuf.py`
+serves every Linux backend and libva decodes as well as encodes, so neither
+error is an *encoder's* until an encoder raised it. Keep the original on
+`__cause__` either way. `tests/test_errors.py` holds every backend to this, and
+needs no hardware to do it.
 
 Set `size`, `timescale`, `zero_copy`, `reorders_frames` and `input_slots` before
 returning from `__init__`. `input_slots` is what a caller allocates textures
