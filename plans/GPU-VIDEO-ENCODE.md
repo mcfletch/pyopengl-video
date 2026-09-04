@@ -541,6 +541,46 @@ is handed over as a texture the decoder owns and recycles (matching
 all, since a decoder that only plays forward is a great deal simpler than one
 that scrubs.
 
+## Before the first release
+
+`0.2.0a1` is built and green on AMD/Linux and is not to be published until
+NVIDIA on Linux and Intel on Windows have both run against it. `main` is the
+release branch and `release.yml` triggers on nothing else, so the merge from
+`develop` is the decision and nothing goes out before it.
+
+Three changes in this version are shared by every backend and can only be
+checked on hardware this machine does not have. They are what the runs are for;
+the rest of each suite is its own gate.
+
+**The muxer writes the parameter sets the stream carries**, not the ones the
+encoder advertised before it had coded anything. On AMD this was a fix — the
+driver amends them, and the sample description described a stream that did not
+exist. NVENC and oneVPL are affected wherever their streams repeat the sets
+in-band, which is a configuration NVENC has. So on each machine: record, and
+decode the `.mp4` with an outside decoder, requiring silence. That check is what
+found the bug, and `tests/test_vaapi_encode.py::test_a_muxed_recording_decodes_without_complaint`
+runs it wherever `ffmpeg` is on the path.
+
+**The test fixture and the examples ask for an EGL context on Linux.** GLFW on
+Wayland already gave one, which is what every NVENC measurement in this document
+was taken on, so this is only a change for an X11 session. It needs a run to be
+a fact rather than an argument: `nvEncOpenEncodeSessionEx` with the OpenGL
+device type must still open under EGL on X11.
+
+**`Backend` grew an optional `explain`.** Neither the NVENC nor the oneVPL
+record sets one, so both keep their existing messages; what to confirm is that
+`open_encoder` still says something useful on a machine where the backend
+declines — a Windows box with no Intel adapter is the case worth reading.
+
+Two more that are not about the code:
+
+- **`pytest` is invoked as a bare command by tox and CI**, which it was not
+  before. It works on Linux; a Windows run is what says the `pythonpath`
+  setting does the same there.
+- **A pending trusted publisher** has to exist on PyPI against the name before
+  the first push to `main`. `pyopengl-video` is unregistered, so there is no
+  project to attach an ordinary publisher to yet.
+
 ## Open questions
 
 - **Distribution name — settled.** `pyopengl-video` is unregistered on PyPI, as
