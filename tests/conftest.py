@@ -4,6 +4,8 @@ The context is a hidden GLFW window: encoding reads a texture and never presents
 anything, so there is nothing to show, and an unmapped window keeps a test run
 from flashing over whatever the person running it is doing.
 """
+import sys
+
 import numpy as np
 import pytest
 
@@ -12,11 +14,19 @@ from pyopengl_video import nvenc
 
 @pytest.fixture(scope='session')
 def gl_context():
-    """A current OpenGL context for the whole session, hidden from the display."""
+    """A current OpenGL context for the whole session, hidden from the display.
+
+    An EGL context where the platform has one. Handing a texture to a Linux
+    encoder means exporting it as a DMA-BUF, which is an EGL extension, and
+    GLFW makes a GLX context by default on X11 -- so a suite that did not ask
+    would skip every VA-API test on a machine that can run them.
+    """
     glfw = pytest.importorskip('glfw')
     if not glfw.init():
         pytest.skip('GLFW will not initialise here')
     glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
+    if sys.platform.startswith('linux'):
+        glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)
     window = glfw.create_window(64, 64, 'pyopengl-video tests', None, None)
     if not window:
         glfw.terminate()
@@ -24,6 +34,25 @@ def gl_context():
     glfw.make_context_current(window)
     yield window
     glfw.terminate()
+
+
+@pytest.fixture
+def vaapi_available(gl_context):
+    """Skip unless libva here can encode H.264 from this OpenGL context."""
+    from pyopengl_video import vaapi
+    from pyopengl_video.linux import dmabuf
+
+    if not sys.platform.startswith('linux'):
+        pytest.skip('libva is the Linux encoder interface')
+    reason = dmabuf.unavailable_because()
+    if reason:
+        pytest.skip(reason)
+    vaapi.forget_probe()
+    if not vaapi.probe():
+        pytest.skip('no VA-API H.264 encoder here: libva must be installed '
+                    '(libva2 and a driver such as mesa-va-drivers or '
+                    'intel-media-va-driver), and the GPU must have an encoder')
+    return True
 
 
 @pytest.fixture

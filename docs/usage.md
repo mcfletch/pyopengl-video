@@ -72,22 +72,56 @@ was available.
 
 ## Encoder settings
 
-All are keyword arguments to `open_encoder`.
+All are keyword arguments to `open_encoder`. These are taken by every backend:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `codec` | `'h264'` | The codec to produce. |
 | `fps` | `60` | Declared frame rate, a number or `(numerator, denominator)`. A float becomes the broadcast ratio for it, so `29.97` records as `30000/1001`. It sets what the stream says and what rate control believes about time; it paces nothing. |
 | `bitrate` | derived | Target bits per second. The default is the frame size times the rate times `DEFAULT_BITS_PER_PIXEL`, which puts 1080p60 near 8.7 Mbit/s. |
-| `preset` | `'p4'` | `'p1'` (fastest) to `'p7'` (best quality). |
-| `tuning` | `'high_quality'` | What the preset is trading against: `'high_quality'`, `'low_latency'`, `'ultra_low_latency'`, `'lossless'`, `'ultra_high_quality'`. |
-| `rate_control` | `'vbr'` | `'vbr'`, `'cbr'`, or `'constqp'` to spend bits by content rather than to a target. |
 | `gop` | two seconds | Frames between key frames. Every group opens with an IDR, which is where a player can seek to. `gop=1` makes every frame a key frame. |
 | `bframes` | `0` | B-pictures between reference pictures. Better compression, at the cost of reordering — see below. |
+| `rate_control` | per backend | How the bits are spent; the names differ, below. |
+
+`nvenc` also takes:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `preset` | `'p4'` | `'p1'` (fastest) to `'p7'` (best quality). |
+| `tuning` | `'high_quality'` | What the preset is trading against: `'high_quality'`, `'low_latency'`, `'ultra_low_latency'`, `'lossless'`, `'ultra_high_quality'`. |
+| `rate_control` | `'vbr'` | `'vbr'`, `'cbr'`, or `'constqp'`. |
+
+`vaapi` also takes:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `rate_control` | `'cbr'` | `'cbr'`, `'vbr'`, or `'cqp'` to code at a fixed quantiser. A mode the driver does not offer is refused, naming the ones it does. |
+| `qp` | `26` | The quantiser, 0 to 51. What `'cqp'` codes at, and what the other modes start from. Lower is better quality and more bits. |
+| `device` | first that has an encoder | Which DRM render node to open, such as `'/dev/dri/renderD128'`. |
+| `bframes` | `0` | Must be zero: this backend codes pictures in display order. |
 
 Unknown values are refused by name, listing what is known.
 
 ## Getting the frame to the encoder
+
+**On Linux, make the context an EGL context.** A Linux encoder other than
+NVIDIA's is handed the frame as a DMA-BUF exported from the texture, which is
+an EGL extension; GLFW makes a GLX context by default on X11, and a GLX context
+cannot export one:
+
+```python
+glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)
+window = glfw.create_window(width, height, 'recording', None, None)
+```
+
+The `vaapi` backend reports itself unavailable from a context that cannot
+export, rather than failing when a texture is handed over. To ask why:
+
+```python
+from pyopengl_video.linux import dmabuf
+
+print(dmabuf.unavailable_because() or 'this context can export')
+```
 
 **Ask the encoder for its inputs.** `new_input()` returns a handle carrying a
 texture the encoder can read and a framebuffer with that texture attached:
@@ -234,10 +268,14 @@ game is the game plus a blit.
 
 - **H.264 only**, up to 4096x4096. HEVC and AV1 are hardware the parts have and
   the library does not use yet.
-- **NVIDIA on Linux, Intel on Windows.** AMD, and Intel on Linux, go through
-  VA-API, which is not written yet; NVIDIA on Windows goes through the same
-  Direct3D interop the Intel backend uses, which is written and not yet wired to
-  that encoder. `plans/GPU-VIDEO-ENCODE.md` holds the whole matrix.
+- **NVIDIA and AMD on Linux, Intel on Windows.** Intel on Linux is the `vaapi`
+  backend against a different driver and has not been run; NVIDIA on Windows
+  goes through the same Direct3D interop the Intel backend uses, which is
+  written and not yet wired to that encoder. `plans/GPU-VIDEO-ENCODE.md` holds
+  the whole matrix.
+- **`vaapi` needs an EGL context**, because exporting a texture as a DMA-BUF is
+  an EGL extension — see *Getting the frame to the encoder*.
+- **`vaapi` codes in display order.** `bframes` above zero is refused there.
 - **One context.** A session belongs to the OpenGL context that was current when
   it was opened, and every call must come from that context's thread.
 - **No audio.** The muxer writes a video track.

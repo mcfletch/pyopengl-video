@@ -1,8 +1,63 @@
 # The VA-API backend: Intel and AMD
 
-**Status:** Planned. Nothing here has run — the development machine has an
-NVIDIA card, and this backend needs Intel or AMD hardware to write against.
+**Status:** Landed on AMD. The backend records end to end on a Radeon 8060S
+(`gfx1151`, Mesa 25.2.8 `radeonsi`): colour, orientation and timing are checked
+against the surface the encoder is handed, and the muxed result decodes without
+complaint. Intel is the same code against the `iHD` driver and has not been run.
 **Covers:** phase 3 of [GPU-VIDEO-ENCODE.md](GPU-VIDEO-ENCODE.md).
+
+## What building it settled
+
+Five things came out of the work that were not knowable from the interface, and
+that the Intel bring-up will meet in the same order.
+
+**The driver need not write the slice header, and Mesa does not.** libva's
+documentation describes packed headers as an option a driver may ask for.
+Mesa's H.264 encoder writes the coded macroblocks and *nothing in front of
+them*: no NAL header, no slice header. Without `VAEncPackedHeaderSlice` supplied
+every picture, the stream carries a zero byte where the NAL header belongs, no
+player finds a picture, and no call fails. So the control layer here writes
+slice headers as well as parameter sets, and `h264.py` is correspondingly
+larger than the plan below assumed.
+
+**Ask only for the packed headers you write.** `VAConfigAttribEncPackedHeaders`
+reports every kind the driver *can* take. Requesting that mask is a promise to
+supply all of them, and a driver told to expect a packed slice header stops
+writing its own — which is the failure above, arrived at by trying to be
+accommodating. Request exactly what the backend produces.
+
+**The parameter sets in the stream are not the ones handed over.** Mesa amends
+what it is given: it clears `transform_8x8_mode_flag` in the picture parameter
+set, because its encoder writes no per-macroblock transform flag, and a stream
+claiming otherwise is one a decoder mis-parses. So the sets that describe the
+stream are the ones the *stream* carries, and both `Encoder.headers()` and the
+MP4 muxer take them from there rather than from what was advertised before
+anything was coded.
+
+**One reference frame is what the hardware offers and what this needs.**
+`VAConfigAttribEncMaxRefFrames` reports 1 for reference list 0 on this part.
+Asking for more is refused rather than quietly reduced, so the count is clamped
+to what the driver states — and a stream of I and P pictures needs exactly one.
+
+**A texture exported with no modifier still imports correctly.** Mesa reports
+`DRM_FORMAT_MOD_INVALID` for an exported `GL_RGBA8` texture, which reads as a
+warning that the layout cannot be described. Importing it anyway produces the
+right picture: the export gives the buffer a layout the importing driver
+resolves. The modifier is still carried across wherever the driver names one,
+because a tiled surface imported as linear reads as noise and nothing reports
+it.
+
+## What is not done
+
+- **Intel.** The same code against `iHD`. The packed-header requirements are
+  exactly where the two drivers are most likely to differ, so the bring-up is
+  testing rather than implementation — as this plan predicted.
+- **B-frames.** `bframes` above zero is refused by name. Pictures are coded in
+  display order, so nothing reorders and a container needs no composition
+  offsets; adding them means picture order counts for a reordered GOP and a
+  second reference list, and is the natural next piece of `h264.py`.
+- **HEVC and AV1.** Both are advertised by this part's `EncSlice`. Each needs
+  its own parameter sets and slice headers, which is most of what `h264.py` is.
 
 One backend serves both vendors. `libva` is the encoder interface on Linux for
 Intel parts through the `iHD` media driver and for AMD parts through Mesa's

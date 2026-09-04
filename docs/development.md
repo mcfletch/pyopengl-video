@@ -27,13 +27,24 @@ whatever else is on screen.
 ```
 src/pyopengl_video/
     encoder.py      the Encoder interface, Packet, and the backend registry
+    inputs.py       InputHandle: the texture an encoder reads, and its framebuffer
     mp4.py          Annex-B into an MP4 file
+    linux/dmabuf.py exporting a texture as a DMA-BUF, and importing one back
+    windows/        the Direct3D interop shim every Windows backend uses
     nvenc/api.py    ctypes over NvEncodeAPI: structures, GUIDs, function table
     nvenc/encoder.py    the encoder: register, map, encode, lock, unmap
+    vpl/            Intel's oneVPL, over the Windows interop
+    vaapi/api.py    ctypes over libva: display, config, context, surfaces, buffers
+    vaapi/h264.py   the control layer libva leaves to the caller
+    vaapi/encoder.py    the encoder: export, import, convert, code
 tests/
     nvenc_abi.json  sizes and offsets recorded from NVIDIA's header
+    vpl_abi.json    the same, from the oneVPL headers
+    va_abi.json     the same, from the libva headers, plus their constant values
 tools/
-    record_nvenc_abi.py    regenerates that file from a real header
+    record_nvenc_abi.py    regenerates those files from real headers
+    record_vpl_abi.py
+    record_va_abi.py
 ```
 
 ## How the NVENC binding works
@@ -84,6 +95,17 @@ before the tests run. `test_every_declared_structure_is_recorded` fails if a
 structure is added to the binding and the recording is not refreshed, so an
 unchecked structure cannot slip in.
 
+`tools/record_va_abi.py` does the same for libva and **also records the value of
+every constant the binding names**. An enumerator that moved is as quiet a
+failure as a field at the wrong offset, and libva has two spellings of "slice"
+whose values differ -- the config-attribute bit is 4 and the packed-header type
+is 3 -- which is exactly the mistake a recorded table catches and a careful
+reading does not:
+
+```bash
+python tools/record_va_abi.py            # /usr/include, where libva-dev put them
+```
+
 The header is NVIDIA's, distributed under the MIT licence in
 [nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers). It is not
 vendored here: only the facts it states about layout are, which is what
@@ -108,6 +130,15 @@ and checks the platform, and it returns False rather than raising when the
 answer is no. Importing the backend module must not require its hardware — the
 encoder module is imported inside the factory, so discovery costs one `dlopen`.
 
+Where the library being present does not answer the question, a probe may ask
+the device and **keep the answer**: `libva` is installed on plenty of machines
+whose GPU has no encoder, so `pyopengl_video.vaapi.probe` opens each render node
+once and remembers. It also refuses a context it could not record from — the
+`vaapi` backend needs an EGL context to export a texture from, and a backend
+that cannot use the current context is unavailable rather than broken. Silence
+matters as much as speed: a driver that logs to stderr on open must be given a
+callback that swallows it, since a library must not print during discovery.
+
 The encoder implements five methods, and the contract around them is what makes
 backends interchangeable:
 
@@ -126,6 +157,22 @@ returning from `__init__`. `input_slots` is what a caller allocates textures
 from, so derive it from what the driver actually settled on rather than from
 what was requested — a preset can turn lookahead on by itself, and the caller
 then needs more textures than the arguments suggest.
+
+**Find out how much of the stream the driver writes.** It is not a given. NVENC
+and oneVPL hand back a complete elementary stream; a libva driver may write only
+the coded macroblocks, leaving the NAL header, the slice header and the
+parameter sets to the caller — Mesa's does. `VAConfigAttribEncPackedHeaders`
+says which of those a driver will accept, and **asking for one is a promise to
+supply it**: request the full mask it reports and a driver that would have
+written its own stops, and every picture reaches the stream with no header on
+it. Nothing fails; the bytes are simply not a video. Ask for exactly what the
+backend writes.
+
+The same applies in reverse to what comes back out. A driver may amend the
+parameter sets it was handed — Mesa clears `transform_8x8_mode_flag`, because
+its encoder writes no per-macroblock transform flag and a stream claiming
+otherwise is one a decoder mis-parses — so `headers()` must report the sets the
+*stream* carries once there are any, not the ones the backend built.
 
 Two conventions the tests rely on:
 
@@ -154,10 +201,22 @@ its budget either way, which measures the rate control rather than the content.
 nothing, that some return several, that every timestamp comes back exactly once,
 and that the order they arrive in is not the order they went in.
 
-Orientation and colour cannot be checked from the bitstream, and are verified by
-decoding a recording of known content with an outside decoder. That check is not
-in the suite because it would mean a decoder dependency; a decoder binding of our
-own would make it a test, and is worth doing.
+**Orientation and colour, without a decoder.** These cannot be read out of a
+bitstream, and a stream of the wrong picture is as well formed as a stream of
+the right one. Where the driver can address its own surfaces -- libva's
+`vaDeriveImage` does -- the surface the encoder is *about to code* can be read
+back and checked directly, which is what `tests/test_vaapi_encode.py` does for
+limited-range BT.709 luma and for which way up the picture is. It is a stronger
+check than decoding the output, because it isolates the path from the texture to
+the encoder from anything the encoder then does.
+
+**Conformance needs something from outside.** A stream can be well formed,
+correctly timed and still describe itself in a way that sets a decoder up
+wrongly, and nothing inside this package can notice. So where `ffmpeg` happens
+to be on the path, `test_a_muxed_recording_decodes_without_complaint` decodes a
+recording and requires it to be silent; where it is not, the test skips. It is
+not a dependency and the suite does not need it. It earned its keep on the first
+run, on a container whose sample description did not match its samples.
 
 ## Style and licensing
 

@@ -35,16 +35,32 @@ muxer is part of this package.
 | Backend | Hardware | Platform | Codec | Frame handed over as | State |
 | --- | --- | --- | --- | --- | --- |
 | `nvenc` | NVIDIA, Kepler and later | Linux | H.264 | an OpenGL texture, in place | working |
+| `vaapi` | AMD, VCN | Linux | H.264 | a DMA-BUF exported from a texture | working |
 | `vpl` | Intel, Gen9 and later | Windows | H.264 | a Direct3D 11 surface OpenGL draws into | working |
+| `vaapi` | Intel, Gen9 and later | Linux | H.264 | the same DMA-BUF | the same code, untested |
 | `nvenc` | NVIDIA | Windows | H.264 | the same Direct3D 11 surface | [next](plans/WINDOWS-SUPPORT.md) |
-| `vaapi` | Intel and AMD | Linux | H.264 | a DMA-BUF exported from a texture | [planned](plans/VAAPI-BACKEND.md) |
 | `amf` | AMD | Windows | H.264 | the same Direct3D 11 surface | [planned](plans/WINDOWS-SUPPORT.md) |
 
 The frame reaches the encoder by whatever handle the platform has for one.
-NVIDIA takes an OpenGL texture by name, but only on Linux; on Windows every
-vendor's encoder takes a Direct3D 11 texture, and `WGL_NV_DX_interop2` makes one
-allocation that is a Direct3D texture and an OpenGL texture at the same time.
-The muxer, the interface and the recorder are the same either way.
+NVIDIA takes an OpenGL texture by name, but only on Linux; Intel and AMD on
+Linux take a DMA-BUF exported from one; on Windows every vendor's encoder takes
+a Direct3D 11 texture, and `WGL_NV_DX_interop2` makes one allocation that is a
+Direct3D texture and an OpenGL texture at the same time. The muxer, the
+interface and the recorder are the same either way.
+
+**The `vaapi` backend needs an EGL context.** Exporting a texture as a DMA-BUF
+is an EGL extension, and GLFW makes a GLX context by default on X11, so ask for
+one before the window is created:
+
+```python
+glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)
+```
+
+A context that cannot export is one this backend cannot record from, so it
+reports itself unavailable rather than failing later; `encoders()` returning
+nothing on a machine that should have an encoder is the first thing this
+explains. It also needs a VA-API driver for the GPU installed beside `libva`
+itself — `mesa-va-drivers` for AMD, `intel-media-va-driver` for Intel.
 
 **Zero-copy needs the encoder on the same GPU as the renderer.** On a machine
 with more than one, the backends match the OpenGL context's adapter and offer
@@ -124,7 +140,12 @@ Re-record after changing a structure, or when moving to a newer header:
 ```bash
 python tools/record_nvenc_abi.py path/to/nvEncodeAPI.h
 python tools/record_vpl_abi.py path/to/libvpl/api/vpl
+python tools/record_va_abi.py                    # /usr/include, from libva-dev
 ```
+
+The libva recording carries the value of every constant the binding names as
+well as the layouts, because an enumerator that moved is as quiet a failure as a
+field at the wrong offset.
 
 ## Licence
 

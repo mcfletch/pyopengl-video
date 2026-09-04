@@ -153,6 +153,11 @@ def main(argv=None):
     glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
     glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
     glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+    if sys.platform.startswith('linux'):
+        # A Linux encoder is handed the frame as a DMA-BUF exported from the
+        # texture, which is an EGL extension; GLFW makes a GLX context by
+        # default on X11, and a GLX context cannot export one.
+        glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)
     # Nothing is shown: the frames go to a file, not to a screen.
     glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
     window = glfw.create_window(width, height, 'recording', None, None)

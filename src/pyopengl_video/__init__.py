@@ -77,8 +77,9 @@ def _register_builtin_backends() -> None:
     The order is the order :func:`open_encoder` prefers them in.
     """
     from pyopengl_video.nvenc import BACKEND as NVENC_BACKEND
+    from pyopengl_video.vaapi import BACKEND as VAAPI_BACKEND
     from pyopengl_video.vpl import BACKEND as VPL_BACKEND
-    _encoder.BACKENDS.extend([NVENC_BACKEND, VPL_BACKEND])
+    _encoder.BACKENDS.extend([NVENC_BACKEND, VPL_BACKEND, VAAPI_BACKEND])
 
 
 _register_builtin_backends()

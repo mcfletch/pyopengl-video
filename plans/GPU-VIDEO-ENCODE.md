@@ -1,9 +1,10 @@
 # Hardware video encode from an OpenGL colour buffer
 
-**Status:** In progress -- NVIDIA on Linux and Intel on Windows both record end
-to end through the OpenGLContext recorder. NVIDIA on Windows is next, over the
-interop shim the Intel backend already uses; Intel and AMD on Linux follow.
-Platform and vendor coverage is the table in *Phases*.
+**Status:** In progress -- NVIDIA on Linux, Intel on Windows, and AMD on Linux
+through VA-API all record end to end. NVIDIA on Windows is next, over the
+interop shim the Intel backend already uses; Intel on Linux is the VA-API
+backend against a different driver and needs only testing. Platform and vendor
+coverage is the table in *Phases*.
 **Scope:** `pyopengl-video`, a standalone library on top of PyOpenGL, consumed by
 OpenGLContext's frame recorder
 **Goal:** turn what the engine just rendered into an H.264 stream at full frame
@@ -62,8 +63,31 @@ Measured on the development machine (RTX 3060 Ti, driver 580.173.02, Ubuntu
 Two consequences. First, the encoder is never the bottleneck — at 744 fps
 through the *slow* path, encoding costs well under a millisecond per frame, and
 the whole design question is how the frame reaches it. Second, the AMD and Intel
-backends cannot be tested on this machine; they need hardware or a CI runner
-that has it, and the plan treats them as designed-and-unverified until then.
+backends cannot be tested on that machine; they need hardware or a CI runner
+that has it.
+
+Measured on the AMD machine (Radeon 8060S, `gfx1151`, Mesa 25.2.8 `radeonsi`,
+Ubuntu 24.04 container, GLFW/Wayland, GL 4.6):
+
+| Fact | Result |
+| --- | --- |
+| `libva.so.2` with `mesa-va-drivers` on `/dev/dri/renderD128` | VA-API 1.20 |
+| H.264 Main and High, `VAEntrypointEncSlice` | yes |
+| `VAProfileNone` / `VAEntrypointVideoProc`, for the RGB to NV12 pass | yes |
+| `VAConfigAttribRateControl` | CBR, VBR and CQP |
+| `VAConfigAttribEncMaxRefFrames` | 1 for reference list 0 |
+| `VAConfigAttribEncPackedHeaders` | 0x1f -- every kind, including the slice header |
+| `EGL_MESA_image_dma_buf_export` on the GLFW EGL context | yes |
+| Modifier reported for an exported `GL_RGBA8` texture | `DRM_FORMAT_MOD_INVALID` |
+
+The last two decided the shape of the backend. The export works and the
+imported surface reads correctly despite the driver naming no modifier, so the
+plan's original direction -- GL allocates, libva imports -- holds on AMD, and
+`new_input()` does not have to allocate through the encoder as it does on
+Windows.
+
+The reference-frame limit of one is not a restriction to work around: a stream
+of I and P pictures needs exactly one, which is what this backend produces.
 
 ## The interop object is a texture, not a PBO
 
@@ -275,9 +299,12 @@ pyopengl-video/
         __init__.py           encoders(), open_encoder() -- discovery and construction
         encoder.py            Encoder ABC, Packet, EncoderUnavailable, capability records
         readback.py           fenced PBO ring: the portable frame source (tier 2)
-        dmabuf.py             EGLImage export for the VA-API backends, over
-                              OpenGL.EGL.MESA.image_dma_buf_export
+        inputs.py             InputHandle: the texture an encoder reads, and its
+                              framebuffer
         mp4.py                MP4 muxer: Annex-B in, a playable file out
+        linux/                what Linux backends share, as windows/ is for Windows
+            dmabuf.py         EGLImage export and import, over
+                              OpenGL.EGL.MESA.image_dma_buf_export
         windows/              the Windows interop shim, shared by every backend there
             com.py            GUIDs, vtable calls, HRESULT checking
             d3d11.py          DXGI adapter identity (by LUID), D3D11 device, textures
@@ -290,6 +317,9 @@ pyopengl-video/
             encoder.py        VPLEncoder -- D3D11 texture in, Annex-B out (Intel)
         vaapi/
             api.py            ctypes libva: display, config, context, surfaces, buffers
+            h264.py           the control layer libva leaves to the caller: the
+                              bitstream writer, the parameter sets, the slice
+                              headers, and the GOP and DPB bookkeeping
             encoder.py        VAAPIEncoder -- dmabuf in, Annex-B out (Intel and AMD)
     tests/
     plans/
@@ -463,12 +493,53 @@ which is a separate program and not a dependency of ours.
 | W3 | oneVPL backend: Intel on Windows, D3D11 video memory, RGB straight in | in progress, this machine |
 | W4 | NVENC on the DirectX device type, reusing the shim | next; needs a GL context on the NVIDIA adapter |
 | 2 | PBO readback tier, so every driver with an encoder can record, and the reference the zero-copy paths are compared against | after W4 |
-| 3 | `dmabuf.py` EGL export, VA-API backend for Intel and AMD on Linux | this machine, rebooted into Linux |
+| 3 | `linux/dmabuf.py` EGL export, VA-API backend with its own H.264 control layer | **landed**, AMD/Linux; Intel/Linux is the same code and untested |
 | 4 | AMF for AMD, HEVC and AV1 where the part has them, audio track | needs hardware |
+| 5 | Decode into an OpenGL texture -- the reverse of everything above | low priority; see *Decoding* |
 
-Phases W1-W3 make the machine we develop on record without an NVIDIA part in the
-path at all, which is what makes this a library for everyone rather than for
-NVIDIA owners; phase 3 does the same for Linux.
+Phases W1-W3 make the Windows machine record without an NVIDIA part in the path
+at all, which is what makes this a library for everyone rather than for NVIDIA
+owners; phase 3 does the same for Linux.
+
+## Decoding: a compressed stream into an OpenGL texture
+
+**Low priority.** The library is named for what it does now, which is encode,
+and nothing waiting on it needs the reverse. It is written down because the
+shape is already here and the cost of adding it later grows if the interface
+forgets about it.
+
+The capability is a video file or stream in, and an OpenGL texture out, with the
+frame never leaving the GPU -- the same claim the encoder makes, in the other
+direction. What it would be for: video textures in a scene, a cut-scene player,
+a replay viewer that scrubs, and the round-trip test this suite currently
+cannot write without an outside decoder.
+
+Every mechanism it needs already exists in this package, reversed:
+
+- **libva** decodes through `VAEntrypointVLD`, and `vaExportSurfaceHandle`
+  hands the decoded surface out as a DMA-BUF with real modifiers.
+  `pyopengl_video.linux.dmabuf.import_texture` already turns one of those into
+  a texture, and is written for this as much as for the encoder.
+- **NVDEC** (`libnvcuvid`) is NVIDIA's side, and has no OpenGL device type: the
+  decoded frame arrives in CUDA memory and reaches GL through
+  `cuGraphicsGLRegisterImage`, which is a CUDA dependency the encoder path
+  deliberately avoids. That asymmetry is the main reason this is not a small
+  job.
+- **The NV12 to RGB pass** is the VPP pass the encoder runs, backwards, or a
+  shader sampling the two planes as separate textures -- which is the cheaper
+  and more portable of the two, and the one a renderer would want anyway
+  because it can convert straight into whatever the scene needs.
+- **Demuxing** is what the encoder's muxer does backwards, and `mp4.py` would
+  grow a reader. That is the piece with the least to learn and the most tedium
+  in it: a container is a large specification, and only a small part of it is
+  needed to find the samples.
+
+What to decide before starting: whether a `Decoder` interface sits beside
+`Encoder` in `encoder.py` or in a module of its own; whether the decoded frame
+is handed over as a texture the decoder owns and recycles (matching
+`InputHandle`) or as one the caller supplies; and whether seeking is in scope at
+all, since a decoder that only plays forward is a great deal simpler than one
+that scrubs.
 
 ## Open questions
 
