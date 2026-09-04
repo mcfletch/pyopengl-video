@@ -112,6 +112,10 @@ class MP4Writer:
         self.size = (int(width), int(height))
         self.timescale = int(timescale)
         self.sps, self.pps = parameter_sets or (b'', b'')
+        # What is here now was advertised rather than observed, and stands only
+        # until the stream says otherwise.
+        self._sps_from_stream = False
+        self._pps_from_stream = False
 
         self._sizes: list[int] = []
         self._durations: list[int] = []
@@ -160,11 +164,26 @@ class MP4Writer:
         self._timestamps.append(int(packet.timestamp))
 
     def _remember_parameter_set(self, kind: int, unit: bytes) -> None:
-        """Keep the first SPS and PPS seen, for the sample description."""
-        if kind == NAL_SPS and not self.sps:
+        """Keep the parameter sets the stream carries, for the sample description.
+
+        The stream is the authority. An encoder states its parameter sets before
+        it has coded anything and a driver may amend them on the way out -- a
+        capability the hardware does not have is one the picture parameter set
+        must not claim -- so what the samples were coded against is what the
+        sample description has to hold. A decoder set up from the other ones
+        looks for syntax that is not in the data, and reports a corrupt picture
+        rather than a mismatch.
+
+        The first of each is kept per recording, since the sample description
+        describes every sample and a stream whose parameter sets changed
+        part-way would need a second one.
+        """
+        if kind == NAL_SPS and not self._sps_from_stream:
             self.sps = unit
-        elif kind == NAL_PPS and not self.pps:
+            self._sps_from_stream = True
+        elif kind == NAL_PPS and not self._pps_from_stream:
             self.pps = unit
+            self._pps_from_stream = True
 
     @staticmethod
     def _parameter_sets(headers: bytes) -> tuple[bytes, bytes]:

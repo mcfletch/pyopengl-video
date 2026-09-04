@@ -66,6 +66,27 @@ def path_to(data, *names):
     return payload
 
 
+def avcc_sets(data):
+    """The SPS and PPS out of a file's ``avcC``, which is what sets a decoder up."""
+    payload = path_to(data, 'moov', 'trak', 'mdia', 'minf', 'stbl', 'stsd',
+                      'avc1', 'avcC')
+    position = 5                                # version, profile, compat, level
+    count = payload[position] & 0x1F
+    position += 1
+    sets = []
+    for _ in range(count):
+        length = struct.unpack_from('>H', payload, position)[0]
+        sets.append(payload[position + 2:position + 2 + length])
+        position += 2 + length
+    count = payload[position]
+    position += 1
+    for _ in range(count):
+        length = struct.unpack_from('>H', payload, position)[0]
+        sets.append(payload[position + 2:position + 2 + length])
+        position += 2 + length
+    return tuple(sets)
+
+
 @pytest.fixture
 def written(tmp_path):
     """Write a 30-frame movie and hand back its bytes."""
@@ -166,3 +187,66 @@ def test_split_annexb_keeps_a_start_code_pattern_inside_a_unit():
     """Emulation prevention means 00 00 01 cannot occur inside a coded unit."""
     stream = b'\x00\x00\x00\x01' + bytes([0x41, 0x00, 0x00, 0x03, 0x01, 0x99])
     assert list(split_annexb(stream)) == [bytes([0x41, 0x00, 0x00, 0x03, 0x01, 0x99])]
+
+
+class TestParameterSetsInTheStream:
+    """What the stream carries is what describes it.
+
+    An encoder advertises its parameter sets before it has coded anything, and
+    a driver may amend them -- a capability the hardware does not have is one
+    the picture parameter set must not claim. The sample description has to
+    hold the sets the samples were actually coded against: a decoder set up
+    from the other ones reads flags that are not in the data, and what it
+    reports is a corrupt picture rather than a mismatch.
+    """
+
+    ADVERTISED_SPS = bytes([0x67, 0x64, 0x00, 0x28, 0xac, 0xd9, 0x40, 0x50])
+    ADVERTISED_PPS = bytes([0x68, 0xeb, 0xe3, 0xcb, 0x22, 0xc0])
+    CODED_SPS = bytes([0x67, 0x64, 0x00, 0x28, 0xac, 0xd9, 0x40, 0x51])
+    CODED_PPS = bytes([0x68, 0xeb, 0xe3, 0xcb, 0x22, 0x40])
+
+    def write(self, tmp_path, units):
+        target = tmp_path / 'amended.mp4'
+        with MP4Writer(target, width=640, height=480, timescale=TIMESCALE,
+                       parameter_sets=(self.ADVERTISED_SPS,
+                                       self.ADVERTISED_PPS)) as movie:
+            movie.write(Packet(data=annexb(*units, slice_unit(64, keyframe=True)),
+                               timestamp=0, duration=FRAME, keyframe=True))
+            movie.write(Packet(data=annexb(slice_unit(32)), timestamp=FRAME,
+                               duration=FRAME, keyframe=False))
+        return avcc_sets(target.read_bytes())
+
+    def test_the_sets_the_stream_carries_replace_the_advertised_ones(
+            self, tmp_path):
+        found = self.write(tmp_path, [self.CODED_SPS, self.CODED_PPS])
+        assert found == (self.CODED_SPS, self.CODED_PPS)
+
+    def test_the_advertised_ones_stand_when_the_stream_carries_none(
+            self, tmp_path):
+        found = self.write(tmp_path, [])
+        assert found == (self.ADVERTISED_SPS, self.ADVERTISED_PPS)
+
+    def test_a_later_key_frame_does_not_undo_the_first(self, tmp_path):
+        """Every key frame repeats them, and they say the same thing."""
+        target = tmp_path / 'repeated.mp4'
+        with MP4Writer(target, width=640, height=480,
+                       timescale=TIMESCALE) as movie:
+            for index in range(4):
+                movie.write(Packet(
+                    data=annexb(self.CODED_SPS, self.CODED_PPS,
+                                slice_unit(48, keyframe=True)),
+                    timestamp=index * FRAME, duration=FRAME, keyframe=True))
+        assert avcc_sets(target.read_bytes()) == (self.CODED_SPS, self.CODED_PPS)
+
+    def test_the_sets_never_stay_in_the_samples(self, tmp_path):
+        """They live in the sample description, not in the picture data."""
+        target = tmp_path / 'stripped.mp4'
+        with MP4Writer(target, width=640, height=480,
+                       timescale=TIMESCALE) as movie:
+            movie.write(Packet(
+                data=annexb(self.CODED_SPS, self.CODED_PPS,
+                            slice_unit(48, keyframe=True)),
+                timestamp=0, duration=FRAME, keyframe=True))
+        data = target.read_bytes()
+        mdat = data.index(b'mdat') + 12
+        assert self.CODED_SPS not in data[mdat:data.index(b'moov')]
