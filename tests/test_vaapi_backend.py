@@ -126,20 +126,16 @@ class TestProbe:
 class TestTheContextItWouldRecordFrom:
     """A context that cannot export is a context this backend cannot serve."""
 
-    def test_no_current_context_is_not_held_against_the_machine(self,
+    def test_no_current_context_is_not_held_against_the_machine(self, egl,
                                                                 monkeypatch):
-        from OpenGL import EGL
-
-        monkeypatch.setattr(EGL, 'eglGetCurrentContext', lambda: None)
+        monkeypatch.setattr(egl, 'eglGetCurrentContext', lambda: None)
         assert vaapi._context_can_export() is True
 
     def test_a_context_that_cannot_export_makes_the_backend_unavailable(
-            self, monkeypatch):
-        from OpenGL import EGL
-
+            self, egl, monkeypatch):
         from pyopengl_video.linux import dmabuf
 
-        monkeypatch.setattr(EGL, 'eglGetCurrentContext', lambda: 1)
+        monkeypatch.setattr(egl, 'eglGetCurrentContext', lambda: 1)
         monkeypatch.setattr(dmabuf, 'unavailable_because',
                             lambda: 'this OpenGL context is not an EGL context')
         assert vaapi._context_can_export() is False

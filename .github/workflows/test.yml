@@ -27,6 +27,26 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # EGL ships with the graphics driver and a runner has none, so the EGL
+      # bindings do not import there and every case that stands in for an EGL
+      # entry point skips. These two are the software half of that driver: the
+      # loader with Mesa behind it, and the Gallium drivers llvmpipe is one of,
+      # which is what makes an EGL display work rather than merely import.
+      #
+      # It gains five cases for a few seconds of install, and the two worth
+      # having are the modifier attributes an import is built from -- a tiled
+      # layout carried across as linear reads as noise, silently, and this is
+      # the only check of that which runs without a GPU.
+      #
+      # A context is a separate thing and needs a display server, so the cases
+      # that export a real texture go on skipping here. Xvfb is what would
+      # change that, and has not been tried.
+      - name: Install a software EGL, so the DMA-BUF cases have one to ask
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1-mesa-dri
+
       - name: Install tox
         run: python -m pip install --upgrade pip tox tox-gh
 

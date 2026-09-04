@@ -48,10 +48,9 @@ class TestWhatTheContextCanDo:
         reason = dmabuf.unavailable_because()
         assert reason == '' or 'EGL' in reason
 
-    def test_a_context_that_is_not_egl_is_told_how_to_be_one(self, monkeypatch):
-        from OpenGL import EGL
-
-        monkeypatch.setattr(EGL, 'eglGetCurrentDisplay', lambda: None)
+    def test_a_context_that_is_not_egl_is_told_how_to_be_one(self, egl,
+                                                             monkeypatch):
+        monkeypatch.setattr(egl, 'eglGetCurrentDisplay', lambda: None)
         reason = dmabuf.unavailable_because()
         assert 'not an EGL context' in reason
         assert 'CONTEXT_CREATION_API' in reason, 'says what to do about it'
@@ -61,6 +60,41 @@ class TestWhatTheContextCanDo:
                                                             exportable):
         monkeypatch.setattr(dmabuf, '_extensions', lambda: 'EGL_KHR_image_base')
         assert 'EGL_MESA_image_dma_buf_export' in dmabuf.unavailable_because()
+
+
+class TestWithNoEGLLibraryAtAll:
+    """EGL ships with the graphics driver, and plenty of machines have neither.
+
+    A virtual machine, a container built without one, a CI runner: there is no
+    libEGL to load, and PyOpenGL's EGL bindings raise on import rather than
+    becoming a module whose entry points answer no. Nothing here may turn that
+    into an error of its own -- the machine simply cannot export a texture, and
+    that is one of the answers this module exists to give.
+    """
+
+    @pytest.fixture
+    def without_egl(self, monkeypatch):
+        monkeypatch.setattr(dmabuf, '_egl', lambda: None)
+
+    def test_the_reason_says_there_is_no_egl_library(self, without_egl):
+        reason = dmabuf.unavailable_because()
+        assert 'EGL' in reason
+        assert 'driver' in reason, 'says where an EGL library comes from'
+
+    def test_the_context_is_not_available_and_does_not_raise(self, without_egl):
+        assert dmabuf.available() is False
+        assert dmabuf.import_available() is False
+
+    def test_an_export_refuses_with_the_reason(self, without_egl):
+        with pytest.raises(dmabuf.DMABufError, match='EGL'):
+            dmabuf.export_texture(1, *SIZE)
+
+    def test_an_import_refuses_with_the_reason(self, without_egl):
+        with pytest.raises(dmabuf.DMABufError):
+            dmabuf.import_texture(api.DRM_FORMAT_ABGR8888, *SIZE, 0, ())
+
+    def test_releasing_nothing_is_still_harmless(self, without_egl):
+        dmabuf.release_imported_texture(0, None)
 
 
 class TestExport:

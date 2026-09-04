@@ -133,6 +133,13 @@ from pyopengl_video.linux import dmabuf
 print(dmabuf.unavailable_because() or 'this context can export')
 ```
 
+**A machine with no EGL at all answers the same way.** EGL ships with the
+graphics driver, so a virtual machine, a container built without one or a CI
+runner may have no `libEGL` for PyOpenGL to bind to. `unavailable_because()`
+says so, `vaapi` reports itself unavailable, and nothing raises: it is one more
+reason a context cannot export. Installing a driver — `libegl1` or `libglvnd`
+on most distributions — is what changes the answer.
+
 **X11 is not the difficulty; GLX is.** EGL runs on X11 as well as on Wayland,
 so an X11 application records through `vaapi` perfectly well — it just has to
 ask for an EGL context, which is the one hint above. What cannot export is a

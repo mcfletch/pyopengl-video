@@ -37,6 +37,26 @@ def gl_context():
 
 
 @pytest.fixture
+def egl():
+    """PyOpenGL's EGL bindings, or a skip where this machine has no EGL.
+
+    EGL ships with the graphics driver, and a machine with no driver installed
+    -- a virtual machine, a container, most CI runners -- has no library for
+    PyOpenGL to bind to, so importing the bindings raises. A case that stands
+    in for an EGL entry point has nothing to stand in for there; what this
+    package does on such a machine is covered by the cases that need no EGL at
+    all, in ``TestWithNoEGLLibraryAtAll``.
+    """
+    from pyopengl_video.linux import dmabuf
+
+    module = dmabuf._egl()
+    if module is None:
+        pytest.skip('PyOpenGL has no EGL library to bind to on this machine, '
+                    'so there is no EGL entry point to stand in for')
+    return module
+
+
+@pytest.fixture
 def vaapi_available(gl_context):
     """Skip unless libva here can encode H.264 from this OpenGL context."""
     from pyopengl_video import vaapi

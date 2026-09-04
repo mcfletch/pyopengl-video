@@ -481,6 +481,23 @@ which is a separate program and not a dependency of ours.
   absent, following the existing OpenGLContext GL-test conventions. AMD and
   Intel backends stay marked unverified in this document until they have run on
   real parts.
+- **A machine with no graphics driver at all.** EGL ships with the driver, so
+  a machine with none has no `libEGL` and PyOpenGL's EGL bindings do not import
+  — a case that stands in for an EGL entry point has nothing to stand in for.
+  Those cases take the `egl` fixture and skip; what the package does on such a
+  machine is `tests/test_dmabuf.py::TestWithNoEGLLibraryAtAll`, which needs no
+  EGL to run. Everything here reaches EGL through `dmabuf._egl`, so the absence
+  arrives as "this context cannot export" rather than as an exception out of an
+  import. To reproduce it on a machine that does have EGL: a `-p` plugin that
+  sets `OpenGL.platform.PLATFORM.EGL` to None before collection.
+- **The runner installs a software EGL** — `libegl1` and `libgl1-mesa-dri`, in
+  `.github/workflows/test.yml` — so the layer above is exercised there rather
+  than skipped wholesale. It is five cases, the two that matter being the
+  modifier attributes an import is built from, which is otherwise checked only
+  on a machine with a GPU. It does not buy a context: GLFW needs a display
+  server, so the export and round-trip cases still skip with "GLFW will not
+  initialise here". Xvfb is the next step for anyone who wants those, and has
+  not been tried.
 
 ## Phases
 

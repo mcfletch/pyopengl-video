@@ -27,6 +27,7 @@ import ctypes
 import dataclasses
 import logging
 import os
+from types import ModuleType
 
 log = logging.getLogger(__name__)
 
@@ -118,14 +119,52 @@ class ExportedImage:
             self._image = None
 
 
+#: Why nothing here can run without an EGL library, said once.
+NO_EGL_LIBRARY = (
+    'PyOpenGL has no EGL library to bind to on this machine, so a texture '
+    'cannot be exported as a DMA-BUF; EGL ships with the graphics driver, and '
+    'a machine with no driver installed has none to load'
+)
+
+
+def _egl() -> ModuleType | None:
+    """PyOpenGL's EGL bindings, or None where the machine has no EGL library.
+
+    A machine with no graphics driver installed has no libEGL, and the EGL
+    bindings do not import at all there rather than importing and answering
+    no. Every route into EGL below comes through here, so that absence reads
+    as "this context cannot export" -- which is one of the answers this module
+    exists to give -- rather than as an exception out of an import.
+    """
+    try:
+        from OpenGL import EGL
+    except Exception as error:  # noqa: BLE001 - however it fails, there is no EGL
+        # Any exception, because the failure has more than one shape: PyOpenGL
+        # raises ImportError from 4.0 on, and the releases this package also
+        # supports reach for an entry point on the library that is not there
+        # and raise AttributeError.
+        log.debug('the EGL bindings are not usable here: %s', error)
+        return None
+    return EGL
+
+
+def _require_egl() -> ModuleType:
+    """:func:`_egl`, refusing the work rather than returning nothing."""
+    egl = _egl()
+    if egl is None:
+        raise DMABufError(NO_EGL_LIBRARY)
+    return egl
+
+
 def _extensions() -> str:
     """The current EGL display's extension string, or '' with no EGL context."""
-    from OpenGL import EGL
-
-    display = EGL.eglGetCurrentDisplay()
+    egl = _egl()
+    if egl is None:
+        return ''
+    display = egl.eglGetCurrentDisplay()
     if not display:
         return ''
-    text = EGL.eglQueryString(display, EGL.EGL_EXTENSIONS)
+    text = egl.eglQueryString(display, egl.EGL_EXTENSIONS)
     if not text:
         return ''
     return text.decode() if isinstance(text, bytes) else str(text)
@@ -134,20 +173,21 @@ def _extensions() -> str:
 def unavailable_because() -> str:
     """Why this context cannot export a texture, or '' when it can.
 
-    Written as the reason rather than as a flag because there are three of
-    them and they send a reader to different places: no EGL context at all
-    usually means the window was asked for without
-    ``glfw.CONTEXT_CREATION_API``, while a missing extension is the driver's
+    Written as the reason rather than as a flag because there are four of
+    them and they send a reader to different places: no EGL library is the
+    machine's, no EGL context usually means the window was asked for without
+    ``glfw.CONTEXT_CREATION_API``, and a missing extension is the driver's
     answer.
     """
-    from OpenGL import EGL
-
-    if not EGL.eglGetCurrentDisplay():
+    egl = _egl()
+    if egl is None:
+        return NO_EGL_LIBRARY
+    if not egl.eglGetCurrentDisplay():
         return ('this OpenGL context is not an EGL context, so it cannot '
                 'export a texture as a DMA-BUF; create the window with '
                 'glfw.window_hint(glfw.CONTEXT_CREATION_API, '
                 'glfw.EGL_CONTEXT_API)')
-    if not EGL.eglGetCurrentContext():
+    if not egl.eglGetCurrentContext():
         return 'no OpenGL context is current on this thread'
     extensions = _extensions()
     missing = [name for name in EXPORT_EXTENSIONS if name not in extensions]
@@ -188,7 +228,7 @@ def export_texture(texture: int, width: int, height: int) -> ExportedImage:
     Raises :class:`DMABufError` when the context cannot export, which
     :func:`unavailable_because` explains.
     """
-    from OpenGL import EGL
+    EGL = _require_egl()
     from OpenGL.EGL.KHR.image_base import EGL_IMAGE_PRESERVED_KHR, eglCreateImageKHR
     from OpenGL.EGL.MESA.image_dma_buf_export import (
         eglExportDMABUFImageMESA,
@@ -250,7 +290,7 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
     The descriptors in `planes` are not taken over: EGL duplicates what it
     needs, and the caller closes its own.
     """
-    from OpenGL import EGL
+    EGL = _require_egl()
     from OpenGL.EGL.KHR.image_base import eglCreateImageKHR
     from OpenGL.GL import (
         GL_CLAMP_TO_EDGE,
@@ -310,10 +350,9 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
 
 def release_imported_texture(texture: int, image: object) -> None:
     """Give back what :func:`import_texture` returned."""
-    from OpenGL import EGL
     from OpenGL.GL import glDeleteTextures
 
     if texture:
         glDeleteTextures([int(texture)])
     if image is not None:
-        _destroy(EGL.eglGetCurrentDisplay(), image)
+        _destroy(_require_egl().eglGetCurrentDisplay(), image)

@@ -167,7 +167,12 @@ the device and **keep the answer**: `libva` is installed on plenty of machines
 whose GPU has no encoder, so `pyopengl_video.vaapi.probe` opens each render node
 once and remembers. It also refuses a context it could not record from — the
 `vaapi` backend needs an EGL context to export a texture from, and a backend
-that cannot use the current context is unavailable rather than broken. Silence
+that cannot use the current context is unavailable rather than broken. Ask
+through `pyopengl_video.linux.dmabuf`, which answers for a machine that has no
+EGL library at all as readily as for one whose context is the wrong kind: the
+EGL bindings do not import where there is nothing to bind to, so a probe that
+reaches for them itself raises on exactly the machines it is there to
+serve. Silence
 matters as much as speed: a driver that logs to stderr on open must be given a
 callback that swallows it, since a library must not print during discovery.
 
