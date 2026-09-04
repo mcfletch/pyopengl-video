@@ -88,3 +88,74 @@ def test_the_nvenc_backend_reports_itself_unavailable_off_linux(monkeypatch):
 
     monkeypatch.setattr(nvenc, 'OPENGL_DEVICE_PLATFORM', False)
     assert nvenc.probe() is False
+
+
+class TestSayingWhyThereIsNoEncoder:
+    """"None available" is not an answer a caller can act on.
+
+    A backend often declines for a reason the caller could fix -- a context of
+    the wrong kind, a driver package not installed -- and that reason is worth
+    more than the empty list it turns into.
+    """
+
+    def make(self, monkeypatch, *, available, explanation):
+        backend = Backend(
+            name='fake', vendor='none', codecs=frozenset({'h264'}),
+            max_size=(640, 480), zero_copy=False,
+            probe=lambda: available, factory=FakeEncoder,
+            explain=lambda: explanation,
+        )
+        monkeypatch.setattr(encoder_module, 'BACKENDS', [backend])
+        return backend
+
+    def test_the_reason_reaches_the_caller(self, monkeypatch):
+        self.make(monkeypatch, available=False,
+                  explanation='this context cannot export a texture')
+        with pytest.raises(EncoderUnavailable,
+                           match='this context cannot export a texture'):
+            open_encoder(320, 240)
+
+    def test_the_backend_that_gave_it_is_named(self, monkeypatch):
+        self.make(monkeypatch, available=False, explanation='no driver here')
+        with pytest.raises(EncoderUnavailable, match='fake'):
+            open_encoder(320, 240)
+
+    def test_a_backend_that_is_available_explains_nothing(self, monkeypatch):
+        self.make(monkeypatch, available=True, explanation='should not appear')
+        with open_encoder(320, 240) as found:
+            assert isinstance(found, FakeEncoder)
+
+    def test_a_backend_with_nothing_to_say_is_left_out(self, monkeypatch):
+        self.make(monkeypatch, available=False, explanation='')
+        with pytest.raises(EncoderUnavailable) as raised:
+            open_encoder(320, 240)
+        assert 'fake:' not in str(raised.value)
+
+    def test_a_backend_that_offers_no_explanation_at_all_is_fine(self,
+                                                                 only_fake_backend,
+                                                                 monkeypatch):
+        """`explain` is optional, so an out-of-tree backend need not have one."""
+        assert only_fake_backend.explain is None
+        monkeypatch.setattr(encoder_module, 'BACKENDS',
+                            [only_fake_backend.replace(probe=lambda: False)])
+        with pytest.raises(EncoderUnavailable):
+            open_encoder(320, 240)
+
+    def test_an_explanation_that_raises_does_not_hide_the_error(self,
+                                                                monkeypatch):
+        """Explaining is a courtesy, and must not replace the real answer."""
+        backend = Backend(
+            name='fake', vendor='none', codecs=frozenset({'h264'}),
+            max_size=(640, 480), zero_copy=False, probe=lambda: False,
+            factory=FakeEncoder,
+            explain=lambda: (_ for _ in ()).throw(RuntimeError('boom')),
+        )
+        monkeypatch.setattr(encoder_module, 'BACKENDS', [backend])
+        with pytest.raises(EncoderUnavailable):
+            open_encoder(320, 240)
+
+    def test_asking_for_a_backend_by_name_says_why_that_one_declined(
+            self, monkeypatch):
+        self.make(monkeypatch, available=False, explanation='no driver here')
+        with pytest.raises(EncoderUnavailable, match='no driver here'):
+            open_encoder(320, 240, backend='fake')

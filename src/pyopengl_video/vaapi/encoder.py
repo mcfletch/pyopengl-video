@@ -588,6 +588,12 @@ class VAAPIEncoder(Encoder):
         and waiting on that costs nothing once it has been signalled. Without
         one -- a caller that drew its own way -- the whole pipeline is flushed,
         because there is nothing finer to wait on.
+
+        The fence is used up here. It covers the drawing in the scope that made
+        it and nothing after, so keeping it would mean a later frame waiting on
+        a fence that signalled before that frame was drawn -- which returns at
+        once and lets the conversion read a texture still being written. Falling
+        back to flushing is slower and right.
         """
         from OpenGL.GL import (
             GL_SYNC_FLUSH_COMMANDS_BIT,
@@ -600,6 +606,7 @@ class VAAPIEncoder(Encoder):
             return
         glClientWaitSync(handle.fence, GL_SYNC_FLUSH_COMMANDS_BIT,
                          GL_TIMEOUT_IGNORED)
+        handle._forget_fence()
 
     def _convert(self, handle: InputHandle, source: int) -> None:
         """Convert the handle's RGB surface into `source`."""

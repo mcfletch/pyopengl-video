@@ -612,3 +612,38 @@ class TestMuxing:
         assert b'avcC' in data
         assert b'moov' in data
         assert len(data) > 1000
+
+
+class TestTheDrawingFence:
+    """What the encoder waits on before the conversion reads a texture.
+
+    A fence covers the drawing inside the scope that made it and nothing else.
+    One left lying around after it has been waited on is worse than none at
+    all: it is already signalled, so waiting on it a second time returns at
+    once and the conversion reads a texture the renderer is still writing.
+    """
+
+    def test_drawing_leaves_a_fence(self, encoder, handles):
+        assert handles[0].fence is None
+        paint(handles[0], (0.1, 0.2, 0.3, 1.0))
+        assert handles[0].fence is not None
+
+    def test_the_encode_that_waits_on_it_uses_it_up(self, encoder, handles):
+        paint(handles[0], (0.1, 0.2, 0.3, 1.0))
+        encoder.encode(handles[0], timestamp=0)
+        assert handles[0].fence is None, (
+            'a fence that has been waited on must not cover a later frame')
+
+    def test_a_second_encode_without_redrawing_falls_back_to_flushing(
+            self, encoder, handles):
+        """Drawing outside the scope is allowed; it costs the whole pipeline."""
+        paint(handles[0], (0.1, 0.2, 0.3, 1.0))
+        encoder.encode(handles[0], timestamp=0)
+        packets = encoder.encode(handles[0], timestamp=TICK)
+        assert len(packets) == 1, 'the frame still encodes'
+
+    def test_re_entering_the_scope_replaces_the_fence(self, encoder, handles):
+        paint(handles[0], (0.1, 0.2, 0.3, 1.0))
+        first = handles[0].fence
+        paint(handles[0], (0.4, 0.5, 0.6, 1.0))
+        assert handles[0].fence is not first

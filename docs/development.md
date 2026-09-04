@@ -95,6 +95,12 @@ before the tests run. `test_every_declared_structure_is_recorded` fails if a
 structure is added to the binding and the recording is not refreshed, so an
 unchecked structure cannot slip in.
 
+The header is NVIDIA's, distributed under the MIT licence in
+[nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers). It is not
+vendored here: only the facts it states about layout are, which is what
+`NOTICES.md` records.
+
+The libva and oneVPL headers are treated the same way, and are MIT too.
 `tools/record_va_abi.py` does the same for libva and **also records the value of
 every constant the binding names**. An enumerator that moved is as quiet a
 failure as a field at the wrong offset, and libva has two spellings of "slice"
@@ -106,11 +112,6 @@ reading does not:
 python tools/record_va_abi.py            # /usr/include, where libva-dev put them
 ```
 
-The header is NVIDIA's, distributed under the MIT licence in
-[nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers). It is not
-vendored here: only the facts it states about layout are, which is what
-`NOTICES.md` records.
-
 ## Adding a backend
 
 A backend is a module exposing a `Backend` record. `pyopengl_video/__init__.py`
@@ -121,7 +122,7 @@ backend can append to it.
 BACKEND = Backend(
     name='vaapi', vendor='Intel/AMD', codecs=frozenset({'h264'}),
     max_size=(4096, 4096), zero_copy=True,
-    probe=probe, factory=_build,
+    probe=probe, factory=_build, explain=explain,
 )
 ```
 
@@ -129,6 +130,13 @@ BACKEND = Backend(
 and checks the platform, and it returns False rather than raising when the
 answer is no. Importing the backend module must not require its hardware — the
 encoder module is imported inside the factory, so discovery costs one `dlopen`.
+
+**Say why, when the answer is no.** A backend may carry an `explain` callable
+beside its `probe`, returning a sentence naming what is missing when that is
+something the caller could act on. `open_encoder` puts those in the error it
+raises, because "none available" sends someone to look at their hardware when
+the answer was a window hint. Keep it to what is fixable: a backend that is
+simply on the wrong platform has nothing useful to say and returns `''`.
 
 Where the library being present does not answer the question, a probe may ask
 the device and **keep the answer**: `libva` is installed on plenty of machines

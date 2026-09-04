@@ -21,11 +21,14 @@ whatever is still inside at the end of a recording.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
 from pyopengl_video.inputs import InputHandle
+
+log = logging.getLogger(__name__)
 
 #: Bits per pixel per second, used when a caller names no bitrate. 1080p60 lands
 #: near 8.7 Mbit/s, which is a reasonable quality for screen-captured 3D.
@@ -93,6 +96,11 @@ class Backend:
     probe -- returns True when this machine can actually run the backend; it is
         called during discovery, so it must be cheap and must not raise
     factory -- called as ``factory(width, height, codec=..., **options)``
+    explain -- optional: why this backend is unavailable here, in a sentence
+        the caller could act on, or '' when there is nothing useful to say.
+        :func:`open_encoder` puts it in the error it raises when nothing fits,
+        because "none available" is not an answer anyone can do anything with
+        and the reason is very often a fixable one.
     """
 
     name: str
@@ -102,6 +110,7 @@ class Backend:
     zero_copy: bool
     probe: Callable[[], bool]
     factory: Callable[..., Encoder]
+    explain: Callable[[], str] | None = None
 
     def supports(self, width: int, height: int, codec: str) -> bool:
         """Can this backend encode a `width` x `height` frame as `codec`?"""
@@ -208,3 +217,28 @@ def available_backends(backends: Iterable[Backend] | None = None) -> Iterator[Ba
     for backend in (BACKENDS if backends is None else backends):
         if backend.probe():
             yield backend
+
+
+def explanations(backends: Iterable[Backend] | None = None) -> list[str]:
+    """Why each unavailable backend declined, for the ones that will say.
+
+    A backend that is available, that offers no explanation, or that has
+    nothing useful to say contributes nothing. An explanation that raises is
+    dropped: saying why is a courtesy and must never stand in the way of the
+    answer it was meant to decorate.
+    """
+    found = []
+    for backend in (BACKENDS if backends is None else backends):
+        if backend.explain is None:
+            continue
+        try:
+            if backend.probe():
+                continue
+            reason = backend.explain()
+        except Exception:  # noqa: BLE001 - a courtesy never hides the answer
+            log.debug('%s could not say why it is unavailable', backend.name,
+                      exc_info=True)
+            continue
+        if reason:
+            found.append(f'{backend.name}: {reason}')
+    return found

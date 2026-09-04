@@ -58,15 +58,30 @@ def open_encoder(width: int, height: int, *, codec: str = 'h264',
     if backend is not None:
         candidates = [found for found in candidates if found.name == backend]
         if not candidates:
-            raise EncoderUnavailable(
+            raise EncoderUnavailable(_why(
                 f'no encoder backend named {backend!r} is available here; '
-                f'available: {[found.name for found in available_backends()] or "none"}')
+                f'available: '
+                f'{[found.name for found in available_backends()] or "none"}',
+                only=backend))
     capable = [found for found in candidates if found.supports(width, height, codec)]
     if not capable:
-        raise EncoderUnavailable(
-            f'no encoder here can produce {width}x{height} {codec}; '
-            f'available: {[(found.name, sorted(found.codecs), found.max_size) for found in candidates] or "none"}')
+        raise EncoderUnavailable(_why(
+            f'no encoder here can produce {width}x{height} {codec}; available: '
+            f'{[(found.name, sorted(found.codecs), found.max_size) for found in candidates] or "none"}'))
     return capable[0].factory(width, height, codec=codec, **options)
+
+
+def _why(message: str, only: str | None = None) -> str:
+    """Add what the unavailable backends had to say for themselves.
+
+    Very often one of them declined for a reason the caller can act on -- an
+    OpenGL context of the wrong kind, a driver package not installed -- and a
+    bare "none available" sends them looking at their hardware instead.
+    """
+    reasons = _encoder.explanations()
+    if only is not None:
+        reasons = [line for line in reasons if line.startswith(f'{only}:')]
+    return '\n'.join([message, *(f'  {line}' for line in reasons)])
 
 
 def _register_builtin_backends() -> None:

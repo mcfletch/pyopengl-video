@@ -154,6 +154,44 @@ def _device_encodes(va: Any, node: str) -> bool:
             os.close(fd)
 
 
+def explain() -> str:
+    """Why this backend is unavailable here, in a sentence a caller can act on.
+
+    Two of the three reasons are the caller's to fix, and neither is visible
+    from the empty list discovery otherwise turns into: an OpenGL context that
+    is not an EGL context cannot export a texture, and a machine with `libva`
+    but no driver for its GPU has nothing to encode with.
+    """
+    if not SUPPORTED_PLATFORM:
+        return ''
+    try:
+        from pyopengl_video.linux import dmabuf
+
+        reason = dmabuf.unavailable_because() if _context_is_current() else ''
+        if reason:
+            return reason
+        if not _any_device_encodes():
+            return (
+                'no DRM render node here reports an H.264 encoder. libva needs '
+                'a driver for the GPU beside it -- mesa-va-drivers for AMD, '
+                'intel-media-va-driver for Intel -- and `vainfo` will say '
+                'whether one is loaded'
+            )
+    except Exception as error:  # noqa: BLE001 - explaining must not itself fail
+        log.debug('the VA-API backend could not say why it declined: %s', error)
+    return ''
+
+
+def _context_is_current() -> bool:
+    """Whether there is an EGL context to ask about at all."""
+    try:
+        from OpenGL import EGL
+
+        return bool(EGL.eglGetCurrentContext())
+    except Exception:  # noqa: BLE001 - no EGL is not a context
+        return False
+
+
 def _build(width: int, height: int, **options: Any) -> Any:
     """Construct a :class:`~pyopengl_video.vaapi.encoder.VAAPIEncoder`.
 
@@ -172,4 +210,5 @@ BACKEND = Backend(
     zero_copy=True,
     probe=probe,
     factory=_build,
+    explain=explain,
 )

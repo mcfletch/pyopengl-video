@@ -115,13 +115,43 @@ window = glfw.create_window(width, height, 'recording', None, None)
 ```
 
 The `vaapi` backend reports itself unavailable from a context that cannot
-export, rather than failing when a texture is handed over. To ask why:
+export, rather than failing when a texture is handed over, and `open_encoder`
+says so rather than leaving a caller to guess:
+
+```
+EncoderUnavailable: no encoder here can produce 1920x1080 h264; available: none
+  vaapi: this OpenGL context is not an EGL context, so it cannot export a
+  texture as a DMA-BUF; create the window with
+  glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)
+```
+
+To ask directly:
 
 ```python
 from pyopengl_video.linux import dmabuf
 
 print(dmabuf.unavailable_because() or 'this context can export')
 ```
+
+**X11 is not the difficulty; GLX is.** EGL runs on X11 as well as on Wayland,
+so an X11 application records through `vaapi` perfectly well — it just has to
+ask for an EGL context, which is the one hint above. What cannot export is a
+*GLX* context, and there is no GLX counterpart to
+`EGL_MESA_image_dma_buf_export` to reach for.
+
+If an application is tied to GLX — an older toolkit that offers nothing else —
+then on that context:
+
+- **`nvenc` still records.** It takes the texture by name and does not care how
+  the context was made.
+- **`vaapi` cannot**, and no arrangement of this library changes that: objects
+  are not shared between a GLX context and an EGL one, so the frame would have
+  to travel through host memory to reach an EGL context that could export it.
+
+That last route is a real one, and it is the readback tier in
+`plans/GPU-VIDEO-ENCODE.md`: a fenced `glReadPixels` into the encoder's
+host-memory input, one crossing each way and no pipeline stall. It is designed
+and not yet written, and it is what would let any context on any driver record.
 
 **Ask the encoder for its inputs.** `new_input()` returns a handle carrying a
 texture the encoder can read and a framebuffer with that texture attached:
