@@ -1,0 +1,73 @@
+name: tests
+
+on:
+  # Every branch but main, so work in progress is checked as it is pushed.
+  # main is covered by `release.yml`, which calls this workflow and then decides
+  # whether the version is worth publishing; a `push:` trigger for main here as
+  # well would run the whole matrix twice for every push to it.
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  test:
+    name: ${{ matrix.python-version }} · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install tox
+        run: python -m pip install --upgrade pip tox tox-gh
+
+      # tox-gh reads the [gh] table in tox.ini and runs the envs mapped to this
+      # interpreter. The 3.12 row additionally runs `lint` and `typecheck`, so
+      # ruff and mypy gate a merge rather than being declared in an extra and
+      # run nowhere.
+      #
+      # A runner has no GPU, no encoder and no display, so every hardware test
+      # skips and says which of those was missing. What is left is the half of
+      # the package that is pure computation and is where a silent mistake
+      # actually hides: the H.264 bitstream writer checked by parsing back what
+      # it wrote, the group-of-pictures structure, the muxer, and the ABI tables
+      # recorded from the vendor headers -- which are checked here with no
+      # compiler, no driver and no card, which is the whole point of recording
+      # them.
+      - name: Run tox
+        run: tox
+
+  # `requires-python = ">=3.10"` and the PyOpenGL floor are claims about
+  # installing, not about the test matrix, so they are checked where a user
+  # meets them: a plain install of the built sdist, imported from somewhere that
+  # is not the checkout.
+  install:
+    name: sdist installs clean
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Build and install the sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --sdist
+          python -m pip install dist/*.tar.gz
+      - name: Import it from somewhere that is not the checkout
+        # Importing the package must not require a graphics driver: discovery
+        # loads a backend's library only when asked, so this runs on a machine
+        # with no GL at all.
+        run: |
+          cd /tmp
+          python -c "import pyopengl_video as v; print(v.__version__)"
+          python -c "import pyopengl_video as v; print('backends here:', [b.name for b in v.encoders()])"

@@ -1,0 +1,167 @@
+name: release
+
+# Every push to main runs the full test matrix; if it is green *and* the version
+# in src/pyopengl_video/__init__.py is not already on PyPI, the sdist and wheel
+# are built and published there by trusted publishing.
+#
+# So a push that does not bump the version is an ordinary CI run, and bumping
+# the version is what cuts a release. Nothing is ever published from a red
+# build: PyPI versions are immutable, and a release number burned on a broken
+# build cannot be taken back.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # The same jobs a pull request runs -- every released Python, lint, types, and
+  # the sdist install check. Called rather than duplicated, so the gate cannot
+  # drift from the checks.
+  tests:
+    uses: ./.github/workflows/test.yml
+
+  version:
+    name: version
+    needs: tests
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - id: check
+        name: Is this version already on PyPI?
+        run: |
+          VERSION=$(python - <<'EOF'
+          import pathlib, re, sys
+          text = pathlib.Path('src/pyopengl_video/__init__.py').read_text(encoding='utf-8')
+          found = re.search(r'''^__version__\s*=\s*['"]([^'"]+)['"]''', text, re.M)
+          if not found:
+              sys.exit('no __version__ in src/pyopengl_video/__init__.py')
+          print(found.group(1))
+          EOF
+          )
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # Only 200 and 404 are answers. Anything else -- a 5xx, a timeout, a
+          # DNS failure -- means PyPI did not tell us, and guessing "not
+          # published" would turn an outage into a failed upload against an
+          # immutable version. Fail loudly instead and let a re-run settle it.
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 5 \
+                 "https://pypi.org/pypi/pyopengl-video/$VERSION/json" || echo 000)
+          case "$CODE" in
+            200)
+              echo "pyopengl-video $VERSION is already on PyPI; nothing to publish."
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              ;;
+            404)
+              echo "pyopengl-video $VERSION is not on PyPI; it will be published."
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "PyPI answered HTTP $CODE for pyopengl-video $VERSION; refusing to guess."
+              exit 1
+              ;;
+          esac
+
+  build:
+    name: build
+    needs: version
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pure Python, so one sdist and one `py3-none-any` wheel is the whole
+      # release: the vendor encoders are loaded by name from the graphics driver
+      # at runtime, and there is nothing compiled here to build per platform.
+      - name: Build the sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Check the metadata renders on PyPI
+        run: python -m twine check --strict dist/*
+
+      # The version the check job read and the version actually built have to be
+      # the same thing, or the skip-if-published test was about a different
+      # release than the one about to be uploaded.
+      - name: Confirm the artifacts carry the version that was checked
+        env:
+          EXPECTED: ${{ needs.version.outputs.version }}
+        run: |
+          ls -l dist/
+          for artifact in dist/*; do
+            case "$(basename "$artifact")" in
+              pyopengl_video-"$EXPECTED".tar.gz|pyopengl_video-"$EXPECTED"-py3-none-any.whl) ;;
+              *) echo "unexpected artifact for version $EXPECTED: $artifact"; exit 1 ;;
+            esac
+          done
+
+      # Every backend must be in the wheel. They are found by
+      # `[tool.setuptools.packages.find]` rather than listed, so a new
+      # subpackage that arrives without an `__init__.py` is silently left out
+      # and the release ships an encoder that imports nowhere.
+      - name: Confirm every backend is in the wheel
+        run: |
+          python - <<'EOF'
+          import glob, sys, zipfile
+          names = zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist()
+          missing = [want for want in (
+              'pyopengl_video/nvenc/encoder.py',
+              'pyopengl_video/vpl/encoder.py',
+              'pyopengl_video/vaapi/encoder.py',
+              'pyopengl_video/vaapi/h264.py',
+              'pyopengl_video/linux/dmabuf.py',
+              'pyopengl_video/windows/interop.py',
+          ) if want not in names]
+          sys.exit('missing from the wheel: ' + ', '.join(missing) if missing else 0)
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distribution
+          path: dist/*
+
+  publish:
+    name: publish to PyPI
+    needs: [tests, version, build]
+    # The `needs:` gate already requires all three; stating the results as well
+    # keeps the guarantee if someone later edits this workflow -- adding
+    # `always()` to one job would otherwise let a red build reach PyPI.
+    if: >-
+      needs.tests.result == 'success' &&
+      needs.version.outputs.publish == 'true' &&
+      needs.build.result == 'success'
+    runs-on: ubuntu-latest
+
+    # Trusted publishing (OIDC): on PyPI, add a publisher for this repository
+    # with workflow `release.yml` and the environment field left **blank**. The
+    # OIDC claim carries no environment, so a publisher that names one will not
+    # match and the upload is rejected. No API token is stored anywhere.
+    #
+    # `pyopengl-video` is not on PyPI yet, so the first publish needs a *pending*
+    # publisher created against the project name before this ever runs.
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distribution
+          path: dist
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A second net under the version check: a re-run of an already-published
+          # commit is a no-op rather than a failure. The check job is what makes
+          # the ordinary path skip early; this is what makes a race harmless.
+          skip-existing: true

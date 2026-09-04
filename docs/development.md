@@ -15,8 +15,32 @@ included, in about ten seconds.
 ```bash
 pytest                        # everything this machine can run
 pytest tests/test_mp4.py      # muxer only: pure Python, no hardware
-ruff check . && mypy src/pyopengl_video
+tox                           # the suite on every supported Python, plus the gates
+tox -e lint,typecheck         # what CI holds a merge to
 ```
+
+`tox.ini` is what CI runs, so the gates are the same either way. `typecheck` is
+two mypy runs, not one: half this package is Windows-only and half is
+Linux-only, and each is invisible to the other's platform, so the Windows shim
+and the oneVPL backend are checked with `--platform win32` and everything else
+as the host sees it.
+
+## Releasing
+
+The version in `src/pyopengl_video/__init__.py` is the release, and pushing it
+to `main` is what publishes it. `.github/workflows/release.yml` runs the whole
+test matrix, asks PyPI whether that version is already there, and uploads the
+sdist and wheel by trusted publishing only if the answer is no and everything is
+green. So a push to `main` that does not bump the version is an ordinary CI run,
+and bumping the version is the release.
+
+Nothing is published from a red build. PyPI versions are immutable, and a
+release number burned on a broken build cannot be taken back — which is also why
+the version check treats anything but HTTP 200 or 404 from PyPI as a failure
+rather than guessing.
+
+Every other branch is built by `test.yml` on push, so work in progress is
+checked as it goes.
 
 The hardware tests open a hidden GLFW window. Nothing is presented — encoding
 reads a texture and never swaps a buffer — so a test run does not flash over

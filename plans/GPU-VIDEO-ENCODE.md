@@ -543,9 +543,11 @@ that scrubs.
 
 ## Open questions
 
-- **Distribution name.** `pyopengl-video` on PyPI, importing as
-  `pyopengl_video`, needs checking against what is already registered there
-  before the first release.
+- **Distribution name — settled.** `pyopengl-video` is unregistered on PyPI, as
+  is `pyopengl_video`, so the name the package already carries is the name it
+  publishes under. Nothing has been uploaded yet: the first push to `main` with
+  a version PyPI does not have is what cuts the release, so the project needs a
+  *pending* trusted publisher created against the name before that happens.
 - **How OpenGLContext depends on it.** An optional extra
   (`openglcontext[video]`) keeps the install of anyone who never records a video
   unchanged, at the cost of a `--record` flag that can fail at runtime with a

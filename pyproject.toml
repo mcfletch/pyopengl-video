@@ -72,6 +72,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+# The suite shares fixtures and frame generators through `tests.conftest`, which
+# needs the project root importable. `python -m pytest` puts it there by adding
+# the working directory; the `pytest` command does not, and neither does tox or
+# CI, so it is stated here rather than left to how the suite happens to be
+# started.
+pythonpath = ["."]
 timeout = 300
 markers = [
     "gl: needs a live OpenGL context",
