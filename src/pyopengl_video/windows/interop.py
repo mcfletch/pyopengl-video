@@ -74,6 +74,25 @@ def available() -> bool:
     return EXTENSION in wgl_extensions()
 
 
+def handle_array(handle: Any) -> Any:
+    """A one-element array holding `handle`, for the calls that take several.
+
+    Locking and unlocking take an array of registered objects, and PyOpenGL
+    hands the registration's result back differently depending on which
+    dispatch implementation is running: an opaque pointer object under the
+    compiled layer, a plain integer under ctypes. Both name the same object, so
+    the array is built from the interface's own ``HANDLE`` type and the value is
+    reduced to its address, rather than trusting whichever Python type arrived.
+    """
+    from OpenGL.raw.WGL._types import HANDLE
+
+    if isinstance(handle, int):
+        address = handle
+    else:
+        address = ctypes.cast(handle, ctypes.c_void_p).value or 0
+    return (HANDLE * 1)(address)
+
+
 def context_luid() -> bytes | None:
     """The LUID of the GPU the current OpenGL context is running on.
 
@@ -145,7 +164,7 @@ class SharedTexture(InputHandle):
             raise InteropError(0, 'wglDXLockObjectsNV',
                                'this texture is already held for drawing')
         from OpenGL.WGL.NV.DX_interop import wglDXLockObjectsNV, wglDXUnlockObjectsNV
-        handles = (type(self.handle) * 1)(self.handle)
+        handles = handle_array(self.handle)
         if not wglDXLockObjectsNV(self.interop.pointer, 1, handles):
             raise InteropError(ctypes.GetLastError(), 'wglDXLockObjectsNV')
         self._locked = True

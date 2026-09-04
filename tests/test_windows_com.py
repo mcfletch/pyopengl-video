@@ -82,6 +82,35 @@ def test_closing_an_empty_handle_touches_no_opengl():
     assert handle.framebuffer == 0
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='WGL types are Windows-only')
+def test_a_handle_array_accepts_either_spelling_of_a_handle():
+    """The two dispatch implementations return different Python types for it.
+
+    ``wglDXRegisterObjectNV`` hands back an opaque pointer object under the
+    compiled layer and a plain integer under ctypes, and both name the same
+    object. Building the array from whichever type turned up fails on the
+    integer, so the address is what is taken.
+    """
+    import ctypes
+
+    from pyopengl_video.windows.interop import handle_array
+
+    address = 0x12345678
+    from_integer = handle_array(address)
+    from_pointer = handle_array(ctypes.c_void_p(address))
+    assert len(from_integer) == 1 and len(from_pointer) == 1
+    assert from_integer[0] == from_pointer[0] == address
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='WGL types are Windows-only')
+def test_a_null_handle_makes_an_array_rather_than_failing():
+    import ctypes
+
+    from pyopengl_video.windows.interop import handle_array
+
+    assert handle_array(ctypes.c_void_p())[0] in (0, None)
+
+
 def test_a_handle_that_does_not_own_its_texture_keeps_it_on_close():
     handle = InputHandle()
     handle.texture = 42
