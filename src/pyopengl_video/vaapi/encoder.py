@@ -84,13 +84,6 @@ VBR_TARGET_PERCENTAGE = 70
 #: multiple of one second's bits.
 HRD_BUFFER_SECONDS = 2
 
-#: Profiles to try, best first. All three code 4:2:0 eight-bit; High is what
-#: every current part offers and what the parameter sets here declare.
-PROFILES = (
-    ('h264', api.VAProfileH264High),
-)
-
-
 def colour_pipeline(surface: int) -> api.VAProcPipelineParameterBuffer:
     """The video processing pass that turns a full-range RGB surface into NV12.
 
