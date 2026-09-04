@@ -1,11 +1,11 @@
 """Record a spinning triangle to an MP4, rendering with plain PyOpenGL.
 
 This is the whole shape of a recording: render, blit the finished frame into a
-texture the encoder has been told about, encode, mux. Run it with a path::
+texture the encoder reads, encode, mux. Run it with a path::
 
     python examples/record_triangle.py triangle.mp4 --frames 120
 
-Two details matter to anyone recording their own renderer, and both are here.
+Three details matter to anyone recording their own renderer, and all are here.
 
 **The frame is upside down unless the blit turns it over.** OpenGL's framebuffer
 starts at the bottom left; the encoder reads a texture from its first row and
@@ -16,6 +16,12 @@ the video the right way up.
 **One texture is not enough.** An encoder that reorders frames is still reading
 a texture after ``encode`` returns, so the recording cycles through
 ``encoder.input_slots`` of them.
+
+**The encoder makes its own.** ``new_input()`` returns a texture it can read and
+a framebuffer to blit into, because on Windows the surface is a Direct3D
+resource only the backend can allocate. Drawing happens inside
+``for_drawing()``, which is where such a surface passes between the two
+graphics APIs and does nothing where nothing is shared.
 """
 from __future__ import annotations
 
@@ -26,29 +32,20 @@ import sys
 import glfw
 from OpenGL.GL import (
     GL_ARRAY_BUFFER,
-    GL_COLOR_ATTACHMENT0,
     GL_COLOR_BUFFER_BIT,
     GL_COMPILE_STATUS,
     GL_DRAW_FRAMEBUFFER,
     GL_FLOAT,
     GL_FRAGMENT_SHADER,
     GL_FRAMEBUFFER,
-    GL_LINEAR,
     GL_NEAREST,
     GL_READ_FRAMEBUFFER,
-    GL_RGBA,
-    GL_RGBA8,
     GL_STATIC_DRAW,
-    GL_TEXTURE_2D,
-    GL_TEXTURE_MAG_FILTER,
-    GL_TEXTURE_MIN_FILTER,
     GL_TRIANGLES,
-    GL_UNSIGNED_BYTE,
     GL_VERTEX_SHADER,
     glAttachShader,
     glBindBuffer,
     glBindFramebuffer,
-    glBindTexture,
     glBindVertexArray,
     glBlitFramebuffer,
     glBufferData,
@@ -59,18 +56,13 @@ from OpenGL.GL import (
     glCreateShader,
     glDrawArrays,
     glEnableVertexAttribArray,
-    glFramebufferTexture2D,
     glGenBuffers,
-    glGenFramebuffers,
-    glGenTextures,
     glGenVertexArrays,
     glGetShaderInfoLog,
     glGetShaderiv,
     glGetUniformLocation,
     glLinkProgram,
     glShaderSource,
-    glTexImage2D,
-    glTexParameteri,
     glUniform1f,
     glUseProgram,
     glVertexAttribPointer,
@@ -129,22 +121,6 @@ def make_triangle():
     return array
 
 
-def make_capture_target(width, height):
-    """A texture the encoder can read, and a framebuffer that blits into it."""
-    texture = int(glGenTextures(1))
-    glBindTexture(GL_TEXTURE_2D, texture)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, None)
-    framebuffer = int(glGenFramebuffers(1))
-    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer)
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, texture, 0)
-    glBindFramebuffer(GL_FRAMEBUFFER, 0)
-    return texture, framebuffer
-
-
 def capture(framebuffer, width, height):
     """Copy the finished frame into the capture texture, the right way up.
 
@@ -190,8 +166,10 @@ def main(argv=None):
 
     with open_encoder(width, height, fps=options.fps,
                       bframes=options.bframes) as encoder:
-        ring = [make_capture_target(width, height) for _ in range(encoder.input_slots)]
-        handles = [encoder.register(texture) for texture, _ in ring]
+        # The encoder allocates its own inputs: on some platforms its surface is
+        # a resource only the driver can make, and this way the loop is the same
+        # everywhere.
+        ring = [encoder.new_input() for _ in range(encoder.input_slots)]
         step = encoder.timescale * 1 // options.fps
 
         with MP4Writer(options.path, encoder) as movie:
@@ -204,9 +182,12 @@ def main(argv=None):
                 glBindVertexArray(triangle)
                 glDrawArrays(GL_TRIANGLES, 0, 3)
 
-                slot = index % len(ring)
-                capture(ring[slot][1], width, height)
-                movie.write(encoder.encode(handles[slot], timestamp=index * step))
+                handle = ring[index % len(ring)]
+                # The scope is where a surface shared with another graphics API
+                # changes hands; where nothing is shared it does nothing.
+                with handle.for_drawing():
+                    capture(handle.framebuffer, width, height)
+                movie.write(encoder.encode(handle, timestamp=index * step))
             movie.write(encoder.flush())
 
     glfw.terminate()

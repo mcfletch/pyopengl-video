@@ -6,6 +6,12 @@ texture name, a VA-API session takes a DMA-BUF exported from one -- so the
 interface is written in terms of a *registered input*: the caller hands over a
 texture once, gets a handle back, and encodes with that handle every frame.
 
+Which side creates that texture is not the same everywhere. A Linux encoder
+takes one the caller made; a Windows encoder reads a Direct3D resource that only
+the backend can allocate. So :meth:`Encoder.new_input` is how an input is
+obtained on every backend, and :meth:`Encoder.register` remains for a caller
+bringing its own texture to one that accepts a foreign one.
+
 Encoders may hold frames back. An encoder configured with B-frames or with
 lookahead consumes several pictures before it emits any, so :meth:`Encoder.encode`
 returns a *list* of packets: empty is ordinary, two is ordinary, and no caller
@@ -18,6 +24,33 @@ import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
+
+from pyopengl_video.inputs import InputHandle
+
+#: Bits per pixel per second, used when a caller names no bitrate. 1080p60 lands
+#: near 8.7 Mbit/s, which is a reasonable quality for screen-captured 3D.
+DEFAULT_BITS_PER_PIXEL = 0.07
+
+
+def frame_rate_ratio(fps: float | tuple[int, int]) -> tuple[int, int]:
+    """A frame rate as an exact numerator and denominator.
+
+    A float rate becomes the ratio broadcast uses for it, so 29.97 records as
+    30000/1001 rather than as an approximation that drifts over a long
+    recording.
+    """
+    if isinstance(fps, tuple):
+        return int(fps[0]), int(fps[1])
+    if abs(fps - round(fps)) < 1e-6:
+        return int(round(fps)), 1
+    return int(round(fps * 1001)), 1001
+
+
+def default_bitrate(size: tuple[int, int], frame_rate: tuple[int, int]) -> int:
+    """Bits per second for a frame size and rate, at :data:`DEFAULT_BITS_PER_PIXEL`."""
+    width, height = size
+    numerator, denominator = frame_rate
+    return int(width * height * (numerator / denominator) * DEFAULT_BITS_PER_PIXEL)
 
 
 class EncoderError(RuntimeError):
@@ -103,6 +136,29 @@ class Encoder(ABC):
     #: True when packets come out in decode order rather than display order,
     #: which is what a container needs to know before it writes composition times
     reorders_frames: bool = False
+    #: True when :meth:`register` will not take a texture the caller made, so
+    #: :meth:`new_input` is the only way to get an input. Windows backends read a
+    #: Direct3D resource, which has to exist before OpenGL can name it.
+    allocates_inputs: bool = False
+
+    def new_input(self) -> InputHandle:
+        """A texture this encoder reads, with a framebuffer that fills it.
+
+        The way to get an input on any backend. Ask for
+        :attr:`input_slots` of them at the start of a recording and cycle
+        through them; draw into one inside its
+        :meth:`~pyopengl_video.inputs.InputHandle.for_drawing` scope.
+
+        The default makes an ordinary ``GL_RGBA8`` texture and registers it,
+        which is what a backend accepting a foreign texture wants. Backends
+        whose input must be allocated by the driver override this.
+        """
+        from pyopengl_video.inputs import create_framebuffer, create_rgba_texture
+        texture = create_rgba_texture(*self.size)
+        handle = self.register(texture)
+        handle.framebuffer = create_framebuffer(texture, handle.target)
+        handle.owns_texture = True
+        return handle
 
     @abstractmethod
     def register(self, texture: int, target: int | None = None) -> Any:
@@ -110,7 +166,8 @@ class Encoder(ABC):
 
         Registration is expensive and the handle is reusable: register the
         textures a recording will cycle through once, then encode from them
-        repeatedly.
+        repeatedly. A backend whose :attr:`allocates_inputs` is set refuses a
+        texture it did not make; use :meth:`new_input` there.
         """
 
     @abstractmethod

@@ -1,7 +1,9 @@
 # Hardware video encode from an OpenGL colour buffer
 
-**Status:** In progress -- the library encodes and muxes; the OpenGLContext
-recorder is not built yet
+**Status:** In progress -- NVIDIA on Linux and Intel on Windows both record end
+to end through the OpenGLContext recorder. NVIDIA on Windows is next, over the
+interop shim the Intel backend already uses; Intel and AMD on Linux follow.
+Platform and vendor coverage is the table in *Phases*.
 **Scope:** `pyopengl-video`, a standalone library on top of PyOpenGL, consumed by
 OpenGLContext's frame recorder
 **Goal:** turn what the engine just rendered into an H.264 stream at full frame
@@ -232,17 +234,28 @@ it — and it is a C++ COM-style interface, which is a far heavier ctypes bindin
 than libva's flat C. AMF is therefore phase 4, valuable mostly for Windows,
 where it is the native path.
 
-### Windows
+### Windows -- one shim, then each vendor's own encoder
 
-**The OpenGL device type does not exist there.** NVIDIA's header states that
-`NV_ENC_DEVICE_TYPE_OPENGL` is supported on Linux alone, so a texture cannot be
-handed to NVENC by name on Windows however good the hardware is. Reaching the
-encoder from OpenGL there means a Pixel Buffer Object readback, a Direct3D 11
-texture shared through `WGL_NV_DX_interop2`, or CUDA interop. The D3D11 route is
-the interesting one, because NVENC, AMF and oneVPL all take D3D11 textures, so a
-single interop mechanism would serve all three vendors -- the same shape the
-DMA-BUF export has on Linux. The whole analysis, and what already works there
-unchanged, is in [WINDOWS-SUPPORT.md](WINDOWS-SUPPORT.md).
+**NVIDIA's OpenGL device type does not exist there**, so a texture cannot be
+handed to NVENC by name on Windows however good the hardware is. What every
+Windows encoder does understand is an `ID3D11Texture2D`, and `WGL_NV_DX_interop2`
+makes one object that is simultaneously a D3D11 texture and a GL texture. That is
+the same shape the DMA-BUF export has on Linux: a handle, resolved by the driver,
+rather than a pointer.
+
+The extension's name is historical -- Intel's Windows driver exposes it, as does
+AMD's -- so **one interop mechanism serves all three vendors**, and each vendor's
+encoder then reads the D3D11 texture: NVENC through
+`NV_ENC_DEVICE_TYPE_DIRECTX`, Intel through oneVPL with `MFX_IMPL_VIA_D3D11`,
+AMD through AMF's `AMF_MEMORY_DX11`.
+
+Two things measured on real hardware shape the design, and both are recorded with
+the rest in [WINDOWS-SUPPORT.md](WINDOWS-SUPPORT.md). **Zero-copy needs the
+encoder and the GL context on the same adapter**, which on a switchable-graphics
+laptop they are not by default; discovery therefore matches the DXGI adapter to
+the GL context's `GL_DEVICE_LUID_EXT` and offers the encoders that live there.
+And **Media Foundation is not a dependable floor**: a machine with working
+QuickSync hardware registered no video encoder MFT at all.
 
 ### What does not work
 
@@ -265,9 +278,16 @@ pyopengl-video/
         dmabuf.py             EGLImage export for the VA-API backends, over
                               OpenGL.EGL.MESA.image_dma_buf_export
         mp4.py                MP4 muxer: Annex-B in, a playable file out
+        windows/              the Windows interop shim, shared by every backend there
+            com.py            GUIDs, vtable calls, HRESULT checking
+            d3d11.py          DXGI adapter identity (by LUID), D3D11 device, textures
+            interop.py        WGL_NV_DX_interop2: one object, a D3D11 and a GL texture
         nvenc/
             api.py            ctypes NvEncodeAPI: structs, GUIDs, function list, errors
-            encoder.py        NVENCEncoder -- GL texture in, Annex-B out
+            encoder.py        NVENCEncoder -- GL texture (Linux) or D3D11 (Windows) in
+        vpl/
+            api.py            ctypes oneVPL: the packed mfx structures, the allocator
+            encoder.py        VPLEncoder -- D3D11 texture in, Annex-B out (Intel)
         vaapi/
             api.py            ctypes libva: display, config, context, surfaces, buffers
             encoder.py        VAAPIEncoder -- dmabuf in, Annex-B out (Intel and AMD)
@@ -296,7 +316,9 @@ class Encoder:
     codec: str                  # 'h264', 'hevc'
     size: tuple[int, int]
     zero_copy: bool             # True when frames never reach host memory
+    allocates_inputs: bool      # True when only new_input() can make an input
 
+    def new_input(self) -> InputHandle: ...
     def register(self, texture, target=GL_TEXTURE_2D) -> InputHandle: ...
     def encode(self, handle, timestamp, duration, force_idr=False) -> list[Packet]: ...
     def flush(self) -> list[Packet]: ...
@@ -313,6 +335,16 @@ must track composition offsets.
 `encode()` returning a *list* is the deferred-output rule made part of the
 interface: zero packets is normal, two is normal, and no caller may assume one
 frame in means one packet out.
+
+**The encoder allocates its own inputs.** On Linux a caller can make an RGBA
+texture and hand it over; on Windows the texture has to be a D3D11 resource
+before it can be a GL one, so only the backend can create it. `new_input()` is
+therefore the way to get an input on every backend, and the handle it returns
+carries the GL texture name and a framebuffer with that texture attached.
+Drawing into one happens inside `handle.for_drawing()`, which is where a shared
+texture changes hands between D3D and GL and where a backend that needs no such
+scope does nothing. `register()` remains for a caller bringing its own texture to
+a backend that accepts one.
 
 ### OpenGLContext: the recorder
 
@@ -375,7 +407,12 @@ happy accident:
 
 - `nvEncodeAPI.h` via nv-codec-headers — MIT. Read for ABI facts, cited in the
   binding's docstring.
-- `libva` — MIT. AMF — MIT. oneVPL — MIT.
+- The oneVPL headers via [intel/libvpl](https://github.com/intel/libvpl) — MIT.
+  Read the same way, for structure layouts and packing, and cited rather than
+  vendored. No vendor sample code is copied from either.
+- `libva` — MIT. AMF — MIT.
+- `WGL_NV_DX_interop2`, and D3D11/DXGI/Media Foundation — a registry
+  specification and documented platform interfaces.
 - No clean-room procedure is needed for any of them, because none is copyleft.
   If a vendor's only documentation of some behaviour turns out to be a GPL
   implementation, [CLEAN-ROOM.md](../../CLEAN-ROOM.md) applies and a spec goes in
@@ -419,14 +456,19 @@ which is a separate program and not a dependency of ours.
 
 | Phase | Content | Verified on |
 | --- | --- | --- |
-| 1a | `pyopengl-video`: `Encoder` interface and registry, NVENC backend on the GL texture path, MP4 muxer with composition offsets, ABI conformance harness, worked example | **landed**, on this machine |
-| 1b | OpenGLContext: `VideoRecorder` over the texture ring and the flipping blit, fixed-step recording clock, `--record` in a demo | next |
-| 2 | PBO readback tier, so every driver with an encoder can record, and the reference the zero-copy paths are compared against | this machine |
-| 3 | `dmabuf.py` EGL export, VA-API backend, covering Intel and AMD | needs hardware |
-| 4 | AMF backend, Windows paths, HEVC and AV1 where the part has them, audio track | needs hardware |
+| 1a | `pyopengl-video`: `Encoder` interface and registry, NVENC backend on the GL texture path, MP4 muxer with composition offsets, ABI conformance harness, worked example | **landed**, NVIDIA/Linux |
+| 1b | OpenGLContext: `VideoRecorder` over the texture ring and the flipping blit, fixed-step recording clock | **landed**, NVIDIA/Linux |
+| W1 | `windows/`: DXGI adapter identity, D3D11 device and textures, `WGL_NV_DX_interop2` shared textures | in progress, this machine |
+| W2 | `Encoder.new_input()` and `for_drawing()`, and `OpenGLContext`'s recorder following | in progress |
+| W3 | oneVPL backend: Intel on Windows, D3D11 video memory, RGB straight in | in progress, this machine |
+| W4 | NVENC on the DirectX device type, reusing the shim | next; needs a GL context on the NVIDIA adapter |
+| 2 | PBO readback tier, so every driver with an encoder can record, and the reference the zero-copy paths are compared against | after W4 |
+| 3 | `dmabuf.py` EGL export, VA-API backend for Intel and AMD on Linux | this machine, rebooted into Linux |
+| 4 | AMF for AMD, HEVC and AV1 where the part has them, audio track | needs hardware |
 
-Phase 1 is the whole feature for the machine we develop on; phases 2 and 3 are
-what make it a library for everyone rather than for NVIDIA owners.
+Phases W1-W3 make the machine we develop on record without an NVIDIA part in the
+path at all, which is what makes this a library for everyone rather than for
+NVIDIA owners; phase 3 does the same for Linux.
 
 ## Open questions
 

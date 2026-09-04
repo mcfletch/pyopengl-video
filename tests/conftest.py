@@ -41,6 +41,25 @@ def nvenc_available(gl_context):
     return True
 
 
+@pytest.fixture
+def vpl_available(gl_context):
+    """Skip unless Intel's encoder is reachable from this OpenGL context."""
+    from pyopengl_video import vpl
+
+    if not vpl.probe():
+        pytest.skip('no Intel encoder library here (oneVPL is reached through '
+                    'Direct3D, so this backend is Windows-only for now)')
+    from pyopengl_video.windows import interop
+
+    if not interop.available():
+        pytest.skip('this OpenGL driver does not offer WGL_NV_DX_interop2')
+    adapter = interop.adapter_for_context()
+    if adapter is None or adapter.vendor != 'Intel':
+        pytest.skip(f'this OpenGL context is on {adapter}, not an Intel GPU, so '
+                    'the Intel encoder could not read what it draws')
+    return adapter
+
+
 def gradient_frame(width, height, phase=0):
     """An RGBA frame with a diagonal gradient that moves with `phase`.
 

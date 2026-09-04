@@ -22,14 +22,21 @@ from dataclasses import dataclass
 
 from OpenGL.GL import GL_TEXTURE_2D
 
-from pyopengl_video.encoder import Encoder, EncoderError, Packet
+from pyopengl_video import inputs
+from pyopengl_video.encoder import (
+    DEFAULT_BITS_PER_PIXEL,
+    Encoder,
+    EncoderError,
+    Packet,
+    default_bitrate,
+    frame_rate_ratio,
+)
 from pyopengl_video.nvenc import api
 
 log = logging.getLogger(__name__)
 
-#: Bits per pixel per second, used when a caller names no bitrate. 1080p60 lands
-#: near 8.7 Mbit/s, which is a reasonable quality for screen-captured 3D.
-DEFAULT_BITS_PER_PIXEL = 0.07
+__all__ = ['NVENCEncoder', 'InputHandle', 'DEFAULT_BITS_PER_PIXEL',
+           'SPARE_OUTPUT_BUFFERS']
 
 #: How many compressed-output buffers to keep, over and above the frames the
 #: encoder may hold for reordering.
@@ -37,19 +44,25 @@ SPARE_OUTPUT_BUFFERS = 4
 
 
 @dataclass
-class InputHandle:
+class InputHandle(inputs.InputHandle):
     """A texture the encoder has been told about.
 
     texture/target -- what was registered
     resource -- the driver's handle for it
     description -- the structure the driver was handed, kept alive alongside the
         registration it describes
+    framebuffer/owns_texture -- see
+        :class:`pyopengl_video.inputs.InputHandle`; set when the encoder made
+        the texture itself, through
+        :meth:`~pyopengl_video.encoder.Encoder.new_input`
     """
 
-    texture: int
-    target: int
-    resource: ctypes.c_void_p
-    description: api.NV_ENC_INPUT_RESOURCE_OPENGL_TEX
+    texture: int = 0
+    target: int = 0
+    resource: ctypes.c_void_p | None = None
+    description: api.NV_ENC_INPUT_RESOURCE_OPENGL_TEX | None = None
+    framebuffer: int = 0
+    owns_texture: bool = False
 
 
 @dataclass
@@ -122,23 +135,10 @@ class NVENCEncoder(Encoder):
 
     # ---------------------------------------------------------------- setup
 
-    @staticmethod
-    def _as_ratio(fps: float | tuple[int, int]) -> tuple[int, int]:
-        """Frame rate as an exact numerator and denominator.
-
-        A float rate is turned into the ratio broadcast uses for it, so 29.97
-        records as 30000/1001 rather than as an approximation that drifts.
-        """
-        if isinstance(fps, tuple):
-            return int(fps[0]), int(fps[1])
-        if abs(fps - round(fps)) < 1e-6:
-            return int(round(fps)), 1
-        return int(round(fps * 1001)), 1001
+    _as_ratio = staticmethod(frame_rate_ratio)
 
     def _default_bitrate(self) -> int:
-        width, height = self.size
-        rate_num, rate_den = self.frame_rate
-        return int(width * height * (rate_num / rate_den) * DEFAULT_BITS_PER_PIXEL)
+        return default_bitrate(self.size, self.frame_rate)
 
     def _open_session(self) -> ctypes.c_void_p:
         """Open an encoder session against the current OpenGL context."""
@@ -373,6 +373,7 @@ class NVENCEncoder(Encoder):
         self._free_output = []
         for handle in self._registered:
             self.api.nvEncUnregisterResource(self.session, handle.resource)
+            handle.close()
         self._registered = []
         if self.session:
             self.api.nvEncDestroyEncoder(self.session)

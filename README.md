@@ -5,19 +5,20 @@ the GPU.
 
 The renderer has already put the frame in GPU memory, and the GPU has a video
 encoder on the same die. `pyopengl-video` hands one to the other: a texture goes
-in by name, an H.264 stream comes out, and nothing crosses the bus but the
-compressed result.
+in, an H.264 stream comes out, and nothing crosses the bus but the compressed
+result.
 
 ```python
 from pyopengl_video import open_encoder
 from pyopengl_video.mp4 import MP4Writer
 
 with open_encoder(1920, 1080, fps=60, bitrate=12_000_000) as encoder:
-    handle = encoder.register(texture)
+    handle = encoder.new_input()
     with MP4Writer('out.mp4', encoder) as movie:
         for index in range(600):
             render()
-            copy_the_frame_into(texture)
+            with handle.for_drawing():
+                copy_the_frame_into(handle.framebuffer)
             movie.write(encoder.encode(handle, timestamp=index * 1500))
         movie.write(encoder.flush())
 ```
@@ -34,12 +35,20 @@ muxer is part of this package.
 | Backend | Hardware | Platform | Codec | Frame handed over as | State |
 | --- | --- | --- | --- | --- | --- |
 | `nvenc` | NVIDIA, Kepler and later | Linux | H.264 | an OpenGL texture, in place | working |
+| `vpl` | Intel, Gen9 and later | Windows | H.264 | a Direct3D 11 surface OpenGL draws into | working |
+| `nvenc` | NVIDIA | Windows | H.264 | the same Direct3D 11 surface | [next](plans/WINDOWS-SUPPORT.md) |
 | `vaapi` | Intel and AMD | Linux | H.264 | a DMA-BUF exported from a texture | [planned](plans/VAAPI-BACKEND.md) |
+| `amf` | AMD | Windows | H.264 | the same Direct3D 11 surface | [planned](plans/WINDOWS-SUPPORT.md) |
 
-**Linux only, for now.** NVIDIA supports the encoder's OpenGL device type on
-Linux alone, so a texture cannot be handed over by name on Windows however good
-the card is. The muxer and the interface are platform-independent, and
-[what Windows would take](plans/WINDOWS-SUPPORT.md) is written down.
+The frame reaches the encoder by whatever handle the platform has for one.
+NVIDIA takes an OpenGL texture by name, but only on Linux; on Windows every
+vendor's encoder takes a Direct3D 11 texture, and `WGL_NV_DX_interop2` makes one
+allocation that is a Direct3D texture and an OpenGL texture at the same time.
+The muxer, the interface and the recorder are the same either way.
+
+**Zero-copy needs the encoder on the same GPU as the renderer.** On a machine
+with more than one, the backends match the OpenGL context's adapter and offer
+themselves only there — see [the plan](plans/WINDOWS-SUPPORT.md).
 
 Ask what a machine can do:
 
@@ -102,13 +111,19 @@ Tests that need an encoder or a GL context skip themselves without one, so the
 suite runs anywhere. The hardware tests use a hidden GLFW window and synthetic
 frames.
 
-The NVENC binding is hand-written ctypes over a large C ABI, so
-`tests/test_nvenc_abi.py` checks every structure against sizes and offsets
-recorded from NVIDIA's header — it runs with no compiler, no driver and no GPU.
+The vendor bindings are hand-written ctypes over large C ABIs, and a layout
+mistake there corrupts a structure rather than raising anything. So each is
+checked against the sizes and offsets its header states —
+`tests/test_nvenc_abi.py` and `tests/test_vpl_abi.py` — and both run with no
+compiler, no driver and no GPU. oneVPL packs each structure to 4 or 8 bytes,
+which changes the layout and which a runtime reports only as an invalid
+parameter, so those checks earn their keep.
+
 Re-record after changing a structure, or when moving to a newer header:
 
 ```bash
 python tools/record_nvenc_abi.py path/to/nvEncodeAPI.h
+python tools/record_vpl_abi.py path/to/libvpl/api/vpl
 ```
 
 ## Licence

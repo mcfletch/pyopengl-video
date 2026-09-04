@@ -74,9 +74,11 @@ def _register_builtin_backends() -> None:
 
     Importing a backend must not require its hardware: each module exposes a
     cheap probe, and the driver library is only opened when an encoder is built.
+    The order is the order :func:`open_encoder` prefers them in.
     """
     from pyopengl_video.nvenc import BACKEND as NVENC_BACKEND
-    _encoder.BACKENDS.append(NVENC_BACKEND)
+    from pyopengl_video.vpl import BACKEND as VPL_BACKEND
+    _encoder.BACKENDS.extend([NVENC_BACKEND, VPL_BACKEND])
 
 
 _register_builtin_backends()

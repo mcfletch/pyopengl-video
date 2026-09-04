@@ -32,22 +32,23 @@ from pyopengl_video import open_encoder
 from pyopengl_video.mp4 import MP4Writer
 
 with open_encoder(1920, 1080, fps=60, bitrate=12_000_000) as encoder:
-    ring = [encoder.register(texture) for texture in make_textures(encoder.input_slots)]
+    ring = [encoder.new_input() for _ in range(encoder.input_slots)]
     step = encoder.timescale // 60
 
     with MP4Writer('out.mp4', encoder) as movie:
         for index in range(600):
             render_one_frame()
             handle = ring[index % len(ring)]
-            copy_the_frame_into(handle.texture)          # flipping as it copies
+            with handle.for_drawing():
+                copy_the_frame_into(handle.framebuffer)  # flipping as it copies
             movie.write(encoder.encode(handle, timestamp=index * step))
         movie.write(encoder.flush())
 ```
 
-Four things are happening, and each has a section below: a texture is registered
-once and encoded from many times; the finished frame is copied into it; the
-frame is stamped with a time; and whatever the encoder produced goes to the
-muxer. `examples/record_triangle.py` is this loop around a working renderer.
+Four things are happening, and each has a section below: the encoder is asked
+for the textures it will read; the finished frame is copied into one; the frame
+is stamped with a time; and whatever the encoder produced goes to the muxer.
+`examples/record_triangle.py` is this loop around a working renderer.
 
 ## Choosing an encoder
 
@@ -88,15 +89,34 @@ Unknown values are refused by name, listing what is known.
 
 ## Getting the frame to the encoder
 
-The encoder reads a texture, so the finished frame has to be in one. A renderer
-that draws into a framebuffer copies it across with a blit:
+**Ask the encoder for its inputs.** `new_input()` returns a handle carrying a
+texture the encoder can read and a framebuffer with that texture attached:
 
 ```python
-glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)           # or whatever was drawn into
-glBindFramebuffer(GL_DRAW_FRAMEBUFFER, capture_framebuffer)
-glBlitFramebuffer(0, 0, width, height,
-                  0, height, width, 0,              # destination Y reversed: the flip
-                  GL_COLOR_BUFFER_BIT, GL_NEAREST)
+handle = encoder.new_input()
+handle.texture        # the OpenGL texture name
+handle.framebuffer    # a framebuffer with it as the colour attachment
+```
+
+The encoder allocates them because on some platforms it is the only side that
+can. Intel's encoder on Windows reads a Direct3D 11 surface, which has to exist
+as a Direct3D resource before OpenGL can be given a name for it, so the backend
+creates the pair and hands both back. `encoder.allocates_inputs` says when
+`register()` — for a caller bringing a texture of its own — is not available.
+
+**Draw inside `for_drawing()`.** That scope is where a surface shared with
+another graphics API changes hands, and it is what orders the renderer's writes
+against the encoder's reads. On a backend sharing nothing it does nothing, so
+the same loop runs everywhere:
+
+```python
+with handle.for_drawing():
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)       # or whatever was drawn into
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, handle.framebuffer)
+    glBlitFramebuffer(0, 0, width, height,
+                      0, height, width, 0,          # destination Y reversed: the flip
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST)
+packets = encoder.encode(handle, timestamp)
 ```
 
 **The destination Y coordinates run backwards on purpose.** OpenGL's framebuffer
@@ -105,15 +125,15 @@ calls that the top of the picture. Blitting the source's bottom edge to the
 destination's top edge turns the frame over as it copies, which costs nothing.
 Without it the video comes out upside down.
 
-**Register as many textures as `encoder.input_slots` says, and cycle through
-them.** An encoder that reorders frames is still reading a texture after
-`encode()` has returned, and handing it back one it has not finished with raises
-an error that says so. Two is the minimum even without reordering, which is what
-a renderer wants anyway: it can be drawing the next frame while the encoder
-reads the last.
+**Take as many inputs as `encoder.input_slots` says, and cycle through them.**
+An encoder that reorders frames is still reading a texture after `encode()` has
+returned, and handing it back one it has not finished with raises an error that
+says so. Two is the minimum even without reordering, which is what a renderer
+wants anyway: it can be drawing the next frame while the encoder reads the last.
 
-The texture must be RGBA with eight bits a channel — `GL_RGBA8` — and exactly the
-encoder's frame size.
+A texture handed to `register()` must be RGBA with eight bits a channel —
+`GL_RGBA8` — and exactly the encoder's frame size. One from `new_input()` already
+is.
 
 ## Timing
 
@@ -214,9 +234,31 @@ game is the game plus a blit.
 
 - **H.264 only**, up to 4096x4096. HEVC and AV1 are hardware the parts have and
   the library does not use yet.
-- **NVIDIA only, on Linux**, until the VA-API backend lands for Intel and AMD.
-  NVIDIA supports the encoder's OpenGL device type on Linux alone; see
-  `plans/WINDOWS-SUPPORT.md` for what Windows would take.
+- **NVIDIA on Linux, Intel on Windows.** AMD, and Intel on Linux, go through
+  VA-API, which is not written yet; NVIDIA on Windows goes through the same
+  Direct3D interop the Intel backend uses, which is written and not yet wired to
+  that encoder. `plans/GPU-VIDEO-ENCODE.md` holds the whole matrix.
 - **One context.** A session belongs to the OpenGL context that was current when
   it was opened, and every call must come from that context's thread.
 - **No audio.** The muxer writes a video track.
+
+## Which GPU the encoder is on
+
+On a machine with more than one GPU, an encoder can only read the renderer's
+frames without a copy if it is on the *same* GPU. A laptop with switchable
+graphics often runs OpenGL on the integrated part while a discrete one sits idle,
+so the Windows backends ask the current context which adapter it is on and offer
+themselves only there:
+
+```python
+from pyopengl_video.windows import interop
+
+adapter = interop.adapter_for_context()
+print(adapter)        # Intel(R) UHD Graphics 630 (Intel, LUID 6334010000000000)
+```
+
+`open_encoder` then picks the backend whose vendor owns that adapter, which is
+why an Intel-rendered frame records through Intel's encoder even on a machine
+that also has an NVIDIA part. Which GPU a context lands on is a per-application
+driver setting — the Windows graphics preference, or the vendor's control panel —
+and not something this library changes.

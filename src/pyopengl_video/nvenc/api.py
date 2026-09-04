@@ -52,9 +52,16 @@ LIBRARY_NAME = library_name()
 
 # The interface is __stdcall on Windows and cdecl everywhere else. The two are
 # the same ABI on 64-bit Windows, so this only bites a 32-bit build -- which is
-# reason enough to get it right rather than to explain it later.
-_LOADER = ctypes.WinDLL if sys.platform == 'win32' else ctypes.CDLL  # type: ignore[attr-defined]
-FUNCTYPE = ctypes.WINFUNCTYPE if sys.platform == 'win32' else ctypes.CFUNCTYPE  # type: ignore[attr-defined]
+# reason enough to get it right rather than to explain it later. The branch is
+# written out because ctypes offers the Windows spellings on Windows alone, and
+# a checker reading this file on either platform should see only the ones that
+# exist there.
+if sys.platform == 'win32':
+    _LOADER = ctypes.WinDLL
+    FUNCTYPE = ctypes.WINFUNCTYPE
+else:
+    _LOADER = ctypes.CDLL
+    FUNCTYPE = ctypes.CFUNCTYPE
 
 #: Interface version these declarations describe.
 HEADER_VERSION = (13, 1)
