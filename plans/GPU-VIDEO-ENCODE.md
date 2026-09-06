@@ -171,8 +171,11 @@ The sequence for the zero-copy path:
 1. `NvEncodeAPICreateInstance` once per process, with the struct version built
    from `min(header version, driver version)`.
 2. `nvEncOpenEncodeSessionEx` with `deviceType = NV_ENC_DEVICE_TYPE_OPENGL` and
-   `device = NULL`. A GL context must be current on the calling thread, and the
-   session is bound to it for its lifetime.
+   `device = NULL`. A GL context must be current on the calling thread, and it
+   must be one on the NVIDIA GPU that holds the encoder; the session is bound
+   to it for its lifetime. Both conditions come back as
+   `NV_ENC_ERR_UNSUPPORTED_DEVICE`, so the encoder asks `GL_RENDERER` which of
+   them it met before it raises.
 3. `nvEncGetEncodePresetConfigEx` for the chosen preset and tuning, then adjust
    GOP length, rate control and `repeatSPSPPS` on the returned config.
 4. `nvEncInitializeEncoder`.
@@ -597,6 +600,47 @@ Two more that are not about the code:
 - **A pending trusted publisher** has to exist on PyPI against the name before
   the first push to `main`. `pyopengl-video` is unregistered, so there is no
   project to attach an ordinary publisher to yet.
+
+### What the NVIDIA/Linux run answered
+
+An RTX 3060 Ti under driver 580.173.02, Wayland, GLFW's EGL context. The suite
+is green and the three shared changes come out as follows.
+
+**The muxer's parameter sets are a no-op here, and now have a gate.** NVENC
+repeats the sets in-band and what the stream carries is byte-identical to what
+`headers()` advertised, so the sample description is the same either way. That
+is a measurement rather than a property of the interface, so the checks that
+make it one live in `tests/test_nvenc_encode.py::TestMuxing`: a recording, a
+reordered recording, and `ffmpeg` decoding both in silence. `decode_errors` is
+in `tests/conftest.py`, where either backend's suite can reach it.
+
+**EGL on X11 could not be answered on this machine, and the attempt found
+something else.** There is an X server here, but no EGL display on it that the
+NVIDIA driver will open: an EGL context on X11 lands on llvmpipe, and forcing
+the NVIDIA vendor library refuses the display outright. So the question stands
+for a machine with a real X session. What the attempt did establish is the
+matrix around it — Wayland/EGL, Wayland/GLX and X11/GLX all open the session
+and encode — and that NVENC answers a context on the wrong GPU with the same
+`NV_ENC_ERR_UNSUPPORTED_DEVICE` it answers a missing context with. The message
+told the reader a context was not current while one was. It now names the
+renderer it found.
+
+**`open_encoder` explains a decline here.** With NVENC absent the message
+carries the VA-API backend's own reason, which names the driver packages to
+install; with it present, a size or codec past what it does lists the backend
+with its codecs and its maximum. Both are messages a caller can act on.
+
+The run also crossed the DMA-BUF path, which is the VA-API backend's and not
+NVENC's, and found that the two drivers disagree about layouts — see
+[VAAPI-BACKEND.md](VAAPI-BACKEND.md). `import_texture` now answers a refusal
+from either of the two calls with one `DMABufError`, and gives back the image
+and the texture it made rather than leaking them.
+
+The run also reported that a caller catching `EncoderError` around a VA-API
+recording did not catch a texture that would not export. `VAAPIEncoder`
+translates `DMABufError` at its own boundary now, so one `except EncoderError`
+covers a recording on every backend; `tests/test_errors.py` holds all three to
+that without hardware.
 
 ## Open questions
 

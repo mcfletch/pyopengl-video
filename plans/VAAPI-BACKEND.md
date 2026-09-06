@@ -47,6 +47,21 @@ resolves. The modifier is still carried across wherever the driver names one,
 because a tiled surface imported as linear reads as noise and nothing reports
 it.
 
+**A driver that names the layout requires it back.** NVIDIA's proprietary
+driver reports `0x0300000000E08013` — a block-linear layout — for the same
+export, and takes it back only when the import names it. An import that leaves
+the modifier out, or claims linear, is refused, which is correct: the pixels
+are not where either description says. So the modifier is not a hint to pass on
+where convenient but the half of the description that says how to read the
+memory, and only a driver that would not name a layout gives an import the
+freedom to omit one.
+
+Which of the two calls does the checking is also the driver's choice. Mesa
+answers at `eglCreateImageKHR`; NVIDIA hands back an image and refuses at
+`glEGLImageTargetTexture2DOES`, so `import_texture` turns a failure at either
+into one `DMABufError` and gives the image and the texture back before it
+raises.
+
 ## What is not done
 
 - **Intel.** The same code against `iHD`. The packed-header requirements are

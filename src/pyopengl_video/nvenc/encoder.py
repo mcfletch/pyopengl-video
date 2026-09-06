@@ -36,11 +36,50 @@ from pyopengl_video.nvenc import api
 log = logging.getLogger(__name__)
 
 __all__ = ['NVENCEncoder', 'InputHandle', 'DEFAULT_BITS_PER_PIXEL',
-           'SPARE_OUTPUT_BUFFERS']
+           'SPARE_OUTPUT_BUFFERS', 'current_gl_renderer',
+           'unsupported_device_detail']
 
 #: How many compressed-output buffers to keep, over and above the frames the
 #: encoder may hold for reordering.
 SPARE_OUTPUT_BUFFERS = 4
+
+
+def current_gl_renderer() -> str | None:
+    """What the current OpenGL context draws with, or ``None`` if there is none.
+
+    ``glGetString`` needs a context to answer, and returns nothing without one,
+    which is how the two cases are told apart.
+    """
+    from OpenGL.GL import GL_RENDERER, glGetString
+
+    renderer = glGetString(GL_RENDERER)
+    if not renderer:
+        return None
+    if isinstance(renderer, bytes):
+        return renderer.decode('utf-8', 'replace')
+    return str(renderer)
+
+
+def unsupported_device_detail() -> str:
+    """Why NVENC would not take the OpenGL context it was offered.
+
+    ``NV_ENC_ERR_UNSUPPORTED_DEVICE`` arrives for two different situations, and
+    they send a reader to opposite ends of a program. There may be no context
+    current on this thread. Or there may be one that is not on an NVIDIA GPU --
+    a software renderer, or the integrated part of a hybrid machine -- which
+    NVENC cannot read a texture out of however good the other adapter is. The
+    renderer the context reports is what separates them.
+    """
+    renderer = current_gl_renderer()
+    if renderer is None:
+        return 'an OpenGL context must be current on this thread'
+    if 'NVIDIA' in renderer.upper():
+        return (f'the current OpenGL context is on {renderer!r}, which is an '
+                'NVIDIA renderer, so the encoder refused the device for some '
+                'other reason')
+    return (f'the current OpenGL context draws with {renderer!r}, and NVENC '
+            'reads a texture only from a context on the NVIDIA GPU that holds '
+            'the encoder')
 
 
 @dataclass
@@ -152,8 +191,7 @@ class NVENCEncoder(Encoder):
             ctypes.byref(params), ctypes.byref(session))
         if status != api.NV_ENC_SUCCESS:
             raise api.NVENCError(
-                status, 'nvEncOpenEncodeSessionEx',
-                'an OpenGL context must be current on this thread')
+                status, 'nvEncOpenEncodeSessionEx', unsupported_device_detail())
         return session
 
     def _preset_config(self, preset: str, tuning: str) -> api.NV_ENC_PRESET_CONFIG:

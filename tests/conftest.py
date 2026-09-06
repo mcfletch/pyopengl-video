@@ -109,6 +109,26 @@ def vpl_available(gl_context):
     return adapter
 
 
+def decode_errors(path):
+    """What an outside decoder complains about, or None where there is none.
+
+    ``ffmpeg`` is not a dependency of this package and is not needed to run the
+    suite. Where it happens to be installed it is worth asking, because a
+    stream can be well formed, correctly timed, and still describe itself in a
+    way that sets a decoder up wrongly -- which nothing inside this package can
+    notice.
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which('ffmpeg') is None:
+        return None
+    found = subprocess.run(
+        ['ffmpeg', '-v', 'error', '-i', str(path), '-f', 'null', '-'],
+        capture_output=True, text=True)
+    return [line for line in found.stderr.splitlines() if line.strip()]
+
+
 def gradient_frame(width, height, phase=0):
     """An RGBA frame with a diagonal gradient that moves with `phase`.
 

@@ -16,7 +16,7 @@ from pyopengl_video import EncoderError, encoders, open_encoder
 from pyopengl_video.mp4 import MP4Writer, split_annexb
 from pyopengl_video.vaapi import api
 from pyopengl_video.vaapi.encoder import PIPELINE_DEPTH, VAAPIEncoder, colour_pipeline
-from tests.conftest import gradient_frame
+from tests.conftest import decode_errors, gradient_frame
 
 SIZE = (320, 240)
 FRAMES = 20
@@ -537,26 +537,6 @@ class TestClosing:
             assert made.size == SIZE
         with pytest.raises(EncoderError):
             made.flush()
-
-
-def decode_errors(path):
-    """What an outside decoder complains about, or None where there is none.
-
-    ``ffmpeg`` is not a dependency of this package and is not needed to run the
-    suite. Where it happens to be installed it is worth asking, because a
-    stream can be well formed, correctly timed, and still describe itself in a
-    way that sets a decoder up wrongly -- which nothing inside this package can
-    notice.
-    """
-    import shutil
-    import subprocess
-
-    if shutil.which('ffmpeg') is None:
-        return None
-    found = subprocess.run(
-        ['ffmpeg', '-v', 'error', '-i', str(path), '-f', 'null', '-'],
-        capture_output=True, text=True)
-    return [line for line in found.stderr.splitlines() if line.strip()]
 
 
 class TestMuxing:

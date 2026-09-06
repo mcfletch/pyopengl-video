@@ -328,13 +328,16 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
                        high_name, (modifier >> 32) & 0xFFFFFFFF]
     values.append(EGL_NONE)
 
+    layout = (f'modifier {modifier:#x}' if modifier != DRM_FORMAT_MOD_INVALID
+              else 'no named layout, which a driver need not accept for a '
+                   'buffer that is not linear')
     attributes = (EGL.EGLint * len(values))(*values)
     image = eglCreateImageKHR(display, EGL.EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
                               None, attributes)
     if not image:
         raise DMABufError(
             f'eglCreateImageKHR would not import a {width}x{height} buffer of '
-            f'{len(planes)} plane(s) with modifier {modifier:#x}')
+            f'{len(planes)} plane(s) with {layout}')
 
     texture = int(glGenTextures(1))
     glBindTexture(GL_TEXTURE_2D, texture)
@@ -343,7 +346,19 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
         (GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE), (GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE),
     ):
         glTexParameteri(GL_TEXTURE_2D, parameter, value)
-    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image)
+    # Which of the two calls checks the layout is the driver's choice: Mesa
+    # answers above, and NVIDIA accepts the image and refuses it here. A caller
+    # is owed the same exception either way, and neither the image nor the
+    # texture is theirs until both calls have succeeded.
+    try:
+        glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image)
+    except Exception as error:
+        glBindTexture(GL_TEXTURE_2D, 0)
+        release_imported_texture(texture, image)
+        raise DMABufError(
+            f'this EGL display would not give a {width}x{height} buffer of '
+            f'{len(planes)} plane(s) with {layout} an OpenGL name: '
+            f'{error}') from error
     glBindTexture(GL_TEXTURE_2D, 0)
     return texture, image
 

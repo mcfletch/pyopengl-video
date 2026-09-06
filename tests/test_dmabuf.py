@@ -15,8 +15,77 @@ from tests.conftest import gradient_frame
 
 SIZE = (320, 240)
 
+#: The low and high halves of each plane's modifier, as
+#: :data:`~pyopengl_video.linux.dmabuf._IMPORT_ATTRIBUTES` names them.
+MODIFIER_ATTRIBUTES = tuple(plane[3:] for plane in dmabuf._IMPORT_ATTRIBUTES)
+
+#: A single colour plane, which is what an RGBA frame exports as.
+ONE_PLANE = (dmabuf.Plane(fd=7, offset=0, stride=1280),)
+
 pytestmark = pytest.mark.skipif(not sys.platform.startswith('linux'),
                                 reason='DMA-BUF is the Linux frame handle')
+
+
+@pytest.fixture
+def attributes_of(egl, monkeypatch):
+    """Return what an import would hand ``eglCreateImageKHR``, as a mapping.
+
+    Whether a display accepts a buffer whose layout was not named is the
+    driver's business and differs between them; what the import asked for is
+    this package's, and is the same everywhere.
+    """
+    from OpenGL.EGL.KHR import image_base
+
+    def ask(modifier, planes=ONE_PLANE):
+        seen = {}
+
+        def createImage(display, context, target, buffer, attributes):
+            # name/value pairs, with a lone EGL_NONE closing the list
+            values = list(attributes)[:-1]
+            seen.update(dict(zip(values[::2], values[1::2], strict=True)))
+            return None                      # refused, so nothing is left over
+
+        monkeypatch.setattr(dmabuf, 'import_available', lambda: True)
+        monkeypatch.setattr(image_base, 'eglCreateImageKHR', createImage)
+        with pytest.raises(dmabuf.DMABufError):
+            dmabuf.import_texture(api.DRM_FORMAT_ABGR8888, *SIZE, modifier, planes)
+        return seen
+
+    return ask
+
+
+@pytest.fixture
+def refusing_import(egl, monkeypatch, gl_context):
+    """Import a buffer from a driver that takes the image and then refuses it.
+
+    Both halves are stood in for, so the case is the same on any driver: EGL
+    hands back an image, and the call that gives it to a texture fails. What
+    the fixture records is whether that image was given back.
+    """
+    from OpenGL import error
+    from OpenGL.EGL.KHR import image_base
+    from OpenGL.GLES2.OES import EGL_image
+
+    destroyed: list = []
+    image = object()
+
+    def refuse(target, given):
+        raise error.GLError(err=1282,
+                            baseOperation='glEGLImageTargetTexture2DOES')
+
+    monkeypatch.setattr(dmabuf, 'import_available', lambda: True)
+    monkeypatch.setattr(image_base, 'eglCreateImageKHR',
+                        lambda *arguments: image)
+    monkeypatch.setattr(EGL_image, 'glEGLImageTargetTexture2DOES', refuse)
+    monkeypatch.setattr(dmabuf, '_destroy',
+                        lambda display, given: destroyed.append(given))
+
+    def run():
+        return dmabuf.import_texture(api.DRM_FORMAT_ABGR8888, *SIZE, 0,
+                                     ONE_PLANE)
+
+    run.destroyed = destroyed
+    return run
 
 
 @pytest.fixture
@@ -155,24 +224,28 @@ class TestTheModifier:
     def test_the_modifier_is_reported_with_the_buffer(self, exported):
         assert isinstance(exported.modifier, int)
 
-    def test_an_unnamed_layout_is_not_passed_on_as_a_claim(self, exportable,
-                                                           upload_texture):
+    def test_an_unnamed_layout_is_not_passed_on_as_a_claim(self, attributes_of):
         """``DRM_FORMAT_MOD_INVALID`` means the driver would not describe it.
 
         Handing that to an importer as though it were a layout would be a claim
         rather than the absence of one, so it is left out of the attributes.
         """
-        if not dmabuf.import_available():
-            pytest.skip('this EGL display cannot import a DMA-BUF')
-        image = dmabuf.export_texture(upload_texture(gradient_frame(*SIZE)),
-                                      *SIZE)
-        try:
-            texture, egl_image = dmabuf.import_texture(
-                image.fourcc, image.width, image.height,
-                api.DRM_FORMAT_MOD_INVALID, image.planes)
-            dmabuf.release_imported_texture(texture, egl_image)
-        finally:
-            image.close()
+        named = attributes_of(api.DRM_FORMAT_MOD_INVALID)
+        for low, high in MODIFIER_ATTRIBUTES:
+            assert low not in named and high not in named, (
+                'an absent layout was passed on as though it were one')
+
+    def test_a_layout_the_driver_named_is_passed_on(self, attributes_of):
+        """The other half: a real modifier reaches the importer, both halves.
+
+        A tiled layout carried across as linear reads as noise, and nothing
+        about the import says so.
+        """
+        modifier = 0x0300000000E08013            # a real block-linear layout
+        named = attributes_of(modifier)
+        low, high = MODIFIER_ATTRIBUTES[0]
+        assert named[low] == modifier & 0xFFFFFFFF
+        assert named[high] == modifier >> 32
 
 
 class TestImport:
@@ -220,6 +293,52 @@ class TestImport:
                 glDeleteFramebuffers(1, [framebuffer])
             if texture is not None:
                 dmabuf.release_imported_texture(texture, egl_image)
+            image.close()
+
+    def test_a_buffer_the_driver_will_not_name_is_refused_with_a_reason(
+            self, refusing_import):
+        """Where the layout is checked differs between drivers.
+
+        Mesa answers at ``eglCreateImageKHR``; NVIDIA takes the image and
+        refuses when the texture is given it, which is the ordinary path on
+        that driver rather than an exotic one. Either way the caller gets one
+        exception that names the buffer, not a bare ``GL_INVALID_OPERATION``
+        from a call it never made.
+        """
+        with pytest.raises(dmabuf.DMABufError) as raised:
+            refusing_import()
+        assert '320x240' in str(raised.value), 'names the buffer it refused'
+        assert '0x0' in str(raised.value), 'names the layout it was given'
+
+    def test_a_refused_buffer_leaves_no_image_behind(self, refusing_import):
+        """The EGLImage and the texture are the importer's until it succeeds."""
+        with pytest.raises(dmabuf.DMABufError):
+            refusing_import()
+        assert len(refusing_import.destroyed) == 1, (
+            'the image the import made was not given back')
+
+    def test_an_unnamed_layout_is_answered_rather_than_crashed_through(
+            self, exportable, upload_texture):
+        """What a real driver does with a buffer whose layout was not named.
+
+        Some take it and some will not -- a block-linear buffer imported as
+        though it were anonymous is one that cannot be read correctly, and
+        refusing is right. Both are answers; a ``GLError`` reaching the caller
+        is not.
+        """
+        if not dmabuf.import_available():
+            pytest.skip('this EGL display cannot import a DMA-BUF')
+        image = dmabuf.export_texture(upload_texture(gradient_frame(*SIZE)),
+                                      *SIZE)
+        try:
+            texture, egl_image = dmabuf.import_texture(
+                image.fourcc, image.width, image.height,
+                api.DRM_FORMAT_MOD_INVALID, image.planes)
+        except dmabuf.DMABufError:
+            pass                             # a refusal that says what and why
+        else:
+            dmabuf.release_imported_texture(texture, egl_image)
+        finally:
             image.close()
 
     def test_a_display_that_cannot_import_says_so(self, monkeypatch, exportable):

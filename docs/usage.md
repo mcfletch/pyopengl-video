@@ -299,7 +299,17 @@ and `VAAPIEncoder` translates them at its own boundary, leaving the original on
 `__cause__` where a traceback shows it.
 
 So a caller catches one thing, and whoever reads the traceback still sees which
-driver said no and what it said.
+driver said no and what it said. `DMABufError` names the buffer it was refused
+and the layout it was given, whether the refusal came from making the image or
+from giving it an OpenGL name; a caller using `pyopengl_video.linux.dmabuf`
+directly, without an encoder, catches it there.
+
+`NV_ENC_ERR_UNSUPPORTED_DEVICE` from `nvEncOpenEncodeSessionEx` has two
+causes and the message says which one it met: no OpenGL context current on the
+calling thread, or a context that is current but draws with something other
+than the NVIDIA GPU holding the encoder. The second is what a software
+renderer or the integrated part of a hybrid machine gives, and the message
+names the renderer it found.
 
 ## Performance
 
@@ -347,3 +357,9 @@ why an Intel-rendered frame records through Intel's encoder even on a machine
 that also has an NVIDIA part. Which GPU a context lands on is a per-application
 driver setting — the Windows graphics preference, or the vendor's control panel —
 and not something this library changes.
+
+On Linux the driver answers the same question when the session is opened:
+NVENC takes the current OpenGL context as its device, and refuses a context
+that is not on the GPU holding the encoder. A context that has landed on a
+software renderer fails there too, which is what an EGL context on a display
+server with no hardware EGL driver gives.

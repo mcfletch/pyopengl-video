@@ -3,11 +3,14 @@ import numpy as np
 import pytest
 
 from pyopengl_video import EncoderError, open_encoder
+from pyopengl_video.mp4 import MP4Writer, split_annexb
+from pyopengl_video.nvenc import encoder as nvenc_encoder
 from pyopengl_video.nvenc.encoder import NVENCEncoder
-from tests.conftest import gradient_frame
+from tests.conftest import decode_errors, gradient_frame
 
 SIZE = (640, 480)
 FRAMES = 30
+TICK = 3000                                  # 30 fps in a 90 kHz timescale
 
 
 @pytest.fixture
@@ -16,6 +19,31 @@ def encoder(nvenc_available):
     encoder = NVENCEncoder(*SIZE, fps=30, bitrate=4_000_000, gop=15)
     yield encoder
     encoder.close()
+
+
+@pytest.fixture
+def handles(encoder):
+    """The encoder's own inputs, as many as it says a recording needs."""
+    made = [encoder.new_input() for _ in range(encoder.input_slots)]
+    yield made
+    for handle in made:
+        handle.close()
+
+
+def paint(handle, colour):
+    """Fill a handle's texture with one colour, inside its drawing scope."""
+    from OpenGL.GL import (
+        GL_COLOR_BUFFER_BIT,
+        GL_DRAW_FRAMEBUFFER,
+        glBindFramebuffer,
+        glClear,
+        glClearColor,
+    )
+    with handle.for_drawing():
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, handle.framebuffer)
+        glClearColor(*colour)
+        glClear(GL_COLOR_BUFFER_BIT)
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
 
 
 def encode_sequence(encoder, texture, upload, frames=FRAMES, still=False):
@@ -194,3 +222,116 @@ def test_reusing_a_texture_the_encoder_still_holds_says_so(nvenc_available, uplo
                 encoder.encode(handle, timestamp=index * 3000)
     finally:
         encoder.close()
+
+
+class TestMuxing:
+    """The recording as a file, checked by something outside this package.
+
+    A stream can be well formed, correctly timed, every box where it belongs,
+    and still describe itself in a way that sets a decoder up wrongly. Nothing
+    inside the encoder or the muxer notices that; decoding the result is what
+    does.
+    """
+
+    def test_a_muxed_recording_decodes_without_complaint(self, encoder, handles,
+                                                         tmp_path):
+        """The sample description has to match what the samples hold.
+
+        An encoder states its parameter sets before it codes anything and the
+        driver may amend them; a container that kept the first answer describes
+        the stream with syntax the pictures do not carry, and a decoder then
+        reads a corrupt picture out of a perfectly good one.
+        """
+        path = tmp_path / 'conformance.mp4'
+        with MP4Writer(path, encoder) as movie:
+            for index in range(FRAMES):
+                handle = handles[index % len(handles)]
+                paint(handle, ((index % 10) / 10.0, 0.2, 0.8, 1.0))
+                movie.write(encoder.encode(handle, timestamp=index * TICK,
+                                           duration=TICK))
+            movie.write(encoder.flush())
+        complaints = decode_errors(path)
+        if complaints is None:
+            pytest.skip('no ffmpeg here to decode what was written')
+        assert complaints == []
+
+    def test_the_sample_description_holds_the_sets_the_stream_carries(
+            self, encoder, handles, tmp_path):
+        path = tmp_path / 'sets.mp4'
+        with MP4Writer(path, encoder) as movie:
+            for index in range(4):
+                handle = handles[index % len(handles)]
+                paint(handle, (0.3, 0.5, 0.7, 1.0))
+                movie.write(encoder.encode(handle, timestamp=index * TICK,
+                                           duration=TICK))
+            movie.write(encoder.flush())
+        stream = {unit[0] & 0x1F: unit
+                  for unit in split_annexb(encoder.headers())}
+        data = path.read_bytes()
+        assert stream[7] in data, 'the sequence parameter set the stream carries'
+        assert stream[8] in data, 'the picture parameter set the stream carries'
+
+    def test_a_reordered_recording_decodes_without_complaint(self, nvenc_available,
+                                                             tmp_path):
+        """Composition offsets are what a decoder reads timing back out of.
+
+        With B-pictures the packets arrive in decode order carrying display
+        timestamps, and the difference goes into the container. A file whose
+        offsets are wrong still plays; the pictures come out in the wrong order.
+        """
+        encoder = NVENCEncoder(*SIZE, fps=30, bitrate=4_000_000, gop=15, bframes=2)
+        made = []
+        try:
+            made = [encoder.new_input() for _ in range(encoder.input_slots)]
+            path = tmp_path / 'reordered.mp4'
+            with MP4Writer(path, encoder) as movie:
+                for index in range(FRAMES):
+                    handle = made[index % len(made)]
+                    paint(handle, ((index % 10) / 10.0, 0.2, 0.8, 1.0))
+                    movie.write(encoder.encode(handle, timestamp=index * TICK,
+                                               duration=TICK))
+                movie.write(encoder.flush())
+        finally:
+            for handle in made:
+                handle.close()
+            encoder.close()
+        complaints = decode_errors(path)
+        if complaints is None:
+            pytest.skip('no ffmpeg here to decode what was written')
+        assert complaints == []
+
+
+class TestWhyTheDeviceWasRefused:
+    """The explanation carried on ``NV_ENC_ERR_UNSUPPORTED_DEVICE``.
+
+    Needs no encoder: what is under test is what the message says about the
+    OpenGL context the session was opened against.
+    """
+
+    def test_no_context_at_all_says_so(self, monkeypatch):
+        monkeypatch.setattr(nvenc_encoder, 'current_gl_renderer', lambda: None)
+        detail = nvenc_encoder.unsupported_device_detail()
+        assert 'context must be current' in detail
+
+    def test_a_context_on_another_gpu_names_what_it_found(self, monkeypatch):
+        """The same status arrives for a context on the wrong adapter.
+
+        A software renderer, or the integrated part on a hybrid machine, is a
+        current context that NVENC will not encode from -- and a reader sent
+        looking for a missing context looks in the wrong place.
+        """
+        monkeypatch.setattr(nvenc_encoder, 'current_gl_renderer',
+                            lambda: 'llvmpipe (LLVM 20.1.2, 256 bits)')
+        detail = nvenc_encoder.unsupported_device_detail()
+        assert 'llvmpipe' in detail, 'names the renderer it found'
+        assert 'NVIDIA' in detail, 'says what it needed instead'
+        assert 'context must be current' not in detail, (
+            'a context was current, so saying it was not sends the reader wrong')
+
+    def test_a_context_on_an_nvidia_gpu_does_not_guess(self, monkeypatch):
+        """Neither cause fits, so the message does not claim either."""
+        monkeypatch.setattr(nvenc_encoder, 'current_gl_renderer',
+                            lambda: 'NVIDIA GeForce RTX 3060 Ti/PCIe/SSE2')
+        detail = nvenc_encoder.unsupported_device_detail()
+        assert 'RTX 3060 Ti' in detail
+        assert 'context must be current' not in detail
