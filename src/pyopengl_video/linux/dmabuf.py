@@ -27,7 +27,11 @@ import ctypes
 import dataclasses
 import logging
 import os
+from collections.abc import Callable
 from types import ModuleType
+from typing import Any, TypeVar
+
+T = TypeVar('T')
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +60,25 @@ IMPORT_EXTENSIONS = ('EGL_KHR_image_base', 'EGL_EXT_image_dma_buf_import')
 
 class DMABufError(RuntimeError):
     """A texture could not be exported, or a buffer could not be imported."""
+
+
+def _require(description: str, call: Callable[..., T], *arguments: Any) -> T:
+    """Make an EGL call whose false answer, or whose exception, means refused.
+
+    A driver has two ways of saying no to the same request: answer with a null
+    handle or a false, or set an error, which PyOpenGL raises. Which one
+    arrives is the driver's business -- the two here disagree about it, and
+    about which call in a sequence does the checking. A caller is owed the same
+    :class:`DMABufError` either way, naming what was asked for, rather than a
+    bare ``EGLError`` from an entry point it never called.
+    """
+    try:
+        answer = call(*arguments)
+    except Exception as error:
+        raise DMABufError(f'{description}: {error}') from error
+    if not answer:
+        raise DMABufError(description)
+    return answer
 
 
 @dataclasses.dataclass(frozen=True)
@@ -242,30 +265,32 @@ def export_texture(texture: int, width: int, height: int) -> ExportedImage:
     context = EGL.eglGetCurrentContext()
 
     attributes = (EGL.EGLint * 3)(EGL_IMAGE_PRESERVED_KHR, EGL.EGL_TRUE, EGL_NONE)
-    image = eglCreateImageKHR(display, context, EGL_GL_TEXTURE_2D_KHR,
-                              ctypes.c_void_p(int(texture)), attributes)
-    if not image:
-        raise DMABufError(
-            f'eglCreateImageKHR refused texture {texture}: the texture must be '
-            'complete and GL_RGBA8, and it must belong to this context')
+    image = _require(
+        f'eglCreateImageKHR refused texture {texture}: the texture must be '
+        'complete and GL_RGBA8, and it must belong to this context',
+        eglCreateImageKHR, display, context, EGL_GL_TEXTURE_2D_KHR,
+        ctypes.c_void_p(int(texture)), attributes)
 
     fourcc = EGL.EGLint(0)
     plane_count = EGL.EGLint(0)
     modifiers = (ctypes.c_uint64 * 4)()
-    if not eglExportDMABUFImageQueryMESA(
-            display, image, ctypes.byref(fourcc), ctypes.byref(plane_count),
-            ctypes.cast(modifiers, ctypes.POINTER(ctypes.c_uint64))):
-        _destroy(display, image)
-        raise DMABufError('eglExportDMABUFImageQueryMESA would not describe the '
-                          'texture, so it cannot be exported')
-
-    count = int(plane_count.value)
     fds = (EGL.EGLint * 4)()
     strides = (EGL.EGLint * 4)()
     offsets = (EGL.EGLint * 4)()
-    if not eglExportDMABUFImageMESA(display, image, fds, strides, offsets):
+    # The image is this function's until both queries have answered.
+    try:
+        _require(
+            'eglExportDMABUFImageQueryMESA would not describe the texture, so '
+            'it cannot be exported',
+            eglExportDMABUFImageQueryMESA, display, image, ctypes.byref(fourcc),
+            ctypes.byref(plane_count),
+            ctypes.cast(modifiers, ctypes.POINTER(ctypes.c_uint64)))
+        count = int(plane_count.value)
+        _require('eglExportDMABUFImageMESA would not export the texture',
+                 eglExportDMABUFImageMESA, display, image, fds, strides, offsets)
+    except DMABufError:
         _destroy(display, image)
-        raise DMABufError('eglExportDMABUFImageMESA would not export the texture')
+        raise
 
     planes = tuple(Plane(fd=int(fds[index]), offset=int(offsets[index]),
                          stride=int(strides[index]))
@@ -332,12 +357,11 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
               else 'no named layout, which a driver need not accept for a '
                    'buffer that is not linear')
     attributes = (EGL.EGLint * len(values))(*values)
-    image = eglCreateImageKHR(display, EGL.EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
-                              None, attributes)
-    if not image:
-        raise DMABufError(
-            f'eglCreateImageKHR would not import a {width}x{height} buffer of '
-            f'{len(planes)} plane(s) with {layout}')
+    image = _require(
+        f'eglCreateImageKHR would not import a {width}x{height} buffer of '
+        f'{len(planes)} plane(s) with {layout}',
+        eglCreateImageKHR, display, EGL.EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
+        None, attributes)
 
     texture = int(glGenTextures(1))
     glBindTexture(GL_TEXTURE_2D, texture)

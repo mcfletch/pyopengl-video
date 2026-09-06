@@ -299,10 +299,11 @@ and `VAAPIEncoder` translates them at its own boundary, leaving the original on
 `__cause__` where a traceback shows it.
 
 So a caller catches one thing, and whoever reads the traceback still sees which
-driver said no and what it said. `DMABufError` names the buffer it was refused
-and the layout it was given, whether the refusal came from making the image or
-from giving it an OpenGL name; a caller using `pyopengl_video.linux.dmabuf`
-directly, without an encoder, catches it there.
+driver said no and what it said. A caller using `pyopengl_video.linux.dmabuf`
+directly, without an encoder, catches `DMABufError` there instead: it names the
+texture or the buffer that was refused and the layout it was given, whichever
+entry point declined and whether that driver declines by answering with a null
+handle or by raising.
 
 `NV_ENC_ERR_UNSUPPORTED_DEVICE` from `nvEncOpenEncodeSessionEx` has two
 causes and the message says which one it met: no OpenGL context current on the

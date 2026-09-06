@@ -211,6 +211,26 @@ class TestExport:
         with pytest.raises(dmabuf.DMABufError):
             dmabuf.export_texture(9999, *SIZE)
 
+    def test_a_driver_that_raises_rather_than_answering_is_the_same_refusal(
+            self, egl, monkeypatch):
+        """A driver's two ways of saying no reach the caller as one exception.
+
+        An entry point can refuse by handing back a null handle, or by setting
+        an error, which PyOpenGL raises. Mesa does the second for a texture
+        that is not there. Neither is a caller's to catch: an ``EGLError``
+        names an entry point they did not call.
+        """
+        from OpenGL.EGL.KHR import image_base
+        from OpenGL.raw.EGL._errors import EGLError
+
+        def refuse(*arguments):
+            raise EGLError(err=0x300C, baseOperation='eglCreateImageKHR')
+
+        monkeypatch.setattr(dmabuf, 'unavailable_because', lambda: None)
+        monkeypatch.setattr(image_base, 'eglCreateImageKHR', refuse)
+        with pytest.raises(dmabuf.DMABufError, match='refused texture 9999'):
+            dmabuf.export_texture(9999, *SIZE)
+
     def test_a_context_that_cannot_export_refuses_with_the_reason(
             self, monkeypatch, exportable, upload_texture):
         monkeypatch.setattr(dmabuf, 'unavailable_because', lambda: 'no EGL here')

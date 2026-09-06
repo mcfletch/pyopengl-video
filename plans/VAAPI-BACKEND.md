@@ -62,6 +62,12 @@ answers at `eglCreateImageKHR`; NVIDIA hands back an image and refuses at
 into one `DMABufError` and gives the image and the texture back before it
 raises.
 
+*How* a driver refuses is a third such choice: an entry point may answer with a
+null handle, or set an error, which PyOpenGL raises. Mesa takes the second
+route for a texture that is not there, and the `EGLError` that produces names a
+call the caller never made. `_require` is where both directions turn either
+form into the `DMABufError` the caller is owed.
+
 ## What is not done
 
 - **Intel.** The same code against `iHD`. The packed-header requirements are
