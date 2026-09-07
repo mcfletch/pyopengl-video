@@ -1,12 +1,15 @@
 name: tests
 
 on:
-  # Every branch but main, so work in progress is checked as it is pushed.
-  # main is covered by `release.yml`, which calls this workflow and then decides
-  # whether the version is worth publishing; a `push:` trigger for main here as
-  # well would run the whole matrix twice for every push to it.
+  # This project's own develop, and pull requests. main is covered by
+  # `release.yml`, which calls this workflow and then decides whether the
+  # version is worth publishing; a `push:` trigger for main here as well would
+  # run the whole matrix twice for every push to it.
+  #
+  # Nothing here triggers on a sibling project's push: a CI run is for the
+  # change just made to this repository.
   push:
-    branches-ignore: [main]
+    branches: [develop]
   pull_request:
   workflow_dispatch:
   workflow_call:
