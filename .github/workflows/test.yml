@@ -85,7 +85,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m build --sdist
-          python -m pip install dist/*.tar.gz
+          # --pre for the same reason tox sets pip_pre: the PyOpenGL this needs
+          # is an alpha. The floor names it, so this is belt and braces.
+          python -m pip install --pre dist/*.tar.gz
       - name: Import it from somewhere that is not the checkout
         # Importing the package must not require a graphics driver: discovery
         # loads a backend's library only when asked, so this runs on a machine

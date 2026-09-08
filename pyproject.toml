@@ -25,7 +25,13 @@ classifiers = [
 # The encoders themselves ship with the graphics driver and are loaded by name;
 # PyOpenGL is what gives us the texture and framebuffer calls to feed them.
 dependencies = [
-    "PyOpenGL>=3.1.7",
+    # 4.0.0a4 is where the DMA-BUF entry points this package calls arrived, and
+    # the `a4` is **load-bearing**: PEP 440 has a resolver skip pre-releases
+    # unless the specifier names one, so `>=4.0.0` would exclude every 4.x there
+    # is and `pip install pyopengl-video` would fail rather than fall back.
+    # `tests/test_packaging.py` holds this, so rounding it off fails a test
+    # rather than shipping a distribution nobody can install.
+    "PyOpenGL>=4.0.0a4",
 ]
 
 [project.optional-dependencies]
