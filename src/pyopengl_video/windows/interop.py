@@ -42,6 +42,22 @@ WGL_ACCESS_WRITE_DISCARD_NV = 0x0002
 EXTENSION = 'WGL_NV_DX_interop2'
 
 
+def parse_extension_string(text: bytes | None) -> set[str]:
+    """The extension names in a WGL extension string.
+
+    The driver answers with a space-separated ASCII list.  PyOpenGL returns
+    the ``const char *`` as bytes -- ctypes converts a ``c_char_p`` result on
+    the way out -- so the string arrives whole and there is no pointer left to
+    follow.
+
+    An empty or absent answer is an empty set: no context, a driver that
+    declined, and a driver offering nothing all mean the same to a caller.
+    """
+    if not text:
+        return set()
+    return set(text.decode('ascii', 'replace').split())
+
+
 def wgl_extensions() -> set[str]:
     """The WGL extensions the current context offers.
 
@@ -61,12 +77,7 @@ def wgl_extensions() -> set[str]:
     except Exception as error:               # noqa: BLE001 - any failure means "no"
         log.debug('the WGL extension string is unavailable: %r', error)
         return set()
-    if not text:
-        return set()
-    names = ctypes.cast(text, ctypes.c_char_p).value
-    if not names:
-        return set()
-    return set(names.decode('ascii', 'replace').split())
+    return parse_extension_string(text)
 
 
 def available() -> bool:

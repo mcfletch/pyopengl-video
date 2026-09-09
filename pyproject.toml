@@ -75,6 +75,37 @@ python_version = "3.12"
 warn_unused_ignores = true
 ignore_missing_imports = true
 
+# Half this package is Windows-only and half is Linux-only, so tox runs mypy
+# twice -- once as each platform sees it -- and each run must look at its own
+# half alone. `--exclude` does not achieve that by itself: it decides which
+# files are crawled from a directory named on the command line, and a module
+# reached by an `import` is still followed and checked. `pyopengl_video`
+# imports `vpl`, which imports `windows`, so the Windows shim arrived in the
+# Linux run through the back door and was checked against a `ctypes` with no
+# `WINFUNCTYPE` in it.
+#
+# `follow_imports = skip` closes that door. It applies only to modules reached
+# by import: a module named on the command line -- or found by crawling a
+# directory that was -- is checked regardless, so each run still covers its own
+# half in full. The two lists are therefore mirror images, and every module
+# belongs to exactly one of them.
+[[tool.mypy.overrides]]
+module = [
+    "pyopengl_video.windows",
+    "pyopengl_video.windows.*",
+    "pyopengl_video.vpl",
+    "pyopengl_video.vpl.*",
+]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = [
+    "pyopengl_video.inputs",
+    "pyopengl_video.linux",
+    "pyopengl_video.linux.*",
+]
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
