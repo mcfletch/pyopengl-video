@@ -1,9 +1,9 @@
 """What this distribution declares about itself, and why the alpha resolves.
 
-This package needs PyOpenGL 4.0.0a4, which is a **pre-release**, and a
+This package needs PyOpenGL 4.0.0a5, which is a **pre-release**, and a
 pre-release is not installed by default: `pip install pyopengl-video` gets one
 only because PEP 440 says a specifier that explicitly names a pre-release admits
-pre-releases for that requirement. `PyOpenGL>=4.0.0a4` does; `PyOpenGL>=4.0.0`
+pre-releases for that requirement. `PyOpenGL>=4.0.0a5` does; `PyOpenGL>=4.0.0`
 does not, and would resolve to nothing at all until 4.0.0 final exists.
 
 So the marker in the floor is load-bearing rather than decorative, and a later
@@ -45,7 +45,7 @@ class TestTheDeclaredStack:
             'not optional')
 
     def test_the_floor_admits_a_prerelease(self):
-        """Which is what lets `pip install pyopengl-video` find 4.0.0a4.
+        """Which is what lets `pip install pyopengl-video` find 4.0.0a5.
 
         Without a pre-release in the specifier, PEP 440 has a resolver skip
         every pre-release of PyOpenGL, and there is no final 4.x to fall back
@@ -56,15 +56,20 @@ class TestTheDeclaredStack:
             f'PyOpenGL is required as {str(requirement)!r}, which names no '
             f'pre-release. The release this package needs is an alpha, and a '
             f'specifier that does not mention one excludes it: write '
-            f'>=4.0.0a4 rather than >=4.0.0.')
+            f'>=4.0.0a5 rather than >=4.0.0.')
 
     def test_the_floor_is_at_least_the_release_this_package_needs(self):
-        """4.0.0a4 is where the Tk widget, the PyInstaller hooks and the
-        DMA-BUF entry points this package calls arrived."""
+        """4.0.0a4 brought the DMA-BUF entry points, a5 the stub for them.
+
+        `glDeleteTextures(textures)` -- the one-argument form this package
+        calls, and the one PyOpenGL's own wrapper documents -- reached the
+        shipped stub in a5. Against a4 the call is an error to a type checker,
+        so a floor of a4 is a floor this package does not type-check at.
+        """
         requirement = declared('PyOpenGL')
-        assert requirement.specifier.contains('4.0.0a4'), str(requirement)
-        assert not requirement.specifier.contains('4.0.0a3'), (
-            f'the floor is lower than 4.0.0a4: {requirement}')
+        assert requirement.specifier.contains('4.0.0a5'), str(requirement)
+        assert not requirement.specifier.contains('4.0.0a4'), (
+            f'the floor is lower than 4.0.0a5: {requirement}')
 
 
 class TestTheInstalledStack:
