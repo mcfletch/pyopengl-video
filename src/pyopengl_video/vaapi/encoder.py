@@ -156,7 +156,7 @@ class InputHandle(inputs.InputHandle):
     surface: int = 0
     fence: Any = None
 
-    def for_drawing(self):
+    def for_drawing(self) -> _Drawing:
         """Hold the texture for OpenGL, and note when the drawing is done.
 
         The fence made at the end of this scope is what the encoder waits on

@@ -17,8 +17,7 @@ on the rest it does nothing, so a recorder is written once::
 """
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, nullcontext
 
 
 class InputHandle:
@@ -38,15 +37,18 @@ class InputHandle:
     framebuffer: int = 0
     owns_texture: bool = False
 
-    @contextmanager
-    def for_drawing(self) -> Iterator[InputHandle]:
+    def for_drawing(self) -> AbstractContextManager[InputHandle]:
         """Hold the texture for OpenGL to draw into.
 
         The base does nothing: a texture that belongs to OpenGL alone is always
         available to it. Backends sharing a texture with another API take it
         back here and hand it over again at the end of the scope.
+
+        Declared as the context manager a caller uses rather than as a
+        generator, so a backend can answer with a scope of its own -- which is
+        what the VA-API handle does, to leave a fence behind at the end of it.
         """
-        yield self
+        return nullcontext(self)
 
     def close(self) -> None:
         """Give back the framebuffer, and the texture if this handle made it.

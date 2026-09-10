@@ -50,7 +50,7 @@ def probe() -> bool:
     return True
 
 
-def _build(width: int, height: int, **options: Any):
+def _build(width: int, height: int, **options: Any) -> Any:
     """Construct an :class:`~pyopengl_video.nvenc.encoder.NVENCEncoder`.
 
     Imported here rather than at module scope so that discovery costs one
