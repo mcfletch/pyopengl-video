@@ -3,6 +3,8 @@
 Hardware video encoding of OpenGL colour buffers, with the frame never leaving
 the GPU.
 
+[![A recording made by this encoder](https://img.youtube.com/vi/hprqotb3TXg/maxresdefault.jpg)](https://youtu.be/hprqotb3TXg)
+
 The renderer has already put the frame in GPU memory, and the GPU has a video
 encoder on the same die. `pyopengl-video` hands one to the other: a texture goes
 in, an H.264 stream comes out, and nothing crosses the bus but the compressed
