@@ -140,6 +140,10 @@ class Encoder(ABC):
     size: tuple[int, int] = (0, 0)
     #: units of a second that timestamps and durations are counted in
     timescale: int = 90000
+    #: how often frames are shown, as an exact (numerator, denominator); set by
+    #: the backend as it opens, and what :meth:`frame_duration` measures a
+    #: frame against
+    frame_rate: tuple[int, int] = (60, 1)
     #: True when frames reach the encoder without passing through host memory
     zero_copy: bool = False
     #: True when packets come out in decode order rather than display order,
@@ -179,12 +183,34 @@ class Encoder(ABC):
         texture it did not make; use :meth:`new_input` there.
         """
 
+    def frame_duration(self, duration: int = 0) -> int:
+        """`duration` in :attr:`timescale` units, or one frame's worth if it is 0.
+
+        **Every backend puts an incoming duration through this**, because a
+        zero that reaches a container is not a small mistake. A container takes
+        its per-sample durations from what the encoder reports, so a stream of
+        zeroes gives a movie of zero length whose frame rate is undefined --
+        ``duration=0`` and ``r_frame_rate=1/0``. The pictures are all present
+        and decode perfectly; players refuse the file because as far as the
+        container is concerned there is nothing in it.
+
+        Which is why it lives here and not in each backend: two of the three
+        had the same three lines and the third did not, and the one that did
+        not was the one writing unplayable files.
+        """
+        if duration > 0:
+            return int(duration)
+        numerator, denominator = self.frame_rate
+        return round(self.timescale * denominator / numerator)
+
     @abstractmethod
     def encode(self, handle: Any, timestamp: int, duration: int = 0,
                force_idr: bool = False) -> list[Packet]:
         """Submit the picture currently in `handle`; return whatever came out.
 
-        timestamp/duration are in :attr:`timescale` units. `force_idr` starts a
+        timestamp/duration are in :attr:`timescale` units, and a `duration` of 0
+        means one frame at :attr:`frame_rate` -- put it through
+        :meth:`frame_duration` rather than passing it on. `force_idr` starts a
         new closed group of pictures, which is what a seek point is made of.
         """
 

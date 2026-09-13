@@ -455,9 +455,7 @@ class VPLEncoder(Encoder):
         self._require_open()
         if not isinstance(handle, interop.SharedTexture):
             raise EncoderError('encode() wants a handle from new_input()')
-        if duration <= 0:
-            rate_num, rate_den = self.frame_rate
-            duration = round(self.timescale * rate_den / rate_num)
+        duration = self.frame_duration(duration)
 
         surface = self._surface
         surface.Data.MemId = ctypes.cast(handle.resource.pointer, c_void_p)

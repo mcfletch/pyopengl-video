@@ -250,3 +250,78 @@ class TestParameterSetsInTheStream:
         data = target.read_bytes()
         mdat = data.index(b'mdat') + 12
         assert self.CODED_SPS not in data[mdat:data.index(b'moov')]
+
+
+class TestAZeroDurationIsAFileThatWillNotPlay:
+    """Why :meth:`Encoder.frame_duration` exists, stated as a consequence.
+
+    A container takes its per-sample durations from what the encoder reports.
+    Report zeroes and every picture is present and decodes perfectly, and the
+    movie says it is nought seconds long with an undefined frame rate --
+    ``duration=0``, ``r_frame_rate=1/0``. Players refuse it: as far as the
+    container is concerned there is nothing in it. The pictures are not the
+    problem, which is what makes it hard to see.
+    """
+
+    def silent(self, count=30):
+        """The same frames an encoder would emit, with no durations on them."""
+        return [Packet(data=one.data, timestamp=one.timestamp, duration=0,
+                       keyframe=one.keyframe) for one in frames(count)]
+
+    def test_zero_durations_give_a_movie_of_no_length(self, tmp_path):
+        path = tmp_path / 'silent.mp4'
+        with MP4Writer(str(path), width=320, height=240,
+                       timescale=TIMESCALE) as writer:
+            for packet in self.silent():
+                writer.write(packet)
+        assert writer.duration == 0
+
+    def test_while_the_pictures_are_all_there(self, tmp_path):
+        """Which is the trap: nothing about the stream looks wrong."""
+        path = tmp_path / 'silent.mp4'
+        with MP4Writer(str(path), width=320, height=240,
+                       timescale=TIMESCALE) as writer:
+            for packet in self.silent(30):
+                writer.write(packet)
+        assert len(writer._durations) == 30
+
+    def test_a_frame_s_worth_each_gives_the_length_it_should(self, tmp_path):
+        path = tmp_path / 'timed.mp4'
+        with MP4Writer(str(path), width=320, height=240,
+                       timescale=TIMESCALE) as writer:
+            for packet in frames(30):
+                writer.write(packet)
+        assert writer.duration == 30 * FRAME
+
+
+class TestEveryBackendDefaultsADurationTheSameWay:
+    """The rule lives on the base class because two of the three backends had
+    it and the third did not -- and the third was the one on this machine,
+    writing files nothing would play."""
+
+    def encoder(self, fps=(60, 1), timescale=90000):
+        from pyopengl_video.encoder import Encoder
+
+        class _Encoder(Encoder):
+            def register(self, texture, target=None): ...
+            def encode(self, handle, timestamp, duration=0, force_idr=False): ...
+            def flush(self): ...
+            def headers(self): ...
+            def close(self): ...
+
+        made = _Encoder()
+        made.frame_rate, made.timescale = fps, timescale
+        return made
+
+    def test_nought_means_one_frame_at_the_encoders_rate(self):
+        assert self.encoder(fps=(60, 1)).frame_duration(0) == 1500
+
+    def test_and_the_rate_is_read_rather_than_assumed(self):
+        assert self.encoder(fps=(30, 1)).frame_duration(0) == 3000
+        assert self.encoder(fps=(24000, 1001)).frame_duration(0) == 3754
+
+    def test_a_duration_that_was_given_is_left_alone(self):
+        assert self.encoder().frame_duration(777) == 777
+
+    def test_and_so_is_one_in_a_different_timescale(self):
+        assert self.encoder(timescale=1000).frame_duration(0) == 17

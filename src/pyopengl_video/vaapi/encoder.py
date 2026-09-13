@@ -599,6 +599,7 @@ class VAAPIEncoder(Encoder):
         after that it holds exactly one packet per call.
         """
         self._check_open()
+        duration = self.frame_duration(duration)
         if handle not in self._registered:
             raise EncoderError(
                 'this handle was not registered with this encoder, or the '

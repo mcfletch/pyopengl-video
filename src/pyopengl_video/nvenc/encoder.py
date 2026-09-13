@@ -341,9 +341,7 @@ class NVENCEncoder(Encoder):
         list is an ordinary answer and the packets arrive a few calls later.
         """
         self._require_open()
-        if duration <= 0:
-            rate_num, rate_den = self.frame_rate
-            duration = round(self.timescale * rate_den / rate_num)
+        duration = self.frame_duration(duration)
 
         if any(pending.handle is handle for pending in self._pending):
             raise EncoderError(

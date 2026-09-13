@@ -715,3 +715,37 @@ class TestEverythingItRaisesIsAnEncoderError:
         monkeypatch.setattr(encoder_module.VAAPIEncoder, '_negotiate', refuse)
         with pytest.raises(EncoderError, match='vaGetConfigAttributes'):
             VAAPIEncoder(*SIZE, fps=30)
+
+
+class TestADurationNobodyGaveIsOneFrame:
+    """Every other test here passes ``duration=TICK``, so nothing exercised the
+    default -- and the default was wrong: this backend passed the zero straight
+    through while NVENC and oneVPL turned it into a frame's worth. A container
+    takes its per-sample durations from these, so every file written on this
+    machine had a movie duration of nought and an undefined frame rate. The
+    pictures decoded perfectly, which is what made it hard to see.
+    """
+
+    def test_omitting_it_gives_a_frame_at_the_encoders_rate(self, encoder,
+                                                            handles):
+        """30 fps in a 90 kHz timescale, which is :data:`TICK`."""
+        packets = []
+        for index in range(FRAMES):
+            handle = handles[index % len(handles)]
+            paint(handle, ((index % 10) / 10.0, 0.2, 0.8, 1.0))
+            packets.extend(encoder.encode(handle, timestamp=index * TICK))
+        packets.extend(encoder.flush())
+        assert packets, 'nothing came out of the encoder'
+        assert all(packet.duration == TICK for packet in packets)
+
+    def test_and_the_movie_that_makes_has_a_length(self, encoder, handles,
+                                                   tmp_path):
+        """The whole point, and what a player actually refuses."""
+        path = tmp_path / 'timed.mp4'
+        with MP4Writer(str(path), encoder=encoder) as writer:
+            for index in range(FRAMES):
+                handle = handles[index % len(handles)]
+                paint(handle, ((index % 10) / 10.0, 0.2, 0.8, 1.0))
+                writer.write(encoder.encode(handle, timestamp=index * TICK))
+            writer.write(encoder.flush())
+            assert writer.duration == FRAMES * TICK
