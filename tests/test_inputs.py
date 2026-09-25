@@ -1,5 +1,6 @@
 """Encoder inputs: the shared rate helpers, and the default way one is made."""
 import pytest
+from OpenGL.error import GLError
 from OpenGL.GL import (
     GL_DRAW_FRAMEBUFFER,
     GL_DRAW_FRAMEBUFFER_BINDING,
@@ -17,7 +18,7 @@ from pyopengl_video.encoder import (
     default_bitrate,
     frame_rate_ratio,
 )
-from pyopengl_video.inputs import InputHandle, delete_framebuffer
+from pyopengl_video.inputs import InputHandle, create_framebuffer, delete_framebuffer
 
 
 def test_a_whole_frame_rate_is_that_many_over_one():
@@ -112,6 +113,20 @@ def test_building_a_framebuffer_leaves_the_binding_as_it_found_it():
         assert int(glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)) == other
     finally:
         handle.close()
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
+        delete_framebuffer(other)
+
+
+@pytest.mark.usefixtures('gl_context')
+def test_a_framebuffer_that_cannot_be_built_leaves_the_binding_as_it_found_it():
+    """An attachment the driver refuses raises, and the renderer's binding is back."""
+    other = int(glGenFramebuffers(1))
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, other)
+    try:
+        with pytest.raises(GLError):
+            create_framebuffer(987654)
+        assert int(glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)) == other
+    finally:
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
         delete_framebuffer(other)
 

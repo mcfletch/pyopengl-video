@@ -127,7 +127,10 @@ def main(argv: list[str]) -> int:
         return 2
     abi = record(Path(argv[1]).resolve())
     destination = Path(__file__).parent.parent / 'tests' / 'vpl_abi.json'
-    destination.write_text(json.dumps(abi, indent=2, sort_keys=True) + '\n')
+    # Renamed over the recorded table once written, so the suite never reads half of one.
+    partial = destination.with_name(destination.name + '.partial')
+    partial.write_text(json.dumps(abi, indent=2, sort_keys=True) + '\n')
+    partial.replace(destination)
     disagreements = [
         name for name, size in abi['sizes'].items()
         if ctypes.sizeof(getattr(api, name)) != size

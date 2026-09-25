@@ -106,7 +106,9 @@ def create_framebuffer(texture: int, target: int | None = None) -> int:
     attachment the driver refuses.
 
     The binding in force when this is called is put back, so building a
-    recorder's ring does not disturb whatever the renderer had bound.
+    recorder's ring does not disturb whatever the renderer had bound; that
+    holds when the driver refuses the attachment too, which raises and
+    deletes the framebuffer it made.
     """
     from OpenGL.GL import (  # noqa: PLC0415 - OpenGL.GL stays off `import pyopengl_video`
         GL_COLOR_ATTACHMENT0,
@@ -114,6 +116,7 @@ def create_framebuffer(texture: int, target: int | None = None) -> int:
         GL_DRAW_FRAMEBUFFER_BINDING,
         GL_TEXTURE_2D,
         glBindFramebuffer,
+        glDeleteFramebuffers,
         glFramebufferTexture2D,
         glGenFramebuffers,
         glGetIntegerv,
@@ -121,10 +124,15 @@ def create_framebuffer(texture: int, target: int | None = None) -> int:
     target = target or GL_TEXTURE_2D
     previous = int(glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING))
     framebuffer = int(glGenFramebuffers(1))
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer)
-    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           target, int(texture), 0)
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previous)
+    try:
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer)
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               target, int(texture), 0)
+    except BaseException:
+        glDeleteFramebuffers(1, [framebuffer])
+        raise
+    finally:
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previous)
     return framebuffer
 
 

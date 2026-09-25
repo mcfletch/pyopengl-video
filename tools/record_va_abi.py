@@ -194,7 +194,10 @@ def main(argv: list[str]) -> int:
         return 2
     abi = record(Path(argv[1]).resolve() if len(argv) == 2 else None)
     destination = Path(__file__).parent.parent / 'tests' / 'va_abi.json'
-    destination.write_text(json.dumps(abi, indent=2, sort_keys=True) + '\n')
+    # Renamed over the recorded table once written, so the suite never reads half of one.
+    partial = destination.with_name(destination.name + '.partial')
+    partial.write_text(json.dumps(abi, indent=2, sort_keys=True) + '\n')
+    partial.replace(destination)
     wrong = disagreements(abi)
     print(f'recorded {len(abi["sizes"])} structures and '
           f'{len(abi["constants"])} constants to {destination}')
