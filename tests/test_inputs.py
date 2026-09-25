@@ -1,5 +1,15 @@
 """Encoder inputs: the shared rate helpers, and the default way one is made."""
 import pytest
+from OpenGL.GL import (
+    GL_DRAW_FRAMEBUFFER,
+    GL_DRAW_FRAMEBUFFER_BINDING,
+    GL_FRAMEBUFFER_COMPLETE,
+    glBindFramebuffer,
+    glCheckFramebufferStatus,
+    glGenFramebuffers,
+    glGetIntegerv,
+    glIsTexture,
+)
 
 from pyopengl_video.encoder import (
     DEFAULT_BITS_PER_PIXEL,
@@ -7,7 +17,7 @@ from pyopengl_video.encoder import (
     default_bitrate,
     frame_rate_ratio,
 )
-from pyopengl_video.inputs import InputHandle
+from pyopengl_video.inputs import InputHandle, delete_framebuffer
 
 
 def test_a_whole_frame_rate_is_that_many_over_one():
@@ -42,13 +52,13 @@ class ForeignTextureEncoder(Encoder):
     def __init__(self):
         self.registered = []
 
-    def register(self, texture, target=None):
+    def register(self, texture, target=None):  # noqa: ARG002 - the Encoder interface's signature
         handle = InputHandle()
         handle.texture = int(texture)
         self.registered.append(handle)
         return handle
 
-    def encode(self, handle, timestamp, duration=0, force_idr=False):
+    def encode(self, handle, timestamp, duration=0, force_idr=False):  # noqa: ARG002 - the Encoder interface's signature
         return []
 
     def flush(self):
@@ -61,14 +71,9 @@ class ForeignTextureEncoder(Encoder):
         pass
 
 
-def test_the_default_new_input_makes_a_texture_and_a_framebuffer(gl_context):
+@pytest.mark.usefixtures('gl_context')
+def test_the_default_new_input_makes_a_texture_and_a_framebuffer():
     """A backend that accepts a foreign texture gets this for free."""
-    from OpenGL.GL import (
-        GL_DRAW_FRAMEBUFFER,
-        GL_FRAMEBUFFER_COMPLETE,
-        glBindFramebuffer,
-        glCheckFramebufferStatus,
-    )
     encoder = ForeignTextureEncoder()
     assert encoder.allocates_inputs is False
     handle = encoder.new_input()
@@ -85,8 +90,8 @@ def test_the_default_new_input_makes_a_texture_and_a_framebuffer(gl_context):
         handle.close()
 
 
-def test_closing_an_input_the_encoder_made_gives_the_texture_back(gl_context):
-    from OpenGL.GL import glIsTexture
+@pytest.mark.usefixtures('gl_context')
+def test_closing_an_input_the_encoder_made_gives_the_texture_back():
     encoder = ForeignTextureEncoder()
     handle = encoder.new_input()
     texture = handle.texture
@@ -96,17 +101,9 @@ def test_closing_an_input_the_encoder_made_gives_the_texture_back(gl_context):
     assert handle.framebuffer == 0
 
 
-def test_building_a_framebuffer_leaves_the_binding_as_it_found_it(gl_context):
+@pytest.mark.usefixtures('gl_context')
+def test_building_a_framebuffer_leaves_the_binding_as_it_found_it():
     """A recorder builds its ring mid-frame; it must not disturb the renderer."""
-    from OpenGL.GL import (
-        GL_DRAW_FRAMEBUFFER,
-        GL_DRAW_FRAMEBUFFER_BINDING,
-        glBindFramebuffer,
-        glGenFramebuffers,
-        glGetIntegerv,
-    )
-
-    from pyopengl_video.inputs import delete_framebuffer
     other = int(glGenFramebuffers(1))
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, other)
     encoder = ForeignTextureEncoder()

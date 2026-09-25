@@ -10,7 +10,7 @@ Windows, which is where a mistake in the parsing would otherwise hide.
 
 import pytest
 
-from pyopengl_video.windows.interop import parse_extension_string
+from pyopengl_video.windows.interop import EXTENSION, parse_extension_string
 
 
 def test_the_names_come_back_as_a_set():
@@ -19,8 +19,6 @@ def test_the_names_come_back_as_a_set():
 
 
 def test_the_extension_the_backend_looks_for_is_found_among_many():
-    from pyopengl_video.windows.interop import EXTENSION
-
     text = b' '.join(
         [b'WGL_ARB_extensions_string', EXTENSION.encode('ascii'), b'WGL_EXT_swap_control']
     )

@@ -15,6 +15,7 @@ from pyopengl_video.encoder import EncoderError, EncoderUnavailable
 from pyopengl_video.linux.dmabuf import DMABufError
 from pyopengl_video.nvenc.api import NVENCError
 from pyopengl_video.vaapi.api import VAError
+from pyopengl_video.vaapi.encoder import VAAPIEncoder, as_encoder_error
 from pyopengl_video.vpl.api import VPLError
 
 #: Every error a backend raises at a caller from a driver call.
@@ -55,8 +56,6 @@ class TestTheOnesThatAreNotEncoderErrors:
 
     def test_the_backend_translates_them(self):
         """The public methods of the VA-API encoder carry the translation."""
-        from pyopengl_video.vaapi.encoder import VAAPIEncoder, as_encoder_error
-
         for name in ('__init__', 'register', 'encode', 'flush'):
             method = getattr(VAAPIEncoder, name)
             assert getattr(method, '__wrapped__', None) is not None, (

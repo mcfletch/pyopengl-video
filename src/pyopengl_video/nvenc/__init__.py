@@ -56,7 +56,9 @@ def _build(width: int, height: int, **options: Any) -> Any:
     Imported here rather than at module scope so that discovery costs one
     ``dlopen`` and nothing more.
     """
-    from pyopengl_video.nvenc.encoder import NVENCEncoder
+    from pyopengl_video.nvenc.encoder import (  # noqa: PLC0415 - loaded when an encoder is built
+        NVENCEncoder,
+    )
     return NVENCEncoder(width, height, **options)
 
 

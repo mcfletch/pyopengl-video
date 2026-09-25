@@ -2,7 +2,7 @@
 import pytest
 
 from pyopengl_video import encoder as encoder_module
-from pyopengl_video import encoders, open_encoder
+from pyopengl_video import encoders, nvenc, open_encoder
 from pyopengl_video.encoder import Backend, Encoder, EncoderUnavailable, Packet
 
 
@@ -14,10 +14,10 @@ class FakeEncoder(Encoder):
         self.codec = codec
         self.options = options
 
-    def register(self, texture, target=None):
+    def register(self, texture, target=None):  # noqa: ARG002 - the Encoder interface's signature
         return texture
 
-    def encode(self, handle, timestamp, duration=0, force_idr=False):
+    def encode(self, handle, timestamp, duration=0, force_idr=False):  # noqa: ARG002 - the Encoder interface's signature
         return []
 
     def flush(self):
@@ -42,7 +42,8 @@ def only_fake_backend(monkeypatch):
     return backend
 
 
-def test_encoders_lists_available_backends(only_fake_backend):
+@pytest.mark.usefixtures('only_fake_backend')
+def test_encoders_lists_available_backends():
     assert [b.name for b in encoders()] == ['fake']
 
 
@@ -51,26 +52,30 @@ def test_encoders_omits_backends_that_do_not_probe(monkeypatch, only_fake_backen
     assert encoders() == []
 
 
-def test_open_encoder_builds_the_first_capable_backend(only_fake_backend):
+@pytest.mark.usefixtures('only_fake_backend')
+def test_open_encoder_builds_the_first_capable_backend():
     enc = open_encoder(320, 240, codec='h264', bitrate=1_000_000)
     assert isinstance(enc, FakeEncoder)
     assert enc.size == (320, 240)
     assert enc.options['bitrate'] == 1_000_000
 
 
-def test_open_encoder_rejects_a_codec_no_backend_has(only_fake_backend):
+@pytest.mark.usefixtures('only_fake_backend')
+def test_open_encoder_rejects_a_codec_no_backend_has():
     with pytest.raises(EncoderUnavailable) as caught:
         open_encoder(320, 240, codec='av1')
     assert 'av1' in str(caught.value)
 
 
-def test_open_encoder_rejects_a_size_no_backend_can_reach(only_fake_backend):
+@pytest.mark.usefixtures('only_fake_backend')
+def test_open_encoder_rejects_a_size_no_backend_can_reach():
     with pytest.raises(EncoderUnavailable) as caught:
         open_encoder(1920, 1080, codec='h264')
     assert '1920x1080' in str(caught.value)
 
 
-def test_open_encoder_names_a_backend_directly(only_fake_backend):
+@pytest.mark.usefixtures('only_fake_backend')
+def test_open_encoder_names_a_backend_directly():
     assert isinstance(open_encoder(320, 240, backend='fake'), FakeEncoder)
     with pytest.raises(EncoderUnavailable):
         open_encoder(320, 240, backend='nonesuch')
@@ -84,8 +89,6 @@ def test_packet_carries_what_a_muxer_needs():
 
 def test_the_nvenc_backend_reports_itself_unavailable_off_linux(monkeypatch):
     """NVIDIA supports the encoder's OpenGL device type on Linux alone."""
-    from pyopengl_video import nvenc
-
     monkeypatch.setattr(nvenc, 'OPENGL_DEVICE_PLATFORM', False)
     assert nvenc.probe() is False
 

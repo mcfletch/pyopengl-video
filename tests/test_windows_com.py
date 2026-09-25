@@ -3,6 +3,7 @@
 These need no GPU and no OpenGL context: they are the parts of the Windows shim
 that are ordinary Python, kept testable on purpose.
 """
+import ctypes
 import sys
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from pyopengl_video.encoder import EncoderError
 from pyopengl_video.inputs import InputHandle
 from pyopengl_video.windows import com
+from pyopengl_video.windows.interop import handle_array
 
 
 def test_a_guid_is_built_from_its_usual_spelling():
@@ -91,9 +93,6 @@ def test_a_handle_array_accepts_either_spelling_of_a_handle():
     object. Building the array from whichever type turned up fails on the
     integer, so the address is what is taken.
     """
-    import ctypes
-
-    from pyopengl_video.windows.interop import handle_array
 
     address = 0x12345678
     from_integer = handle_array(address)
@@ -104,9 +103,6 @@ def test_a_handle_array_accepts_either_spelling_of_a_handle():
 
 @pytest.mark.skipif(sys.platform != 'win32', reason='WGL types are Windows-only')
 def test_a_null_handle_makes_an_array_rather_than_failing():
-    import ctypes
-
-    from pyopengl_video.windows.interop import handle_array
 
     assert handle_array(ctypes.c_void_p())[0] in (0, None)
 

@@ -31,6 +31,8 @@ from collections.abc import Callable
 from types import ModuleType
 from typing import Any, TypeVar
 
+from pyopengl_video.vaapi.api import DRM_FORMAT_MOD_INVALID, fourcc_name
+
 T = TypeVar('T')
 
 log = logging.getLogger(__name__)
@@ -125,7 +127,6 @@ class ExportedImage:
         self.planes = planes
 
     def __repr__(self) -> str:
-        from pyopengl_video.vaapi.api import fourcc_name
         return (f'<{type(self).__name__} {self.width}x{self.height} '
                 f'{fourcc_name(self.fourcc)} modifier {self.modifier:#x}, '
                 f'{len(self.planes)} plane(s)>')
@@ -137,7 +138,9 @@ class ExportedImage:
                 os.close(plane.fd)
         self.planes = ()
         if self._image is not None:
-            from OpenGL.EGL.KHR.image_base import eglDestroyImageKHR
+            from OpenGL.EGL.KHR.image_base import (  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
+                eglDestroyImageKHR,
+            )
             eglDestroyImageKHR(self._display, self._image)
             self._image = None
 
@@ -160,7 +163,7 @@ def _egl() -> ModuleType | None:
     exists to give -- rather than as an exception out of an import.
     """
     try:
-        from OpenGL import EGL
+        from OpenGL import EGL  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
     except Exception as error:  # noqa: BLE001 - however it fails, there is no EGL
         # Any exception, because the failure has more than one shape: PyOpenGL
         # raises ImportError from 4.0 on, and the releases this package also
@@ -252,8 +255,11 @@ def export_texture(texture: int, width: int, height: int) -> ExportedImage:
     :func:`unavailable_because` explains.
     """
     EGL = _require_egl()
-    from OpenGL.EGL.KHR.image_base import EGL_IMAGE_PRESERVED_KHR, eglCreateImageKHR
-    from OpenGL.EGL.MESA.image_dma_buf_export import (
+    from OpenGL.EGL.KHR.image_base import (  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
+        EGL_IMAGE_PRESERVED_KHR,
+        eglCreateImageKHR,
+    )
+    from OpenGL.EGL.MESA.image_dma_buf_export import (  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
         eglExportDMABUFImageMESA,
         eglExportDMABUFImageQueryMESA,
     )
@@ -300,7 +306,9 @@ def export_texture(texture: int, width: int, height: int) -> ExportedImage:
 
 
 def _destroy(display: object, image: object) -> None:
-    from OpenGL.EGL.KHR.image_base import eglDestroyImageKHR
+    from OpenGL.EGL.KHR.image_base import (  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
+        eglDestroyImageKHR,
+    )
     eglDestroyImageKHR(display, image)
 
 
@@ -316,8 +324,10 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
     needs, and the caller closes its own.
     """
     EGL = _require_egl()
-    from OpenGL.EGL.KHR.image_base import eglCreateImageKHR
-    from OpenGL.GL import (
+    from OpenGL.EGL.KHR.image_base import (  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
+        eglCreateImageKHR,
+    )
+    from OpenGL.GL import (  # noqa: PLC0415 - OpenGL.GL stays off the probe path
         GL_CLAMP_TO_EDGE,
         GL_LINEAR,
         GL_TEXTURE_2D,
@@ -329,7 +339,9 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
         glGenTextures,
         glTexParameteri,
     )
-    from OpenGL.GLES2.OES.EGL_image import glEGLImageTargetTexture2DOES
+    from OpenGL.GLES2.OES.EGL_image import (  # noqa: PLC0415 - OpenGL.GL stays off the probe path
+        glEGLImageTargetTexture2DOES,
+    )
 
     if not import_available():
         raise DMABufError(
@@ -339,7 +351,6 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
 
     values = [EGL_WIDTH, int(width), EGL_HEIGHT, int(height),
               EGL_LINUX_DRM_FOURCC_EXT, int(fourcc)]
-    from pyopengl_video.vaapi.api import DRM_FORMAT_MOD_INVALID
 
     for index, plane in enumerate(planes):
         fd_name, offset_name, pitch_name, low_name, high_name = _IMPORT_ATTRIBUTES[index]
@@ -389,7 +400,7 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
 
 def release_imported_texture(texture: int, image: object) -> None:
     """Give back what :func:`import_texture` returned."""
-    from OpenGL.GL import glDeleteTextures
+    from OpenGL.GL import glDeleteTextures  # noqa: PLC0415 - OpenGL.GL stays off the probe path
 
     if texture:
         glDeleteTextures([int(texture)])

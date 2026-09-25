@@ -8,6 +8,21 @@ import sys
 
 import numpy as np
 import pytest
+from OpenGL import error
+from OpenGL.GL import (
+    GL_COLOR_ATTACHMENT0,
+    GL_FRAMEBUFFER,
+    GL_RGBA,
+    GL_TEXTURE_2D,
+    GL_UNSIGNED_BYTE,
+    glBindFramebuffer,
+    glDeleteFramebuffers,
+    glFinish,
+    glFramebufferTexture2D,
+    glGenFramebuffers,
+    glReadPixels,
+)
+from OpenGL.GLES2.OES import EGL_image
 
 from pyopengl_video.linux import dmabuf
 from pyopengl_video.vaapi import api
@@ -17,7 +32,7 @@ SIZE = (320, 240)
 
 #: The low and high halves of each plane's modifier, as
 #: :data:`~pyopengl_video.linux.dmabuf._IMPORT_ATTRIBUTES` names them.
-MODIFIER_ATTRIBUTES = tuple(plane[3:] for plane in dmabuf._IMPORT_ATTRIBUTES)
+MODIFIER_ATTRIBUTES = tuple(plane[3:] for plane in dmabuf._IMPORT_ATTRIBUTES)  # noqa: SLF001 - the EGL attribute table under test
 
 #: A single colour plane, which is what an RGBA frame exports as.
 ONE_PLANE = (dmabuf.Plane(fd=7, offset=0, stride=1280),)
@@ -27,19 +42,21 @@ pytestmark = pytest.mark.skipif(not sys.platform.startswith('linux'),
 
 
 @pytest.fixture
-def attributes_of(egl, monkeypatch):
+def attributes_of(egl, monkeypatch):  # noqa: ARG001 - requested to skip where there is no EGL
     """Return what an import would hand ``eglCreateImageKHR``, as a mapping.
 
     Whether a display accepts a buffer whose layout was not named is the
     driver's business and differs between them; what the import asked for is
     this package's, and is the same everywhere.
     """
-    from OpenGL.EGL.KHR import image_base
+    from OpenGL.EGL.KHR import (  # noqa: PLC0415 - needs libEGL, which the egl fixture checks for
+        image_base,
+    )
 
     def ask(modifier, planes=ONE_PLANE):
         seen = {}
 
-        def createImage(display, context, target, buffer, attributes):
+        def createImage(display, context, target, buffer, attributes):  # noqa: ARG001 - eglCreateImageKHR's signature
             # name/value pairs, with a lone EGL_NONE closing the list
             values = list(attributes)[:-1]
             seen.update(dict(zip(values[::2], values[1::2], strict=True)))
@@ -55,30 +72,30 @@ def attributes_of(egl, monkeypatch):
 
 
 @pytest.fixture
-def refusing_import(egl, monkeypatch, gl_context):
+def refusing_import(egl, monkeypatch, gl_context):  # noqa: ARG001 - requested to skip where there is no EGL, with a context current
     """Import a buffer from a driver that takes the image and then refuses it.
 
     Both halves are stood in for, so the case is the same on any driver: EGL
     hands back an image, and the call that gives it to a texture fails. What
     the fixture records is whether that image was given back.
     """
-    from OpenGL import error
-    from OpenGL.EGL.KHR import image_base
-    from OpenGL.GLES2.OES import EGL_image
+    from OpenGL.EGL.KHR import (  # noqa: PLC0415 - needs libEGL, which the egl fixture checks for
+        image_base,
+    )
 
     destroyed: list = []
     image = object()
 
-    def refuse(target, given):
+    def refuse(_target, _image):
         raise error.GLError(err=1282,
                             baseOperation='glEGLImageTargetTexture2DOES')
 
     monkeypatch.setattr(dmabuf, 'import_available', lambda: True)
     monkeypatch.setattr(image_base, 'eglCreateImageKHR',
-                        lambda *arguments: image)
+                        lambda *_arguments: image)
     monkeypatch.setattr(EGL_image, 'glEGLImageTargetTexture2DOES', refuse)
     monkeypatch.setattr(dmabuf, '_destroy',
-                        lambda display, given: destroyed.append(given))
+                        lambda _display, given: destroyed.append(given))
 
     def run():
         return dmabuf.import_texture(api.DRM_FORMAT_ABGR8888, *SIZE, 0,
@@ -89,7 +106,7 @@ def refusing_import(egl, monkeypatch, gl_context):
 
 
 @pytest.fixture
-def exportable(gl_context):
+def exportable(gl_context):  # noqa: ARG001 - requested so a GL context is current first
     """Skip unless this OpenGL context can export a texture."""
     reason = dmabuf.unavailable_because()
     if reason:
@@ -98,7 +115,7 @@ def exportable(gl_context):
 
 
 @pytest.fixture
-def exported(exportable, upload_texture):
+def exported(exportable, upload_texture):  # noqa: ARG001 - requested to skip where the context cannot export
     """A gradient texture, exported."""
     width, height = SIZE
     texture = upload_texture(gradient_frame(width, height))
@@ -108,7 +125,8 @@ def exported(exportable, upload_texture):
 
 
 class TestWhatTheContextCanDo:
-    def test_a_context_that_can_export_says_nothing_is_wrong(self, exportable):
+    @pytest.mark.usefixtures('exportable')
+    def test_a_context_that_can_export_says_nothing_is_wrong(self):
         assert dmabuf.unavailable_because() == ''
         assert dmabuf.available() is True
 
@@ -125,12 +143,13 @@ class TestWhatTheContextCanDo:
         assert 'CONTEXT_CREATION_API' in reason, 'says what to do about it'
         assert dmabuf.available() is False
 
-    def test_a_display_missing_the_extension_says_which_one(self, monkeypatch,
-                                                            exportable):
+    @pytest.mark.usefixtures('exportable')
+    def test_a_display_missing_the_extension_says_which_one(self, monkeypatch):
         monkeypatch.setattr(dmabuf, '_extensions', lambda: 'EGL_KHR_image_base')
         assert 'EGL_MESA_image_dma_buf_export' in dmabuf.unavailable_because()
 
 
+@pytest.mark.usefixtures('without_egl')
 class TestWithNoEGLLibraryAtAll:
     """EGL ships with the graphics driver, and plenty of machines have neither.
 
@@ -145,24 +164,24 @@ class TestWithNoEGLLibraryAtAll:
     def without_egl(self, monkeypatch):
         monkeypatch.setattr(dmabuf, '_egl', lambda: None)
 
-    def test_the_reason_says_there_is_no_egl_library(self, without_egl):
+    def test_the_reason_says_there_is_no_egl_library(self):
         reason = dmabuf.unavailable_because()
         assert 'EGL' in reason
         assert 'driver' in reason, 'says where an EGL library comes from'
 
-    def test_the_context_is_not_available_and_does_not_raise(self, without_egl):
+    def test_the_context_is_not_available_and_does_not_raise(self):
         assert dmabuf.available() is False
         assert dmabuf.import_available() is False
 
-    def test_an_export_refuses_with_the_reason(self, without_egl):
+    def test_an_export_refuses_with_the_reason(self):
         with pytest.raises(dmabuf.DMABufError, match='EGL'):
             dmabuf.export_texture(1, *SIZE)
 
-    def test_an_import_refuses_with_the_reason(self, without_egl):
+    def test_an_import_refuses_with_the_reason(self):
         with pytest.raises(dmabuf.DMABufError):
             dmabuf.import_texture(api.DRM_FORMAT_ABGR8888, *SIZE, 0, ())
 
-    def test_releasing_nothing_is_still_harmless(self, without_egl):
+    def test_releasing_nothing_is_still_harmless(self):
         dmabuf.release_imported_texture(0, None)
 
 
@@ -191,7 +210,8 @@ class TestExport:
         assert 'AB24' in repr(exported)
         assert '320x240' in repr(exported)
 
-    def test_closing_gives_the_descriptor_back(self, exportable, upload_texture):
+    @pytest.mark.usefixtures('exportable')
+    def test_closing_gives_the_descriptor_back(self, upload_texture):
         width, height = SIZE
         image = dmabuf.export_texture(upload_texture(gradient_frame(*SIZE)),
                                       width, height)
@@ -201,18 +221,20 @@ class TestExport:
         with pytest.raises(OSError):
             os.fstat(fd)
 
-    def test_closing_twice_is_harmless(self, exportable, upload_texture):
+    @pytest.mark.usefixtures('exportable')
+    def test_closing_twice_is_harmless(self, upload_texture):
         image = dmabuf.export_texture(upload_texture(gradient_frame(*SIZE)),
                                       *SIZE)
         image.close()
         image.close()
 
-    def test_a_texture_that_is_not_there_is_refused(self, exportable):
+    @pytest.mark.usefixtures('exportable')
+    def test_a_texture_that_is_not_there_is_refused(self):
         with pytest.raises(dmabuf.DMABufError):
             dmabuf.export_texture(9999, *SIZE)
 
-    def test_a_driver_that_raises_rather_than_answering_is_the_same_refusal(
-            self, egl, monkeypatch):
+    @pytest.mark.usefixtures('egl')
+    def test_a_driver_that_raises_rather_than_answering_is_the_same_refusal(self, monkeypatch):
         """A driver's two ways of saying no reach the caller as one exception.
 
         An entry point can refuse by handing back a null handle, or by setting
@@ -220,10 +242,14 @@ class TestExport:
         that is not there. Neither is a caller's to catch: an ``EGLError``
         names an entry point they did not call.
         """
-        from OpenGL.EGL.KHR import image_base
-        from OpenGL.raw.EGL._errors import EGLError
+        from OpenGL.EGL.KHR import (  # noqa: PLC0415 - needs libEGL, which the egl fixture checks for
+            image_base,
+        )
+        from OpenGL.raw.EGL._errors import (  # noqa: PLC0415 - needs libEGL, which the egl fixture checks for
+            EGLError,
+        )
 
-        def refuse(*arguments):
+        def refuse(*_arguments):
             raise EGLError(err=0x300C, baseOperation='eglCreateImageKHR')
 
         monkeypatch.setattr(dmabuf, 'unavailable_because', lambda: None)
@@ -231,8 +257,9 @@ class TestExport:
         with pytest.raises(dmabuf.DMABufError, match='refused texture 9999'):
             dmabuf.export_texture(9999, *SIZE)
 
+    @pytest.mark.usefixtures('exportable')
     def test_a_context_that_cannot_export_refuses_with_the_reason(
-            self, monkeypatch, exportable, upload_texture):
+            self, monkeypatch, upload_texture):
         monkeypatch.setattr(dmabuf, 'unavailable_because', lambda: 'no EGL here')
         with pytest.raises(dmabuf.DMABufError, match='no EGL here'):
             dmabuf.export_texture(upload_texture(gradient_frame(*SIZE)), *SIZE)
@@ -269,22 +296,9 @@ class TestTheModifier:
 
 
 class TestImport:
-    def test_a_buffer_comes_back_as_a_texture_with_the_same_pixels(
-            self, exportable, upload_texture):
+    @pytest.mark.usefixtures('exportable')
+    def test_a_buffer_comes_back_as_a_texture_with_the_same_pixels(self, upload_texture):
         """Round trip: the same memory, under two names, reads the same."""
-        from OpenGL.GL import (
-            GL_COLOR_ATTACHMENT0,
-            GL_FRAMEBUFFER,
-            GL_RGBA,
-            GL_TEXTURE_2D,
-            GL_UNSIGNED_BYTE,
-            glBindFramebuffer,
-            glDeleteFramebuffers,
-            glFinish,
-            glFramebufferTexture2D,
-            glGenFramebuffers,
-            glReadPixels,
-        )
         if not dmabuf.import_available():
             pytest.skip('this EGL display cannot import a DMA-BUF')
         width, height = SIZE
@@ -337,8 +351,8 @@ class TestImport:
         assert len(refusing_import.destroyed) == 1, (
             'the image the import made was not given back')
 
-    def test_an_unnamed_layout_is_answered_rather_than_crashed_through(
-            self, exportable, upload_texture):
+    @pytest.mark.usefixtures('exportable')
+    def test_an_unnamed_layout_is_answered_rather_than_crashed_through(self, upload_texture):
         """What a real driver does with a buffer whose layout was not named.
 
         Some take it and some will not -- a block-linear buffer imported as
@@ -361,13 +375,15 @@ class TestImport:
         finally:
             image.close()
 
-    def test_a_display_that_cannot_import_says_so(self, monkeypatch, exportable):
+    @pytest.mark.usefixtures('exportable')
+    def test_a_display_that_cannot_import_says_so(self, monkeypatch):
         monkeypatch.setattr(dmabuf, 'import_available', lambda: False)
         with pytest.raises(dmabuf.DMABufError,
                            match='EGL_EXT_image_dma_buf_import'):
             dmabuf.import_texture(api.DRM_FORMAT_ABGR8888, 16, 16, 0, ())
 
-    def test_releasing_nothing_is_harmless(self, exportable):
+    @pytest.mark.usefixtures('exportable')
+    def test_releasing_nothing_is_harmless(self):
         dmabuf.release_imported_texture(0, None)
 
 

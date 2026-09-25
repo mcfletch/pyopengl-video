@@ -24,6 +24,8 @@ import sys
 from typing import Any
 
 from pyopengl_video.encoder import Backend
+from pyopengl_video.linux import dmabuf
+from pyopengl_video.vaapi import api
 
 log = logging.getLogger(__name__)
 
@@ -86,10 +88,8 @@ def _context_can_export() -> bool:
     before a window exists, and the encoder says what is wrong when one is
     registered.
     """
-    from pyopengl_video.linux import dmabuf
-
     try:
-        from OpenGL import EGL
+        from OpenGL import EGL  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
 
         if not EGL.eglGetCurrentContext():
             return True
@@ -105,8 +105,6 @@ def _context_can_export() -> bool:
 
 def _any_device_encodes() -> bool:
     """Does any DRM render node here offer H.264 slice encoding?"""
-    from pyopengl_video.vaapi import api
-
     try:
         va = api.VA.instance()
     except OSError as error:
@@ -117,9 +115,7 @@ def _any_device_encodes() -> bool:
 
 def _device_encodes(va: Any, node: str) -> bool:
     """Does one render node offer H.264 slice encoding? Never raises."""
-    from pyopengl_video.vaapi import api
-
-    silence = api.MESSAGE_CALLBACK(lambda context, message: None)
+    silence = api.MESSAGE_CALLBACK(lambda _context, _message: None)
     fd = -1
     display = None
     try:
@@ -165,8 +161,6 @@ def explain() -> str:
     if not SUPPORTED_PLATFORM:
         return ''
     try:
-        from pyopengl_video.linux import dmabuf
-
         reason = dmabuf.unavailable_because() if _context_is_current() else ''
         if reason:
             return reason
@@ -185,7 +179,7 @@ def explain() -> str:
 def _context_is_current() -> bool:
     """Whether there is an EGL context to ask about at all."""
     try:
-        from OpenGL import EGL
+        from OpenGL import EGL  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
 
         return bool(EGL.eglGetCurrentContext())
     except Exception:  # noqa: BLE001 - no EGL is not a context
@@ -198,7 +192,9 @@ def _build(width: int, height: int, **options: Any) -> Any:
     Imported here rather than at module scope so that discovery costs one
     library load and nothing more.
     """
-    from pyopengl_video.vaapi.encoder import VAAPIEncoder
+    from pyopengl_video.vaapi.encoder import (  # noqa: PLC0415 - loaded when an encoder is built
+        VAAPIEncoder,
+    )
     return VAAPIEncoder(width, height, **options)
 
 

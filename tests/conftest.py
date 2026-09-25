@@ -4,12 +4,34 @@ The context is a hidden GLFW window: encoding reads a texture and never presents
 anything, so there is nothing to show, and an unmapped window keeps a test run
 from flashing over whatever the person running it is doing.
 """
+import shutil
+import subprocess
 import sys
 
 import numpy as np
 import pytest
+from OpenGL.GL import (
+    GL_CLAMP_TO_EDGE,
+    GL_LINEAR,
+    GL_RGBA,
+    GL_RGBA8,
+    GL_TEXTURE_2D,
+    GL_TEXTURE_MAG_FILTER,
+    GL_TEXTURE_MIN_FILTER,
+    GL_TEXTURE_WRAP_S,
+    GL_TEXTURE_WRAP_T,
+    GL_UNSIGNED_BYTE,
+    glBindTexture,
+    glDeleteTextures,
+    glGenTextures,
+    glTexImage2D,
+    glTexParameteri,
+    glTexSubImage2D,
+)
 
-from pyopengl_video import nvenc
+from pyopengl_video import nvenc, vaapi, vpl
+from pyopengl_video.linux import dmabuf
+from pyopengl_video.windows import interop
 
 
 @pytest.fixture(scope='session')
@@ -47,9 +69,7 @@ def egl():
     package does on such a machine is covered by the cases that need no EGL at
     all, in ``TestWithNoEGLLibraryAtAll``.
     """
-    from pyopengl_video.linux import dmabuf
-
-    module = dmabuf._egl()
+    module = dmabuf._egl()  # noqa: SLF001 - the bindings the module under test loads, which the fixture hands to stand-ins
     if module is None:
         pytest.skip('PyOpenGL has no EGL library to bind to on this machine, '
                     'so there is no EGL entry point to stand in for')
@@ -57,11 +77,8 @@ def egl():
 
 
 @pytest.fixture
-def vaapi_available(gl_context):
+def vaapi_available(gl_context):  # noqa: ARG001 - requested so a GL context is current first
     """Skip unless libva here can encode H.264 from this OpenGL context."""
-    from pyopengl_video import vaapi
-    from pyopengl_video.linux import dmabuf
-
     if not sys.platform.startswith('linux'):
         pytest.skip('libva is the Linux encoder interface')
     reason = dmabuf.unavailable_because()
@@ -76,7 +93,7 @@ def vaapi_available(gl_context):
 
 
 @pytest.fixture
-def nvenc_available(gl_context):
+def nvenc_available(gl_context):  # noqa: ARG001 - requested so a GL context is current first
     """Skip unless this machine has an NVIDIA encoder to talk to."""
     if not nvenc.probe():
         # Two different things fail this, and naming only the library sends a
@@ -91,14 +108,11 @@ def nvenc_available(gl_context):
 
 
 @pytest.fixture
-def vpl_available(gl_context):
+def vpl_available(gl_context):  # noqa: ARG001 - requested so a GL context is current first
     """Skip unless Intel's encoder is reachable from this OpenGL context."""
-    from pyopengl_video import vpl
-
     if not vpl.probe():
         pytest.skip('no Intel encoder library here (oneVPL is reached through '
                     'Direct3D, so this backend is Windows-only for now)')
-    from pyopengl_video.windows import interop
 
     if not interop.available():
         pytest.skip('this OpenGL driver does not offer WGL_NV_DX_interop2')
@@ -118,9 +132,6 @@ def decode_errors(path):
     way that sets a decoder up wrongly -- which nothing inside this package can
     notice.
     """
-    import shutil
-    import subprocess
-
     if shutil.which('ffmpeg') is None:
         return None
     found = subprocess.run(
@@ -147,26 +158,8 @@ def gradient_frame(width, height, phase=0):
 
 
 @pytest.fixture
-def upload_texture(gl_context):
+def upload_texture(gl_context):  # noqa: ARG001 - requested so a GL context is current first
     """Return a helper that puts an RGBA array into a new GL texture."""
-    from OpenGL.GL import (
-        GL_CLAMP_TO_EDGE,
-        GL_LINEAR,
-        GL_RGBA,
-        GL_RGBA8,
-        GL_TEXTURE_2D,
-        GL_TEXTURE_MAG_FILTER,
-        GL_TEXTURE_MIN_FILTER,
-        GL_TEXTURE_WRAP_S,
-        GL_TEXTURE_WRAP_T,
-        GL_UNSIGNED_BYTE,
-        glBindTexture,
-        glDeleteTextures,
-        glGenTextures,
-        glTexImage2D,
-        glTexParameteri,
-        glTexSubImage2D,
-    )
     made = []
 
     def make(frame):

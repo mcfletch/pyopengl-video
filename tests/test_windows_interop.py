@@ -9,6 +9,16 @@ import sys
 
 import numpy as np
 import pytest
+from OpenGL.GL import (
+    GL_COLOR_BUFFER_BIT,
+    GL_DRAW_FRAMEBUFFER,
+    GL_FRAMEBUFFER_COMPLETE,
+    glBindFramebuffer,
+    glCheckFramebufferStatus,
+    glClear,
+    glClearColor,
+    glFinish,
+)
 
 from pyopengl_video.windows import d3d11, interop
 
@@ -25,7 +35,7 @@ def adapters():
 
 
 @pytest.fixture
-def gl_adapter(gl_context, adapters):
+def gl_adapter(gl_context, adapters):  # noqa: ARG001 - requested so a GL context is current, and to skip where there is no DXGI adapter
     """The DXGI adapter the current OpenGL context is running on."""
     adapter = interop.adapter_for_context()
     if adapter is None:
@@ -40,7 +50,7 @@ def device(gl_adapter):
 
 
 @pytest.fixture
-def shared(gl_context, device):
+def shared(gl_context, device):  # noqa: ARG001 - requested so a GL context is current first
     if not interop.available():
         pytest.skip('WGL_NV_DX_interop2 is not offered by this driver')
     with interop.InteropDevice(device) as interop_device:
@@ -106,12 +116,6 @@ def test_the_context_runs_on_an_adapter_dxgi_also_lists(gl_adapter, adapters):
 
 
 def test_a_shared_texture_is_a_complete_framebuffer(shared):
-    from OpenGL.GL import (
-        GL_DRAW_FRAMEBUFFER,
-        GL_FRAMEBUFFER_COMPLETE,
-        glBindFramebuffer,
-        glCheckFramebufferStatus,
-    )
     with shared.create_texture(64, 64) as texture:
         with texture.for_drawing():
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, texture.framebuffer)
@@ -137,14 +141,6 @@ def test_a_shared_texture_carries_what_opengl_drew_into_it(
     A colour with three different components is used on purpose: a swapped red
     and blue cannot pass.
     """
-    from OpenGL.GL import (
-        GL_COLOR_BUFFER_BIT,
-        GL_DRAW_FRAMEBUFFER,
-        glBindFramebuffer,
-        glClear,
-        glClearColor,
-        glFinish,
-    )
     with shared.create_texture(16, 8, dxgi_format) as texture:
         with texture.for_drawing():
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, texture.framebuffer)
@@ -162,14 +158,6 @@ def test_a_shared_texture_carries_what_opengl_drew_into_it(
 
 def test_a_shared_texture_can_be_drawn_into_more_than_once(shared):
     """A recording locks and unlocks the same texture every time round the ring."""
-    from OpenGL.GL import (
-        GL_COLOR_BUFFER_BIT,
-        GL_DRAW_FRAMEBUFFER,
-        glBindFramebuffer,
-        glClear,
-        glClearColor,
-        glFinish,
-    )
     with shared.create_texture(8, 8) as texture:
         for level in (0.0, 1.0, 0.25):
             with texture.for_drawing():

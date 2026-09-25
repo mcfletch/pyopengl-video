@@ -82,7 +82,7 @@ class TestBitFields:
     """The unions of flags, which are where a miscount is least visible."""
 
     def test_sequence_flags_pack_into_one_word(self):
-        fields = api._SeqFields()
+        fields = api._SeqFields()  # noqa: SLF001 - an anonymous union of the VA header, measured here
         fields.bits.chroma_format_idc = 1
         fields.bits.frame_mbs_only_flag = 1
         fields.bits.direct_8x8_inference_flag = 1
@@ -93,7 +93,7 @@ class TestBitFields:
         assert fields.value == (1 | 1 << 2 | 1 << 5 | 4 << 6 | 4 << 12)
 
     def test_picture_flags_pack_into_one_word(self):
-        fields = api._PicFields()
+        fields = api._PicFields()  # noqa: SLF001 - an anonymous union of the VA header, measured here
         fields.bits.idr_pic_flag = 1
         fields.bits.reference_pic_flag = 1
         fields.bits.entropy_coding_mode_flag = 1
@@ -105,7 +105,7 @@ class TestBitFields:
         assert fields.value == (1 | 1 << 1 | 1 << 3 | 1 << 8 | 1 << 9)
 
     def test_the_vui_flag_word_reaches_the_wide_fields(self):
-        fields = api._VuiFields()
+        fields = api._VuiFields()  # noqa: SLF001 - an anonymous union of the VA header, measured here
         fields.bits.log2_max_mv_length_horizontal = 15
         fields.bits.log2_max_mv_length_vertical = 15
         assert fields.value == (15 << 3 | 15 << 8)
@@ -158,5 +158,5 @@ class TestRenderNodes:
 
     def test_a_machine_with_no_drm_devices_answers_with_no_nodes(self, monkeypatch):
         monkeypatch.setattr(api.os, 'listdir',
-                            lambda path: (_ for _ in ()).throw(FileNotFoundError))
+                            lambda _path: (_ for _ in ()).throw(FileNotFoundError))
         assert api.render_nodes() == []

@@ -26,7 +26,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
-from pyopengl_video.inputs import InputHandle
+from pyopengl_video.inputs import InputHandle, create_framebuffer, create_rgba_texture
 
 log = logging.getLogger(__name__)
 
@@ -166,7 +166,6 @@ class Encoder(ABC):
         which is what a backend accepting a foreign texture wants. Backends
         whose input must be allocated by the driver override this.
         """
-        from pyopengl_video.inputs import create_framebuffer, create_rgba_texture
         texture = create_rgba_texture(*self.size)
         handle = self.register(texture)
         handle.framebuffer = create_framebuffer(texture, handle.target)
@@ -261,7 +260,7 @@ def explanations(backends: Iterable[Backend] | None = None) -> list[str]:
             if backend.probe():
                 continue
             reason = backend.explain()
-        except Exception:  # noqa: BLE001 - a courtesy never hides the answer
+        except Exception:
             log.debug('%s could not say why it is unavailable', backend.name,
                       exc_info=True)
             continue

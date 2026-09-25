@@ -11,11 +11,33 @@ from itertools import pairwise
 
 import numpy as np
 import pytest
+from OpenGL.GL import (
+    GL_COLOR_ATTACHMENT0,
+    GL_COLOR_BUFFER_BIT,
+    GL_DRAW_FRAMEBUFFER,
+    GL_NEAREST,
+    GL_READ_FRAMEBUFFER,
+    GL_TEXTURE_2D,
+    glBindFramebuffer,
+    glBlitFramebuffer,
+    glClear,
+    glClearColor,
+    glDeleteFramebuffers,
+    glFramebufferTexture2D,
+    glGenFramebuffers,
+)
 
 from pyopengl_video import EncoderError, encoders, open_encoder
+from pyopengl_video.linux import dmabuf
 from pyopengl_video.mp4 import MP4Writer, split_annexb
-from pyopengl_video.vaapi import api
-from pyopengl_video.vaapi.encoder import PIPELINE_DEPTH, VAAPIEncoder, colour_pipeline
+from pyopengl_video.vaapi import api, h264
+from pyopengl_video.vaapi import encoder as encoder_module
+from pyopengl_video.vaapi.encoder import (
+    PACKED_HEADERS_WRITTEN,
+    PIPELINE_DEPTH,
+    VAAPIEncoder,
+    colour_pipeline,
+)
 from tests.conftest import decode_errors, gradient_frame
 
 SIZE = (320, 240)
@@ -25,7 +47,7 @@ TICK = 3000                                  # 30 fps in a 90 kHz timescale
 
 
 @pytest.fixture
-def encoder(vaapi_available):
+def encoder(vaapi_available):  # noqa: ARG001 - requested to skip where there is no VA-API encoder
     """A 320x240 encoder, key frames every ten pictures."""
     made = VAAPIEncoder(*SIZE, fps=30, bitrate=2_000_000, gop=GOP)
     yield made
@@ -43,13 +65,6 @@ def handles(encoder):
 
 def paint(handle, colour):
     """Fill a handle's texture with one colour, inside its drawing scope."""
-    from OpenGL.GL import (
-        GL_COLOR_BUFFER_BIT,
-        GL_DRAW_FRAMEBUFFER,
-        glBindFramebuffer,
-        glClear,
-        glClearColor,
-    )
     with handle.for_drawing():
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, handle.framebuffer)
         glClearColor(*colour)
@@ -59,19 +74,6 @@ def paint(handle, colour):
 
 def blit(handle, texture):
     """Copy a texture into a handle's own, inside its drawing scope."""
-    from OpenGL.GL import (
-        GL_COLOR_ATTACHMENT0,
-        GL_COLOR_BUFFER_BIT,
-        GL_DRAW_FRAMEBUFFER,
-        GL_NEAREST,
-        GL_READ_FRAMEBUFFER,
-        GL_TEXTURE_2D,
-        glBindFramebuffer,
-        glBlitFramebuffer,
-        glDeleteFramebuffers,
-        glFramebufferTexture2D,
-        glGenFramebuffers,
-    )
     width, height = SIZE
     source = int(glGenFramebuffers(1))
     with handle.for_drawing():
@@ -127,14 +129,13 @@ class TestWhatTheSessionNegotiated:
         assert encoder.sets.max_num_ref_frames == encoder.max_num_ref_frames
 
     def test_it_asks_only_for_the_packed_headers_it_writes(self, encoder):
-        from pyopengl_video.vaapi.encoder import PACKED_HEADERS_WRITTEN
-
         assert encoder.packed_headers & ~PACKED_HEADERS_WRITTEN == 0
 
     def test_a_recording_needs_more_than_one_input(self, encoder):
         assert encoder.input_slots == PIPELINE_DEPTH + 1
 
-    def test_open_encoder_finds_the_backend(self, vaapi_available):
+    @pytest.mark.usefixtures('vaapi_available')
+    def test_open_encoder_finds_the_backend(self):
         assert 'vaapi' in [backend.name for backend in encoders()]
         with open_encoder(*SIZE, fps=30, backend='vaapi') as found:
             assert isinstance(found, VAAPIEncoder)
@@ -217,9 +218,9 @@ class TestTheStream:
             handle = handles[index % len(handles)]
             paint(handle, ((index % 10) / 10.0, 0.2, 0.8, 1.0))
             encoder.encode(handle, timestamp=index * TICK)
-            used.append(encoder._pending[-1].coded_buffer)
+            used.append(encoder._pending[-1].coded_buffer)  # noqa: SLF001 - the buffer rotation under test has no public view
         encoder.flush()
-        assert set(used) == set(encoder._coded_buffers), 'all of them are used'
+        assert set(used) == set(encoder._coded_buffers), 'all of them are used'  # noqa: SLF001 - the buffer rotation under test has no public view
         assert all(earlier != later for earlier, later in pairwise(used)), (
             'consecutive pictures went to the same buffer')
 
@@ -255,11 +256,11 @@ class TestPipelining:
         assert encoder.flush() == []
 
 
+@pytest.mark.usefixtures('vaapi_available')
 class TestContentSensitivity:
     """A registration that went nowhere still produces a well-formed stream."""
 
-    def test_noise_costs_far_more_than_a_flat_colour(self, vaapi_available,
-                                                     upload_texture):
+    def test_noise_costs_far_more_than_a_flat_colour(self, upload_texture):
         def sizes(frames):
             encoder = VAAPIEncoder(*SIZE, fps=30, rate_control='cqp', qp=26,
                                    gop=100)
@@ -289,8 +290,7 @@ class TestContentSensitivity:
             frame[..., 3] = 255
         assert sizes(noise) > 20 * sizes(flat)
 
-    def test_a_moving_picture_costs_more_than_a_held_one(self, vaapi_available,
-                                                         upload_texture):
+    def test_a_moving_picture_costs_more_than_a_held_one(self, upload_texture):
         width, height = SIZE
 
         def sizes(moving):
@@ -350,7 +350,7 @@ def read_nv12(encoder, surface):
 
 def coded_luma(encoder, handle):
     """Encode one picture and read back the luma the encoder was handed."""
-    surface = encoder._sources[encoder._slot]
+    surface = encoder._sources[encoder._slot]  # noqa: SLF001 - the NV12 surface the next picture converts into, read back to check the colours
     encoder.encode(handle, timestamp=0)
     encoder.flush()
     return read_nv12(encoder, surface)
@@ -378,8 +378,6 @@ class TestColour:
         assert abs(int(found.mean()) - luma) <= 2
 
     def test_the_pipeline_asks_for_what_the_stream_declares(self):
-        from pyopengl_video.vaapi import h264
-
         pipeline = colour_pipeline(surface=7)
         assert pipeline.surface == 7
         assert pipeline.output_color_standard == api.VAProcColorStandardBT709
@@ -439,8 +437,8 @@ class TestRegistering:
         with pytest.raises((EncoderError, Exception)):
             encoder.register(upload_texture(gradient_frame(64, 64)))
 
-    def test_a_handle_from_another_encoder_is_refused(self, encoder, handles,
-                                                      vaapi_available):
+    @pytest.mark.usefixtures('handles', 'vaapi_available')
+    def test_a_handle_from_another_encoder_is_refused(self, encoder):
         other = VAAPIEncoder(*SIZE, fps=30)
         try:
             stranger = other.new_input()
@@ -450,8 +448,8 @@ class TestRegistering:
         finally:
             other.close()
 
-    def test_drawing_leaves_a_fence_for_the_encoder_to_wait_on(self, encoder,
-                                                               handles):
+    @pytest.mark.usefixtures('encoder')
+    def test_drawing_leaves_a_fence_for_the_encoder_to_wait_on(self, handles):
         assert handles[0].fence is None
         paint(handles[0], (0.1, 0.2, 0.3, 1.0))
         assert handles[0].fence is not None
@@ -460,26 +458,26 @@ class TestRegistering:
 # -------------------------------------------------------------- settings
 
 
+@pytest.mark.usefixtures('vaapi_available')
 class TestSettings:
-    def test_unknown_settings_are_refused_by_name(self, vaapi_available):
+    def test_unknown_settings_are_refused_by_name(self):
         with pytest.raises(EncoderError, match='preset'):
             VAAPIEncoder(*SIZE, preset='fastest')
 
-    def test_an_unknown_rate_control_mode_is_refused(self, vaapi_available):
+    def test_an_unknown_rate_control_mode_is_refused(self):
         with pytest.raises(EncoderError, match='rate control'):
             VAAPIEncoder(*SIZE, rate_control='magic')
 
-    def test_another_codec_is_refused(self, vaapi_available):
+    def test_another_codec_is_refused(self):
         with pytest.raises(EncoderError, match='h264'):
             VAAPIEncoder(*SIZE, codec='hevc')
 
-    def test_b_frames_are_refused_because_nothing_reorders(self, vaapi_available):
+    def test_b_frames_are_refused_because_nothing_reorders(self):
         with pytest.raises(EncoderError, match='display order'):
             VAAPIEncoder(*SIZE, bframes=2)
 
     @pytest.mark.parametrize('mode', ['cqp', 'cbr', 'vbr'])
-    def test_each_rate_control_mode_the_driver_offers_records(
-            self, vaapi_available, mode):
+    def test_each_rate_control_mode_the_driver_offers_records(self, mode):
         made = VAAPIEncoder(*SIZE, fps=30, bitrate=2_000_000, gop=5,
                             rate_control=mode)
         handles = [made.new_input() for _ in range(made.input_slots)]
@@ -492,23 +490,21 @@ class TestSettings:
                 handle.close()
             made.close()
 
-    def test_a_frame_rate_that_is_not_whole_keeps_its_exact_ratio(
-            self, vaapi_available):
+    def test_a_frame_rate_that_is_not_whole_keeps_its_exact_ratio(self):
         made = VAAPIEncoder(*SIZE, fps=29.97)
         try:
             assert made.frame_rate == (30000, 1001)
         finally:
             made.close()
 
-    def test_the_default_bitrate_follows_the_frame_size_and_rate(
-            self, vaapi_available):
+    def test_the_default_bitrate_follows_the_frame_size_and_rate(self):
         made = VAAPIEncoder(*SIZE, fps=30)
         try:
             assert made.bitrate == int(320 * 240 * 30 * 0.07)
         finally:
             made.close()
 
-    def test_a_named_device_is_the_one_opened(self, vaapi_available):
+    def test_a_named_device_is_the_one_opened(self):
         nodes = api.render_nodes()
         made = VAAPIEncoder(*SIZE, fps=30, device=nodes[0])
         try:
@@ -516,7 +512,7 @@ class TestSettings:
         finally:
             made.close()
 
-    def test_a_device_that_is_not_there_is_refused_by_name(self, vaapi_available):
+    def test_a_device_that_is_not_there_is_refused_by_name(self):
         with pytest.raises(EncoderError, match='renderD99'):
             VAAPIEncoder(*SIZE, device='/dev/dri/renderD99')
 
@@ -532,7 +528,8 @@ class TestClosing:
         encoder.close()
         encoder.close()
 
-    def test_it_works_as_a_context_manager(self, vaapi_available):
+    @pytest.mark.usefixtures('vaapi_available')
+    def test_it_works_as_a_context_manager(self):
         with VAAPIEncoder(*SIZE, fps=30) as made:
             assert made.size == SIZE
         with pytest.raises(EncoderError):
@@ -603,7 +600,8 @@ class TestTheDrawingFence:
     once and the conversion reads a texture the renderer is still writing.
     """
 
-    def test_drawing_leaves_a_fence(self, encoder, handles):
+    @pytest.mark.usefixtures('encoder')
+    def test_drawing_leaves_a_fence(self, handles):
         assert handles[0].fence is None
         paint(handles[0], (0.1, 0.2, 0.3, 1.0))
         assert handles[0].fence is not None
@@ -622,7 +620,8 @@ class TestTheDrawingFence:
         packets = encoder.encode(handles[0], timestamp=TICK)
         assert len(packets) == 1, 'the frame still encodes'
 
-    def test_re_entering_the_scope_replaces_the_fence(self, encoder, handles):
+    @pytest.mark.usefixtures('encoder')
+    def test_re_entering_the_scope_replaces_the_fence(self, handles):
         paint(handles[0], (0.1, 0.2, 0.3, 1.0))
         first = handles[0].fence
         paint(handles[0], (0.4, 0.5, 0.6, 1.0))
@@ -643,9 +642,7 @@ class TestEverythingItRaisesIsAnEncoderError:
 
     def test_a_texture_that_cannot_be_exported_is_an_encoder_error(
             self, encoder, upload_texture, monkeypatch):
-        from pyopengl_video.linux import dmabuf
-
-        def refuse(*arguments):
+        def refuse(*_arguments):
             raise dmabuf.DMABufError('this context cannot export')
 
         monkeypatch.setattr(dmabuf, 'export_texture', refuse)
@@ -655,9 +652,7 @@ class TestEverythingItRaisesIsAnEncoderError:
     def test_asking_the_encoder_for_an_input_is_the_same(self, encoder,
                                                          monkeypatch):
         """`new_input` registers, so it has to answer the same way."""
-        from pyopengl_video.linux import dmabuf
-
-        def refuse(*arguments):
+        def refuse(*_arguments):
             raise dmabuf.DMABufError('this context cannot export')
 
         monkeypatch.setattr(dmabuf, 'export_texture', refuse)
@@ -668,11 +663,9 @@ class TestEverythingItRaisesIsAnEncoderError:
                                                      upload_texture,
                                                      monkeypatch):
         """Translating must not throw away what actually went wrong."""
-        from pyopengl_video.linux import dmabuf
-
         original = dmabuf.DMABufError('the EGL display would not export')
 
-        def refuse(*arguments):
+        def refuse(*_arguments):
             raise original
 
         monkeypatch.setattr(dmabuf, 'export_texture', refuse)
@@ -683,7 +676,7 @@ class TestEverythingItRaisesIsAnEncoderError:
     def test_a_driver_refusal_while_encoding_is_an_encoder_error(
             self, encoder, handles, monkeypatch):
         """Every libva call goes through `check`, so this covers all of them."""
-        def refuse(*arguments, **named):
+        def refuse(*_arguments, **_named):
             raise api.VAError(-1, 'vaRenderPicture', 'a picture')
 
         monkeypatch.setattr(encoder, '_convert', refuse)
@@ -696,20 +689,17 @@ class TestEverythingItRaisesIsAnEncoderError:
         paint(handles[0], (0.2, 0.4, 0.6, 1.0))
         encoder.encode(handles[0], timestamp=0)
 
-        def refuse(*arguments, **named):
+        def refuse(*_arguments, **_named):
             raise api.VAError(-1, 'vaSyncSurface', 'waiting')
 
         monkeypatch.setattr(encoder, '_read', refuse)
         with pytest.raises(EncoderError, match='vaSyncSurface'):
             encoder.flush()
 
-    def test_a_device_that_refuses_at_open_is_an_encoder_error(self,
-                                                               vaapi_available,
-                                                               monkeypatch):
+    @pytest.mark.usefixtures('vaapi_available')
+    def test_a_device_that_refuses_at_open_is_an_encoder_error(self, monkeypatch):
         """Building the encoder is where most driver refusals land."""
-        from pyopengl_video.vaapi import encoder as encoder_module
-
-        def refuse(self):
+        def refuse(_encoder):
             raise api.VAError(-1, 'vaGetConfigAttributes', 'H264High/EncSlice')
 
         monkeypatch.setattr(encoder_module.VAAPIEncoder, '_negotiate', refuse)

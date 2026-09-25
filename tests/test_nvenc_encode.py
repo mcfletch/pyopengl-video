@@ -1,6 +1,13 @@
 """The NVENC encoder against real hardware, on synthetic frames."""
 import numpy as np
 import pytest
+from OpenGL.GL import (
+    GL_COLOR_BUFFER_BIT,
+    GL_DRAW_FRAMEBUFFER,
+    glBindFramebuffer,
+    glClear,
+    glClearColor,
+)
 
 from pyopengl_video import EncoderError, open_encoder
 from pyopengl_video.mp4 import MP4Writer, split_annexb
@@ -14,7 +21,7 @@ TICK = 3000                                  # 30 fps in a 90 kHz timescale
 
 
 @pytest.fixture
-def encoder(nvenc_available):
+def encoder(nvenc_available):  # noqa: ARG001 - requested to skip where there is no NVENC
     """A 640x480 encoder with no reordering, so packets come out as frames go in."""
     encoder = NVENCEncoder(*SIZE, fps=30, bitrate=4_000_000, gop=15)
     yield encoder
@@ -32,13 +39,6 @@ def handles(encoder):
 
 def paint(handle, colour):
     """Fill a handle's texture with one colour, inside its drawing scope."""
-    from OpenGL.GL import (
-        GL_COLOR_BUFFER_BIT,
-        GL_DRAW_FRAMEBUFFER,
-        glBindFramebuffer,
-        glClear,
-        glClearColor,
-    )
     with handle.for_drawing():
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, handle.framebuffer)
         glClearColor(*colour)
@@ -106,12 +106,14 @@ def test_a_closed_encoder_refuses_to_encode(encoder, upload_texture):
         encoder.encode(handle, timestamp=0)
 
 
-def test_open_encoder_finds_the_backend(nvenc_available):
+@pytest.mark.usefixtures('nvenc_available')
+def test_open_encoder_finds_the_backend():
     with open_encoder(*SIZE, fps=30) as encoder:
         assert isinstance(encoder, NVENCEncoder)
 
 
-def test_unknown_settings_are_refused_by_name(nvenc_available):
+@pytest.mark.usefixtures('nvenc_available')
+def test_unknown_settings_are_refused_by_name():
     with pytest.raises(EncoderError, match='preset'):
         NVENCEncoder(*SIZE, preset='fastest')
     with pytest.raises(EncoderError, match='rate control'):
@@ -123,7 +125,8 @@ def test_unknown_settings_are_refused_by_name(nvenc_available):
 # check that what comes out varies with what is in the texture, which is the
 # part no amount of structural checking can show.
 
-def test_a_detailed_frame_costs_more_than_a_flat_one(nvenc_available, upload_texture):
+@pytest.mark.usefixtures('nvenc_available')
+def test_a_detailed_frame_costs_more_than_a_flat_one(upload_texture):
     """A key frame of noise is far larger than a key frame of one colour."""
     sizes = {}
     for name, frame in (('flat', flat_frame(*SIZE)), ('noise', noise_frame(*SIZE))):
@@ -136,7 +139,8 @@ def test_a_detailed_frame_costs_more_than_a_flat_one(nvenc_available, upload_tex
     assert sizes['noise'] > sizes['flat'] * 10, sizes
 
 
-def test_a_still_sequence_costs_less_than_a_moving_one(nvenc_available, upload_texture):
+@pytest.mark.usefixtures('nvenc_available')
+def test_a_still_sequence_costs_less_than_a_moving_one(upload_texture):
     """Frames that do not change compress to almost nothing after the first.
 
     At a constant quantiser the size of a picture is what it cost to describe;
@@ -186,7 +190,8 @@ def nal_unit_headers(stream):
 # cannot emit one until it has the frame after it. Packets then arrive in decode
 # order, several at a time, carrying display timestamps that run out of order.
 
-def test_b_frames_are_held_back_and_come_out_reordered(nvenc_available, upload_texture):
+@pytest.mark.usefixtures('nvenc_available')
+def test_b_frames_are_held_back_and_come_out_reordered(upload_texture):
     encoder = NVENCEncoder(*SIZE, fps=30, bitrate=4_000_000, gop=30, bframes=2)
     try:
         assert encoder.reorders_frames is True
@@ -212,7 +217,8 @@ def test_b_frames_are_held_back_and_come_out_reordered(nvenc_available, upload_t
     assert timestamps != sorted(timestamps), 'decode order matched display order'
 
 
-def test_reusing_a_texture_the_encoder_still_holds_says_so(nvenc_available, upload_texture):
+@pytest.mark.usefixtures('nvenc_available')
+def test_reusing_a_texture_the_encoder_still_holds_says_so(upload_texture):
     """The driver's own answer to this is a bare MAP_FAILED."""
     encoder = NVENCEncoder(*SIZE, fps=30, bframes=2, gop=30)
     try:
@@ -271,8 +277,8 @@ class TestMuxing:
         assert stream[7] in data, 'the sequence parameter set the stream carries'
         assert stream[8] in data, 'the picture parameter set the stream carries'
 
-    def test_a_reordered_recording_decodes_without_complaint(self, nvenc_available,
-                                                             tmp_path):
+    @pytest.mark.usefixtures('nvenc_available')
+    def test_a_reordered_recording_decodes_without_complaint(self, tmp_path):
         """Composition offsets are what a decoder reads timing back out of.
 
         With B-pictures the packets arrive in decode order carrying display

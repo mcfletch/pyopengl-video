@@ -26,6 +26,9 @@ from pyopengl_video.encoder import (
     Packet,
     available_backends,
 )
+from pyopengl_video.nvenc import BACKEND as NVENC_BACKEND
+from pyopengl_video.vaapi import BACKEND as VAAPI_BACKEND
+from pyopengl_video.vpl import BACKEND as VPL_BACKEND
 
 __version__ = '1.0.0a1'
 
@@ -91,9 +94,6 @@ def _register_builtin_backends() -> None:
     cheap probe, and the driver library is only opened when an encoder is built.
     The order is the order :func:`open_encoder` prefers them in.
     """
-    from pyopengl_video.nvenc import BACKEND as NVENC_BACKEND
-    from pyopengl_video.vaapi import BACKEND as VAAPI_BACKEND
-    from pyopengl_video.vpl import BACKEND as VPL_BACKEND
     _encoder.BACKENDS.extend([NVENC_BACKEND, VPL_BACKEND, VAAPI_BACKEND])
 
 

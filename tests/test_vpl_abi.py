@@ -55,8 +55,8 @@ def test_the_geometry_union_is_what_makes_frame_info_sixty_eight_bytes():
     handed that answers MFX_ERR_INVALID_VIDEO_PARAM to everything.
     """
     assert api.mfxFrameInfo._pack_ == 4
-    assert ctypes.sizeof(api._BufferGeometry) == 12
-    assert ctypes.sizeof(api._GeometryUnion) == 12
+    assert ctypes.sizeof(api._BufferGeometry) == 12  # noqa: SLF001 - an anonymous union member of the oneVPL header, measured here
+    assert ctypes.sizeof(api._GeometryUnion) == 12  # noqa: SLF001 - an anonymous union of the oneVPL header, measured here
 
 
 def test_a_frame_info_round_trips_the_values_written_into_it():

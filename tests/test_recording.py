@@ -13,7 +13,7 @@ FRAMES = 24
 
 
 @pytest.fixture
-def movie(tmp_path, nvenc_available, upload_texture):
+def movie(tmp_path, nvenc_available, upload_texture):  # noqa: ARG001 - requested to skip where there is no NVENC
     """Record a short clip of a moving gradient and return the file's bytes."""
     target = tmp_path / 'clip.mp4'
     texture = upload_texture(gradient_frame(*SIZE))
@@ -59,8 +59,8 @@ def test_the_key_frames_are_where_the_gop_puts_them(movie):
     assert list(struct.unpack_from(f'>{count}I', stss, 8)) == [1, 13]
 
 
-def test_a_reordered_recording_records_composition_times(tmp_path, nvenc_available,
-                                                         upload_texture):
+@pytest.mark.usefixtures('nvenc_available')
+def test_a_reordered_recording_records_composition_times(tmp_path, upload_texture):
     """With B-pictures the file needs composition offsets, and gets them."""
     target = tmp_path / 'bframes.mp4'
     with open_encoder(*SIZE, fps=24, bitrate=2_000_000, gop=24, bframes=2) as encoder:

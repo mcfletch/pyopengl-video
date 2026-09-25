@@ -56,6 +56,12 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.openglcontext-checks]
+# The OGC rules (openglcontext-checks) this project is clean of, held by
+# the workspace preflight. The others join as the project reaches zero of
+# each; the counts are in openglcontext/plans/DEFECT-PREVENTION.md.
+select = ["OGC131", "OGC141", "OGC161", "OGC201", "OGC221"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
@@ -70,6 +76,18 @@ select = [
     "UP",   # pyupgrade
     "BLE",  # no blind except
     "S110", # no silent try/except/pass
+    "PGH003", "PGH004",  # a type: ignore or noqa names the codes it silences
+    "PLE0604", "PLE0605",  # __all__ is a list or tuple of strings
+    "S112",   # no silent try/except/continue
+    "TRY400", # an error logged from an except handler carries its traceback
+    "RUF012", # a mutable class attribute is annotated ClassVar
+    "DTZ",    # datetimes carry a timezone
+    "S102", "S301", "S307",  # no exec, pickle loads or eval
+    "S202", "S310",  # no unchecked tar extraction or URL scheme
+    "RUF100", # every noqa silences something
+    "SLF001", # a private name stays inside its module
+    "ARG",    # every parameter is used, or is fixed by the interface it implements
+    "PLC0415", # imports at module top, unless a noqa says why not
 ]
 ignore = [
     "E501",   # line too long -- kept readable by hand

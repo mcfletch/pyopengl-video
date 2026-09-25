@@ -58,7 +58,9 @@ def _build(width: int, height: int, **options: Any) -> Any:
     Imported here rather than at module scope so that discovery costs one
     library load and nothing more.
     """
-    from pyopengl_video.vpl.encoder import VPLEncoder
+    from pyopengl_video.vpl.encoder import (  # noqa: PLC0415 - loaded when an encoder is built
+        VPLEncoder,
+    )
     return VPLEncoder(width, height, **options)
 
 

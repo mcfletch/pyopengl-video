@@ -443,7 +443,7 @@ class VPLEncoder(Encoder):
         self._inputs.append(shared)
         return shared
 
-    def register(self, texture: int, target: int | None = None) -> Any:
+    def register(self, texture: int, target: int | None = None) -> Any:  # noqa: ARG002 - Encoder.register's signature
         """Not available here: the encoder reads Direct3D, not an OpenGL name."""
         raise EncoderError(
             'this encoder reads a Direct3D surface, so it cannot take a texture '

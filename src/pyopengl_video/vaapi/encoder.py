@@ -28,6 +28,17 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from OpenGL.GL import (
+    GL_SYNC_FLUSH_COMMANDS_BIT,
+    GL_SYNC_GPU_COMMANDS_COMPLETE,
+    GL_TEXTURE_2D,
+    GL_TIMEOUT_IGNORED,
+    glClientWaitSync,
+    glDeleteSync,
+    glFenceSync,
+    glFinish,
+)
+
 from pyopengl_video import inputs
 from pyopengl_video.encoder import (
     Encoder,
@@ -37,6 +48,7 @@ from pyopengl_video.encoder import (
     frame_rate_ratio,
 )
 from pyopengl_video.linux import dmabuf
+from pyopengl_video.mp4 import split_annexb
 from pyopengl_video.vaapi import api
 from pyopengl_video.vaapi.h264 import (
     COLOUR_PRIMARIES_BT709,
@@ -168,12 +180,12 @@ class InputHandle(inputs.InputHandle):
 
     def close(self) -> None:
         """Give back the framebuffer, and the texture if this handle made it."""
-        self._forget_fence()
+        self.forget_fence()
         super().close()
 
-    def _forget_fence(self) -> None:
+    def forget_fence(self) -> None:
+        """Delete the fence made when drawing last finished, if there is one."""
         if self.fence is not None:
-            from OpenGL.GL import glDeleteSync
             glDeleteSync(self.fence)
             self.fence = None
 
@@ -185,11 +197,10 @@ class _Drawing:
         self.handle = handle
 
     def __enter__(self) -> InputHandle:
-        self.handle._forget_fence()
+        self.handle.forget_fence()
         return self.handle
 
     def __exit__(self, *exception: object) -> None:
-        from OpenGL.GL import GL_SYNC_GPU_COMMANDS_COMPLETE, glFenceSync
         self.handle.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
 
 
@@ -278,7 +289,7 @@ class VAAPIEncoder(Encoder):
         self._coded_sets: dict[int, bytes] = {}
         self._closed = False
         # Kept alive for as long as the display is: libva holds the pointer.
-        self._silence = api.MESSAGE_CALLBACK(lambda context, message: None)
+        self._silence = api.MESSAGE_CALLBACK(lambda _context, _message: None)
 
         try:
             self._open()
@@ -527,8 +538,6 @@ class VAAPIEncoder(Encoder):
         outlive the handle, and it must be ``GL_RGBA8`` of exactly the
         encoder's size.
         """
-        from OpenGL.GL import GL_TEXTURE_2D
-
         self._check_open()
         width, height = self.size
         exported = dmabuf.export_texture(texture, width, height)
@@ -629,18 +638,12 @@ class VAAPIEncoder(Encoder):
         once and lets the conversion read a texture still being written. Falling
         back to flushing is slower and right.
         """
-        from OpenGL.GL import (
-            GL_SYNC_FLUSH_COMMANDS_BIT,
-            GL_TIMEOUT_IGNORED,
-            glClientWaitSync,
-            glFinish,
-        )
         if handle.fence is None:
             glFinish()
             return
         glClientWaitSync(handle.fence, GL_SYNC_FLUSH_COMMANDS_BIT,
                          GL_TIMEOUT_IGNORED)
-        handle._forget_fence()
+        handle.forget_fence()
 
     def _convert(self, handle: InputHandle, source: int) -> None:
         """Convert the handle's RGB surface into `source`."""
@@ -953,8 +956,6 @@ class VAAPIEncoder(Encoder):
         in the stream are the ones that describe it, and those are what
         :meth:`headers` reports.
         """
-        from pyopengl_video.mp4 import split_annexb
-
         for unit in split_annexb(data):
             kind = unit[0] & 0x1F
             if kind in (7, 8):

@@ -20,7 +20,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass
 
-from OpenGL.GL import GL_TEXTURE_2D
+from OpenGL.GL import GL_RENDERER, GL_TEXTURE_2D, glGetString
 
 from pyopengl_video import inputs
 from pyopengl_video.encoder import (
@@ -50,8 +50,6 @@ def current_gl_renderer() -> str | None:
     ``glGetString`` needs a context to answer, and returns nothing without one,
     which is how the two cases are told apart.
     """
-    from OpenGL.GL import GL_RENDERER, glGetString
-
     renderer = glGetString(GL_RENDERER)
     if not renderer:
         return None

@@ -3,7 +3,7 @@ import struct
 
 import pytest
 
-from pyopengl_video.encoder import Packet
+from pyopengl_video.encoder import Encoder, EncoderError, Packet
 from pyopengl_video.mp4 import MP4Writer, split_annexb
 
 TIMESCALE = 90000
@@ -337,8 +337,6 @@ class TestEveryBackendDefaultsADurationTheSameWay:
     a duration of nought: one frame at the encoder's rate."""
 
     def encoder(self, fps=(60, 1), timescale=90000):
-        from pyopengl_video.encoder import Encoder
-
         class _Encoder(Encoder):
             def register(self, texture, target=None): ...
             def encode(self, handle, timestamp, duration=0, force_idr=False): ...
@@ -364,6 +362,5 @@ class TestEveryBackendDefaultsADurationTheSameWay:
         assert self.encoder(timescale=1000).frame_duration(0) == 17
 
     def test_a_rate_of_no_frames_is_refused(self):
-        from pyopengl_video.encoder import EncoderError
         with pytest.raises(EncoderError, match='frame rate'):
             self.encoder(fps=(0, 1)).frame_duration(0)

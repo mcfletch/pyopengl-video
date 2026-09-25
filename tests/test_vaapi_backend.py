@@ -9,8 +9,10 @@ import sys
 import pytest
 
 from pyopengl_video import encoder as encoder_module
-from pyopengl_video import vaapi
+from pyopengl_video import encoders, vaapi
 from pyopengl_video.encoder import Backend
+from pyopengl_video.linux import dmabuf
+from pyopengl_video.vaapi import api
 
 
 @pytest.fixture(autouse=True)
@@ -69,35 +71,29 @@ class TestProbe:
 
     def test_a_backend_that_cannot_answer_still_leaves_the_others_findable(
             self, monkeypatch):
-        from pyopengl_video import encoders
-
         monkeypatch.setattr(vaapi, '_any_device_encodes',
                             lambda: (_ for _ in ()).throw(RuntimeError('boom')))
         assert 'vaapi' not in [found.name for found in encoders()]
 
     def test_a_missing_library_is_not_an_error(self, monkeypatch):
-        from pyopengl_video.vaapi import api
-
         def refuse():
             raise OSError('libva.so.2: cannot open shared object file')
 
         monkeypatch.setattr(api.VA, 'instance', staticmethod(refuse))
         monkeypatch.setattr(vaapi, '_context_can_export', lambda: True)
-        assert vaapi._any_device_encodes() is False
+        assert vaapi._any_device_encodes() is False  # noqa: SLF001 - one step of probe(), tested alone
 
     def test_a_machine_with_no_render_node_has_no_encoder(self, monkeypatch):
-        from pyopengl_video.vaapi import api
-
         monkeypatch.setattr(api, 'render_nodes', list)
         monkeypatch.setattr(vaapi, '_context_can_export', lambda: True)
-        assert vaapi._any_device_encodes() is False
+        assert vaapi._any_device_encodes() is False  # noqa: SLF001 - one step of probe(), tested alone
 
     def test_a_device_that_will_not_open_is_not_an_encoder(self):
         class Refuses:
             def __getattr__(self, name):
                 raise OSError('no such device')
 
-        assert vaapi._device_encodes(Refuses(), '/dev/dri/renderD404') is False
+        assert vaapi._device_encodes(Refuses(), '/dev/dri/renderD404') is False  # noqa: SLF001 - one step of probe(), tested alone
 
     def test_the_answer_is_kept_rather_than_asked_again(self, monkeypatch):
         """Opening a driver costs enough that discovery must not repeat it."""
@@ -134,14 +130,12 @@ class TestTheContextItWouldRecordFrom:
     def test_no_current_context_is_not_held_against_the_machine(self, egl,
                                                                 monkeypatch):
         monkeypatch.setattr(egl, 'eglGetCurrentContext', lambda: None)
-        assert vaapi._context_can_export() is True
+        assert vaapi._context_can_export() is True  # noqa: SLF001 - one step of probe(), tested alone
 
     def test_a_context_that_cannot_export_makes_the_backend_unavailable(
             self, egl, monkeypatch):
-        from pyopengl_video.linux import dmabuf
-
         monkeypatch.setattr(egl, 'eglGetCurrentContext', lambda: 1)
         monkeypatch.setattr(dmabuf, 'unavailable_because',
                             lambda: 'this OpenGL context is not an EGL context')
-        assert vaapi._context_can_export() is False
+        assert vaapi._context_can_export() is False  # noqa: SLF001 - one step of probe(), tested alone
         assert vaapi.probe() is False

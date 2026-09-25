@@ -21,6 +21,21 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from OpenGL.GL import GL_TEXTURE_2D, glDeleteTextures, glGenTextures
+from OpenGL.GL.EXT.memory_object import glGetUnsignedBytevEXT
+from OpenGL.GL.EXT.memory_object_win32 import GL_DEVICE_LUID_EXT
+from OpenGL.raw.WGL._types import HANDLE
+from OpenGL.WGL import wglGetCurrentDC
+from OpenGL.WGL.ARB.extensions_string import wglGetExtensionsStringARB
+from OpenGL.WGL.NV.DX_interop import (
+    wglDXCloseDeviceNV,
+    wglDXLockObjectsNV,
+    wglDXOpenDeviceNV,
+    wglDXRegisterObjectNV,
+    wglDXUnlockObjectsNV,
+    wglDXUnregisterObjectNV,
+)
+
 from pyopengl_video.inputs import (
     InputHandle,
     create_framebuffer,
@@ -65,11 +80,6 @@ def wgl_extensions() -> set[str]:
     -- both of which mean the same thing to a caller: do not use this path.
     """
     try:
-        from OpenGL.WGL import wglGetCurrentDC
-        from OpenGL.WGL.ARB.extensions_string import wglGetExtensionsStringARB
-    except ImportError:                      # pragma: no cover - Windows PyOpenGL has it
-        return set()
-    try:
         device_context = wglGetCurrentDC()
         if not device_context:
             return set()
@@ -95,8 +105,6 @@ def handle_array(handle: Any) -> Any:
     the array is built from the interface's own ``HANDLE`` type and the value is
     reduced to its address, rather than trusting whichever Python type arrived.
     """
-    from OpenGL.raw.WGL._types import HANDLE
-
     if isinstance(handle, int):
         address = handle
     else:
@@ -112,11 +120,6 @@ def context_luid() -> bytes | None:
     encoder would be reading the renderer's own memory, so the honest answer is
     that it does not know.
     """
-    try:
-        from OpenGL.GL.EXT.memory_object import glGetUnsignedBytevEXT
-        from OpenGL.GL.EXT.memory_object_win32 import GL_DEVICE_LUID_EXT
-    except ImportError:                      # pragma: no cover - PyOpenGL binds both
-        return None
     buffer = (ctypes.c_ubyte * 8)()
     try:
         glGetUnsignedBytevEXT(GL_DEVICE_LUID_EXT, buffer)
@@ -148,7 +151,6 @@ class SharedTexture(InputHandle):
 
     def __init__(self, device: InteropDevice, resource: d3d11.Texture,
                  texture: int, handle: Any):
-        from OpenGL.GL import GL_TEXTURE_2D
         self.interop = device
         self.resource = resource
         self.texture = int(texture)
@@ -174,7 +176,6 @@ class SharedTexture(InputHandle):
         if self._locked:
             raise InteropError(0, 'wglDXLockObjectsNV',
                                'this texture is already held for drawing')
-        from OpenGL.WGL.NV.DX_interop import wglDXLockObjectsNV, wglDXUnlockObjectsNV
         handles = handle_array(self.handle)
         if not wglDXLockObjectsNV(self.interop.pointer, 1, handles):
             raise InteropError(ctypes.GetLastError(), 'wglDXLockObjectsNV')
@@ -193,8 +194,6 @@ class SharedTexture(InputHandle):
     def close(self) -> None:
         """Unregister the texture and give both views of it back."""
         if self.texture:
-            from OpenGL.GL import glDeleteTextures
-            from OpenGL.WGL.NV.DX_interop import wglDXUnregisterObjectNV
             delete_framebuffer(self.framebuffer)
             self.framebuffer = 0
             if self.handle is not None and self.interop.pointer is not None:
@@ -224,7 +223,6 @@ class InteropDevice:
             raise InteropError(
                 0, 'wglDXOpenDeviceNV',
                 f'{EXTENSION} is not offered by the current OpenGL context')
-        from OpenGL.WGL.NV.DX_interop import wglDXOpenDeviceNV
         self.device = device
         self.pointer = wglDXOpenDeviceNV(device.pointer)
         if not self.pointer:
@@ -238,15 +236,12 @@ class InteropDevice:
                        format: int = d3d11.DXGI_FORMAT_B8G8R8A8_UNORM,
                        access: int = WGL_ACCESS_WRITE_DISCARD_NV) -> SharedTexture:
         """A new texture that OpenGL draws into and Direct3D reads."""
-        from OpenGL.GL import GL_TEXTURE_2D, glGenTextures
-        from OpenGL.WGL.NV.DX_interop import wglDXRegisterObjectNV
         resource = self.device.create_texture(width, height, format)
         name = int(glGenTextures(1))
         handle = wglDXRegisterObjectNV(self.pointer, resource.pointer, name,
                                        GL_TEXTURE_2D, access)
         if not handle:
             error = ctypes.GetLastError()
-            from OpenGL.GL import glDeleteTextures
             glDeleteTextures([name])
             resource.close()
             raise InteropError(error, 'wglDXRegisterObjectNV',
@@ -261,7 +256,6 @@ class InteropDevice:
             texture.close()
         self._textures = []
         if self.pointer is not None:
-            from OpenGL.WGL.NV.DX_interop import wglDXCloseDeviceNV
             wglDXCloseDeviceNV(self.pointer)
             self.pointer = None
 

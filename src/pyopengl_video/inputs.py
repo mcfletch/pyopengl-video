@@ -69,7 +69,7 @@ def create_rgba_texture(width: int, height: int) -> int:
     Eight bits a channel is what every encoder here reads a colour surface as,
     and the size must be the encoder's own.
     """
-    from OpenGL.GL import (
+    from OpenGL.GL import (  # noqa: PLC0415 - OpenGL.GL stays off `import pyopengl_video`
         GL_CLAMP_TO_EDGE,
         GL_LINEAR,
         GL_RGBA,
@@ -108,7 +108,7 @@ def create_framebuffer(texture: int, target: int | None = None) -> int:
     The binding in force when this is called is put back, so building a
     recorder's ring does not disturb whatever the renderer had bound.
     """
-    from OpenGL.GL import (
+    from OpenGL.GL import (  # noqa: PLC0415 - OpenGL.GL stays off `import pyopengl_video`
         GL_COLOR_ATTACHMENT0,
         GL_DRAW_FRAMEBUFFER,
         GL_DRAW_FRAMEBUFFER_BINDING,
@@ -131,12 +131,16 @@ def create_framebuffer(texture: int, target: int | None = None) -> int:
 def delete_framebuffer(framebuffer: int) -> None:
     """Give a framebuffer object back, if there is one."""
     if framebuffer:
-        from OpenGL.GL import glDeleteFramebuffers
+        from OpenGL.GL import (  # noqa: PLC0415 - OpenGL.GL stays off `import pyopengl_video`
+            glDeleteFramebuffers,
+        )
         glDeleteFramebuffers(1, [int(framebuffer)])
 
 
 def delete_texture(texture: int) -> None:
     """Give a texture back, if there is one."""
     if texture:
-        from OpenGL.GL import glDeleteTextures
+        from OpenGL.GL import (  # noqa: PLC0415 - OpenGL.GL stays off `import pyopengl_video`
+            glDeleteTextures,
+        )
         glDeleteTextures([int(texture)])

@@ -3,22 +3,55 @@
 These need a machine whose OpenGL context is running on an Intel GPU with a
 video encoder. They skip cleanly anywhere else.
 """
+import ctypes
+import struct
 import sys
+from ctypes import byref, c_void_p
 
 import numpy as np
 import pytest
+from OpenGL.GL import (
+    GL_COLOR_BUFFER_BIT,
+    GL_DRAW_FRAMEBUFFER,
+    GL_NEAREST,
+    GL_READ_FRAMEBUFFER,
+    GL_RGBA,
+    GL_SCISSOR_TEST,
+    GL_TEXTURE_2D,
+    GL_UNSIGNED_BYTE,
+    glBindFramebuffer,
+    glBindTexture,
+    glBlitFramebuffer,
+    glClear,
+    glClearColor,
+    glDisable,
+    glEnable,
+    glFinish,
+    glScissor,
+    glTexSubImage2D,
+)
 
-from pyopengl_video import vpl
+from pyopengl_video import encoders, vpl
 from pyopengl_video.encoder import EncoderError
+from pyopengl_video.inputs import (
+    create_framebuffer,
+    create_rgba_texture,
+    delete_framebuffer,
+    delete_texture,
+)
+from pyopengl_video.mp4 import MP4Writer
+from pyopengl_video.vpl import api
+from pyopengl_video.vpl.encoder import VPLEncoder
+from pyopengl_video.windows import interop
+from tests.test_mp4 import boxes, path_to
 
 pytestmark = pytest.mark.skipif(sys.platform != 'win32',
                                 reason='the oneVPL backend is Windows-only so far')
 
 
 @pytest.fixture
-def encoder(vpl_available):
+def encoder(vpl_available):  # noqa: ARG001 - requested to skip where there is no oneVPL encoder
     """A 320x240 encoder, closed when the test ends."""
-    from pyopengl_video.vpl.encoder import VPLEncoder
     built = VPLEncoder(320, 240, fps=30, bitrate=2_000_000)
     yield built
     built.close()
@@ -26,13 +59,6 @@ def encoder(vpl_available):
 
 def draw(handle, level):
     """Fill a handle's texture with a flat grey, the way a recorder blits."""
-    from OpenGL.GL import (
-        GL_COLOR_BUFFER_BIT,
-        GL_DRAW_FRAMEBUFFER,
-        glBindFramebuffer,
-        glClear,
-        glClearColor,
-    )
     with handle.for_drawing():
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, handle.framebuffer)
         glClearColor(level, level * 0.5, 1.0 - level, 1.0)
@@ -40,8 +66,8 @@ def draw(handle, level):
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
 
 
-def test_the_backend_is_discovered_where_the_library_is(vpl_available):
-    from pyopengl_video import encoders
+@pytest.mark.usefixtures('vpl_available')
+def test_the_backend_is_discovered_where_the_library_is():
     assert 'vpl' in [backend.name for backend in encoders()]
 
 
@@ -51,28 +77,27 @@ def test_the_backend_reports_itself_unavailable_off_windows(monkeypatch):
 
 
 def test_an_encoder_opens_on_the_adapter_the_context_uses(encoder):
-    from pyopengl_video.windows import interop
     assert encoder.adapter == interop.adapter_for_context()
     assert encoder.size == (320, 240)
     assert encoder.zero_copy and encoder.allocates_inputs
 
 
-def test_it_refuses_a_codec_it_does_not_encode(vpl_available):
-    from pyopengl_video.vpl.encoder import VPLEncoder
+@pytest.mark.usefixtures('vpl_available')
+def test_it_refuses_a_codec_it_does_not_encode():
     with pytest.raises(EncoderError) as caught:
         VPLEncoder(320, 240, codec='av1')
     assert 'av1' in str(caught.value)
 
 
-def test_it_names_an_unknown_preset_and_says_what_it_knows(vpl_available):
-    from pyopengl_video.vpl.encoder import VPLEncoder
+@pytest.mark.usefixtures('vpl_available')
+def test_it_names_an_unknown_preset_and_says_what_it_knows():
     with pytest.raises(EncoderError) as caught:
         VPLEncoder(320, 240, preset='turbo')
     assert 'turbo' in str(caught.value) and 'p4' in str(caught.value)
 
 
-def test_it_names_an_unknown_rate_control(vpl_available):
-    from pyopengl_video.vpl.encoder import VPLEncoder
+@pytest.mark.usefixtures('vpl_available')
+def test_it_names_an_unknown_rate_control():
     with pytest.raises(EncoderError) as caught:
         VPLEncoder(320, 240, rate_control='magic')
     assert 'magic' in str(caught.value) and 'vbr' in str(caught.value)
@@ -105,10 +130,6 @@ def test_the_stream_declares_the_colour_it_was_converted_to(encoder):
     saturation. This asks the runtime what it settled on, which is where a
     rejected declaration would show up.
     """
-    import ctypes
-    from ctypes import byref, c_void_p
-
-    from pyopengl_video.vpl import api
 
     signal = api.mfxExtVideoSignalInfo()
     signal.Header.BufferId = api.MFX_EXTBUFF_VIDEO_SIGNAL_INFO
@@ -187,8 +208,8 @@ def test_encoding_after_close_is_refused(encoder):
         encoder.encode(handle, timestamp=0)
 
 
-def test_closing_twice_is_harmless(vpl_available):
-    from pyopengl_video.vpl.encoder import VPLEncoder
+@pytest.mark.usefixtures('vpl_available')
+def test_closing_twice_is_harmless():
     built = VPLEncoder(160, 128, fps=30)
     built.close()
     built.close()
@@ -215,22 +236,8 @@ SIZE = (320, 240)
 
 
 @pytest.fixture
-def blit_source(gl_context):
+def blit_source(gl_context):  # noqa: ARG001 - requested so a GL context is current first
     """A texture and framebuffer holding a frame, to blit from as a recorder does."""
-    from OpenGL.GL import (
-        GL_RGBA,
-        GL_TEXTURE_2D,
-        GL_UNSIGNED_BYTE,
-        glBindTexture,
-        glTexSubImage2D,
-    )
-
-    from pyopengl_video.inputs import (
-        create_framebuffer,
-        create_rgba_texture,
-        delete_framebuffer,
-        delete_texture,
-    )
     texture = create_rgba_texture(*SIZE)
     framebuffer = create_framebuffer(texture)
 
@@ -254,15 +261,6 @@ def blit_into(handle, framebuffer):
     at the bottom left and an encoder reads a surface from its first row, so the
     destination's Y coordinates run backwards.
     """
-    from OpenGL.GL import (
-        GL_COLOR_BUFFER_BIT,
-        GL_DRAW_FRAMEBUFFER,
-        GL_NEAREST,
-        GL_READ_FRAMEBUFFER,
-        glBindFramebuffer,
-        glBlitFramebuffer,
-        glFinish,
-    )
     width, height = SIZE
     with handle.for_drawing():
         glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer)
@@ -300,7 +298,8 @@ def moving_frame(phase):
     return frame
 
 
-def test_the_flipping_blit_puts_the_frame_the_right_way_up(vpl_available, blit_source):
+@pytest.mark.usefixtures('vpl_available')
+def test_the_flipping_blit_puts_the_frame_the_right_way_up(blit_source):
     """What OpenGL calls the bottom must end up in the surface's last row.
 
     OpenGL's framebuffer starts at the bottom left; an encoder reads a surface
@@ -310,19 +309,6 @@ def test_the_flipping_blit_puts_the_frame_the_right_way_up(vpl_available, blit_s
     to arrive at the far end of the surface. Without the flip the video comes
     out upside down.
     """
-    from OpenGL.GL import (
-        GL_COLOR_BUFFER_BIT,
-        GL_DRAW_FRAMEBUFFER,
-        GL_SCISSOR_TEST,
-        glBindFramebuffer,
-        glClear,
-        glClearColor,
-        glDisable,
-        glEnable,
-        glScissor,
-    )
-
-    from pyopengl_video.vpl.encoder import VPLEncoder
     width, height = SIZE
     source = blit_source.framebuffer
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, source)
@@ -348,9 +334,9 @@ def test_the_flipping_blit_puts_the_frame_the_right_way_up(vpl_available, blit_s
     assert surface[-1, :, :3].mean() > 247, "the surface's last row is not the lit half"
 
 
-def test_a_detailed_frame_costs_more_than_a_flat_one(vpl_available, blit_source):
+@pytest.mark.usefixtures('vpl_available')
+def test_a_detailed_frame_costs_more_than_a_flat_one(blit_source):
     """A key frame of noise is far larger than a key frame of one colour."""
-    from pyopengl_video.vpl.encoder import VPLEncoder
     sizes = {}
     for name, frame in (('flat', flat_frame()), ('noise', noise_frame())):
         encoder = VPLEncoder(*SIZE, fps=30, bitrate=20_000_000, gop=30)
@@ -365,9 +351,9 @@ def test_a_detailed_frame_costs_more_than_a_flat_one(vpl_available, blit_source)
     assert sizes['noise'] > sizes['flat'] * 5, sizes
 
 
-def test_a_still_sequence_costs_less_than_a_moving_one(vpl_available, blit_source):
+@pytest.mark.usefixtures('vpl_available')
+def test_a_still_sequence_costs_less_than_a_moving_one(blit_source):
     """Frames that do not change compress to almost nothing after the first."""
-    from pyopengl_video.vpl.encoder import VPLEncoder
     sizes = {}
     for name, still in (('still', True), ('moving', False)):
         encoder = VPLEncoder(*SIZE, fps=30, rate_control='constqp', gop=60)
@@ -387,14 +373,9 @@ def test_a_still_sequence_costs_less_than_a_moving_one(vpl_available, blit_sourc
     assert sizes['moving'] > sizes['still'] * 3, sizes
 
 
-def test_a_recording_is_a_complete_mp4_holding_every_frame(vpl_available, blit_source,
-                                                           tmp_path):
+@pytest.mark.usefixtures('vpl_available')
+def test_a_recording_is_a_complete_mp4_holding_every_frame(blit_source, tmp_path):
     """The whole path: draw, blit, encode, mux, and a file that parses back."""
-    import struct
-
-    from pyopengl_video.mp4 import MP4Writer
-    from pyopengl_video.vpl.encoder import VPLEncoder
-    from tests.test_mp4 import boxes, path_to
 
     target = tmp_path / 'clip.mp4'
     frames = 24
