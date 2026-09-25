@@ -224,18 +224,34 @@ class MP4Writer:
     @property
     def duration(self) -> int:
         """The movie's length, in the track's timescale."""
-        return sum(self._durations)
+        return sum(self._sample_durations())
 
-    def _composition_offsets(self) -> list[int]:
+    def _sample_durations(self) -> list[int]:
+        """Each sample's duration, in decode order.
+
+        A sample lasts until the next display time: the n-th decode time is
+        the n-th timestamp in display order, so decode times stay on the
+        caller's timestamps rather than on a sum of rounded frame durations.
+        The last sample keeps the duration its packet gave. Timestamps that do
+        not increase say nothing about how long a sample lasts, and then the
+        packets' own durations are used.
+        """
+        shown = sorted(self._timestamps)
+        gaps = [later - earlier for earlier, later in zip(shown[:-1], shown[1:], strict=True)]
+        if any(gap <= 0 for gap in gaps):
+            return list(self._durations)
+        return gaps + self._durations[-1:]
+
+    def _composition_offsets(self, durations: list[int]) -> list[int]:
         """How far each sample's display time is from its decode time.
 
         Samples are stored in decode order and a packet's timestamp is its
         display time, so the two part company as soon as an encoder reorders
-        pictures. Decode time is the running total of the durations.
+        pictures. Decode time is the running total of ``durations``.
         """
         offsets = []
         decode_time = 0
-        for timestamp, duration in zip(self._timestamps, self._durations, strict=True):
+        for timestamp, duration in zip(self._timestamps, durations, strict=True):
             offsets.append(timestamp - decode_time)
             decode_time += duration
         return offsets
@@ -295,8 +311,9 @@ class MP4Writer:
         return box('minf', vmhd, dinf, self._stbl())
 
     def _stbl(self) -> bytes:
-        tables = [self._stsd(), self._stts()]
-        offsets = self._composition_offsets()
+        durations = self._sample_durations()
+        tables = [self._stsd(), self._stts(durations)]
+        offsets = self._composition_offsets(durations)
         if any(offsets):
             tables.append(self._ctts(offsets))
         if self._sync and len(self._sync) < len(self._sizes):
@@ -327,8 +344,8 @@ class MP4Writer:
         )
         return full_box('stsd', 0, 0, struct.pack('>I', 1), avc1)
 
-    def _stts(self) -> bytes:
-        runs = self._runs(self._durations)
+    def _stts(self, durations: list[int]) -> bytes:
+        runs = self._runs(durations)
         return full_box('stts', 0, 0, struct.pack('>I', len(runs)),
                         *(struct.pack('>II', count, delta) for count, delta in runs))
 

@@ -219,7 +219,12 @@ Wall-clock stamps make a variable-rate file, which the muxer will write happily
 and some players will handle poorly.
 
 Pass `duration` explicitly for a variable-rate recording; left at zero it is one
-frame at the declared rate.
+frame at the declared rate, rounded to the timescale. `MP4Writer` takes each
+sample's duration from the gap to the next timestamp in display order, and
+uses a packet's own `duration` only for the last sample, so a rate that is not
+a whole number of ticks (24000/1001 fps is 3753.75 at 90 kHz) does not drift
+from the timestamps. Timestamps that do not increase leave it using the
+packets' durations. A frame rate of no frames per second raises `EncoderError`.
 
 ## Colour
 

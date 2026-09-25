@@ -718,12 +718,11 @@ class TestEverythingItRaisesIsAnEncoderError:
 
 
 class TestADurationNobodyGaveIsOneFrame:
-    """Every other test here passes ``duration=TICK``, so nothing exercised the
-    default -- and the default was wrong: this backend passed the zero straight
-    through while NVENC and oneVPL turned it into a frame's worth. A container
-    takes its per-sample durations from these, so every file written on this
-    machine had a movie duration of nought and an undefined frame rate. The
-    pictures decoded perfectly, which is what made it hard to see.
+    """A packet encoded without a duration lasts one frame at the encoder's rate.
+
+    The other tests here pass ``duration=TICK``; these leave it out. A
+    container takes its per-sample durations from the packets, and zeroes
+    give a movie of nought seconds with an undefined frame rate.
     """
 
     def test_omitting_it_gives_a_frame_at_the_encoders_rate(self, encoder,

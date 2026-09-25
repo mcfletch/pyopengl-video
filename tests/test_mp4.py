@@ -252,20 +252,58 @@ class TestParameterSetsInTheStream:
         assert self.CODED_SPS not in data[mdat:data.index(b'moov')]
 
 
+def sample_count(data):
+    """How many samples a file's ``stts`` gives durations for."""
+    stts = path_to(data, 'moov', 'trak', 'mdia', 'minf', 'stbl', 'stts')
+    entries = struct.unpack_from('>I', stts, 4)[0]
+    return sum(struct.unpack_from('>II', stts, 8 + 8 * index)[0]
+               for index in range(entries))
+
+
+def media_duration(data):
+    """The track's length from its ``mdhd``, in the track's timescale."""
+    mdhd = path_to(data, 'moov', 'trak', 'mdia', 'mdhd')
+    return struct.unpack_from('>I', mdhd, 16)[0]
+
+
+class TestARateThatIsNotWholeTicks:
+    """24000/1001 fps in a 90 kHz timescale is 3753.75 ticks a frame.
+
+    A caller's timestamps are exact and a default duration is rounded to
+    3754, so durations summed for decode time run a quarter of a tick a
+    frame ahead of the timestamps: 0.24 s an hour.
+    """
+
+    def packets(self, count):
+        return [Packet(data=one.data, timestamp=round(index * 3753.75), duration=3754,
+                       keyframe=one.keyframe)
+                for index, one in enumerate(frames(count))]
+
+    def test_the_movie_ends_where_the_timestamps_do(self, written):
+        packets = self.packets(4000)
+        data = written(packets)
+        assert media_duration(data) == packets[-1].timestamp + 3754
+
+    def test_decode_times_follow_the_timestamps(self, written):
+        stbl = path_to(written(self.packets(4000)), 'moov', 'trak', 'mdia', 'minf', 'stbl')
+        assert 'ctts' not in boxes(stbl)
+
+
 class TestAZeroDurationIsAFileThatWillNotPlay:
-    """Why :meth:`Encoder.frame_duration` exists, stated as a consequence.
+    """What :meth:`Encoder.frame_duration` prevents.
 
     A container takes its per-sample durations from what the encoder reports.
-    Report zeroes and every picture is present and decodes perfectly, and the
-    movie says it is nought seconds long with an undefined frame rate --
-    ``duration=0``, ``r_frame_rate=1/0``. Players refuse it: as far as the
-    container is concerned there is nothing in it. The pictures are not the
-    problem, which is what makes it hard to see.
+    Zeroes give a movie of nought seconds with an undefined frame rate --
+    ``duration=0``, ``r_frame_rate=1/0`` -- although every picture is present
+    and decodes. Players refuse it.
     """
 
     def silent(self, count=30):
-        """The same frames an encoder would emit, with no durations on them."""
-        return [Packet(data=one.data, timestamp=one.timestamp, duration=0,
+        """The same frames with neither timestamps nor durations on them.
+
+        Increasing timestamps would give every sample but the last a duration.
+        """
+        return [Packet(data=one.data, timestamp=0, duration=0,
                        keyframe=one.keyframe) for one in frames(count)]
 
     def test_zero_durations_give_a_movie_of_no_length(self, tmp_path):
@@ -277,13 +315,13 @@ class TestAZeroDurationIsAFileThatWillNotPlay:
         assert writer.duration == 0
 
     def test_while_the_pictures_are_all_there(self, tmp_path):
-        """Which is the trap: nothing about the stream looks wrong."""
+        """Nothing about the stream itself looks wrong."""
         path = tmp_path / 'silent.mp4'
         with MP4Writer(str(path), width=320, height=240,
-                       timescale=TIMESCALE) as writer:
+                       timescale=TIMESCALE, parameter_sets=(SPS, PPS)) as writer:
             for packet in self.silent(30):
                 writer.write(packet)
-        assert len(writer._durations) == 30
+        assert sample_count(path.read_bytes()) == 30
 
     def test_a_frame_s_worth_each_gives_the_length_it_should(self, tmp_path):
         path = tmp_path / 'timed.mp4'
@@ -295,9 +333,8 @@ class TestAZeroDurationIsAFileThatWillNotPlay:
 
 
 class TestEveryBackendDefaultsADurationTheSameWay:
-    """The rule lives on the base class because two of the three backends had
-    it and the third did not -- and the third was the one on this machine,
-    writing files nothing would play."""
+    """:meth:`Encoder.frame_duration` is the one rule every backend applies to
+    a duration of nought: one frame at the encoder's rate."""
 
     def encoder(self, fps=(60, 1), timescale=90000):
         from pyopengl_video.encoder import Encoder
@@ -325,3 +362,8 @@ class TestEveryBackendDefaultsADurationTheSameWay:
 
     def test_and_so_is_one_in_a_different_timescale(self):
         assert self.encoder(timescale=1000).frame_duration(0) == 17
+
+    def test_a_rate_of_no_frames_is_refused(self):
+        from pyopengl_video.encoder import EncoderError
+        with pytest.raises(EncoderError, match='frame rate'):
+            self.encoder(fps=(0, 1)).frame_duration(0)

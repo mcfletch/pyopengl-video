@@ -186,21 +186,21 @@ class Encoder(ABC):
     def frame_duration(self, duration: int = 0) -> int:
         """`duration` in :attr:`timescale` units, or one frame's worth if it is 0.
 
-        **Every backend puts an incoming duration through this**, because a
-        zero that reaches a container is not a small mistake. A container takes
-        its per-sample durations from what the encoder reports, so a stream of
-        zeroes gives a movie of zero length whose frame rate is undefined --
-        ``duration=0`` and ``r_frame_rate=1/0``. The pictures are all present
-        and decode perfectly; players refuse the file because as far as the
-        container is concerned there is nothing in it.
+        Every backend puts an incoming duration through this. A container
+        takes its per-sample durations from what the encoder reports, and a
+        stream of zeroes gives a movie of zero length whose frame rate is
+        undefined -- ``duration=0`` and ``r_frame_rate=1/0`` -- which players
+        refuse although every picture decodes.
 
-        Which is why it lives here and not in each backend: two of the three
-        had the same three lines and the third did not, and the one that did
-        not was the one writing unplayable files.
+        Raises :class:`EncoderError` for a frame rate of no frames, which has
+        no frame duration.
         """
         if duration > 0:
             return int(duration)
         numerator, denominator = self.frame_rate
+        if numerator <= 0 or denominator <= 0:
+            raise EncoderError(
+                f'a frame rate of {numerator}/{denominator} has no frame duration')
         return round(self.timescale * denominator / numerator)
 
     @abstractmethod
