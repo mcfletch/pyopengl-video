@@ -153,3 +153,5 @@ field at the wrong offset.
 
 BSD-3-Clause; see `license.txt`. It contains no third-party code — see
 `NOTICES.md` for where the NVENC ABI facts come from and under what terms.
+
+The project is maintained on [GitHub](https://github.com/mcfletch/pyopengl-video)
