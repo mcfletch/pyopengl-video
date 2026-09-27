@@ -1,7 +1,7 @@
 """Hardware video encoding of OpenGL colour buffers.
 
 The renderer has already put the frame in GPU memory, and every GPU we support
-has a video encoder on the same die. This package hands one to the other:
+has a video encoder on the same die. This package hands one to the other::
 
     from pyopengl_video import open_encoder
     from pyopengl_video.mp4 import MP4Writer

@@ -123,7 +123,7 @@ class MP4Writer:
         self._sync: list[int] = []
         self._closed = False
 
-        self._file = self.path.open('wb')
+        self._file = self.path.open('wb')  # noqa: OGC121 a recording written as it is captured, the way a camera writes one
         header = box('ftyp', b'isom', struct.pack('>I', 512),
                      b'isom', b'iso2', b'avc1', b'mp41')
         self._file.write(header)
