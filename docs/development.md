@@ -87,7 +87,7 @@ tools/
 ## How the NVENC binding works
 
 `libnvidia-encode.so.1` exports two symbols. `NvEncodeAPIGetMaxSupportedVersion`
-reports how new an interface the driver understands;
+reports the newest interface version the driver supports.
 `NvEncodeAPICreateInstance` fills in a table of function pointers, and every
 other call goes through the table. `NvEncodeAPI` in `api.py` does both once per
 process and binds the entries this package uses.
@@ -281,36 +281,35 @@ run, on a container whose sample description did not match its samples.
 
 ## Testing a decoder
 
-H.264 decoding is exact: a decoder that is right produces the bytes every
-other conforming decoder produces. `tests/test_vaapi_decode.py` decodes each
-stream under `tests/data/decode/`, reads the NV12 planes back out of the
-textures it was handed, and requires each picture's MD5 to equal the one
-`ffmpeg`'s software decoder recorded. The streams come from `libx264` and use
-what our own encoders do not write: B-frame pyramids, weighted prediction,
+H.264 decoding is exact, so every correct decoder produces the same bytes.
+`tests/test_vaapi_decode.py` decodes each stream under `tests/data/decode/` and
+reads the NV12 planes back from the textures. Each picture's MD5 must equal
+the one `ffmpeg`'s software decoder recorded. The streams come from `libx264`
+and use what our encoders do not write: B-frame pyramids, weighted prediction,
 several slices a picture, scaling matrices, CAVLC and open groups of pictures.
-`python tools/make_decode_fixtures.py` rewrites them and their checksums; the
-suite itself needs neither `ffmpeg` nor the tool.
+`python tools/make_decode_fixtures.py` rewrites the streams and checksums. The
+suite needs neither `ffmpeg` nor the tool.
 
-The parts that need no driver are tested on any machine:
+These tests need no driver:
 
-- `tests/test_h264_parse.py` writes syntax with `BitWriter`, in the order of
-  the specification's tables (the helpers are in `tests/h264_syntax.py`), and
-  reads it back field by field, including what our encoders write.
+- `tests/test_h264_parse.py` writes syntax with `BitWriter` in the order of
+  the specification's tables, then reads it back field by field. The writers
+  are in `tests/h264_syntax.py`. What our encoders write is parsed too.
 - `tests/test_h264_dpb.py` drives the decoded picture buffer with slice
-  headers and checks picture order counts, marking, reference lists and output
+  headers. It checks picture order counts, marking, reference lists and output
   order against clause 8.2.
-- `tests/test_annexb_reader.py` runs the buffer over the x264 B-pyramid stream
-  and requires the display order it derives to equal the composition times
-  `ffmpeg` wrote into the MP4 of the same stream.
+- `tests/test_annexb_reader.py` runs the buffer over the x264 B-pyramid stream.
+  The display order it derives must equal the composition times `ffmpeg`
+  wrote into the MP4 of the same stream.
 - `tests/test_vaapi_decode_buffers.py` builds libva's picture, matrix and
   slice buffers from known headers.
-- `tests/test_playback.py` drives the player with a fake decoder, converter and
-  texture factory, so its seeking and decoding ahead are tested without GL.
+- `tests/test_playback.py` drives the player with a fake decoder, converter
+  and texture factory, so seeking and decoding ahead run without GL.
 
-A new decoder backend reuses the parser only if its driver wants parsed
-syntax; NVDEC and oneVPL parse the stream themselves. What every backend
-shares is the `Decoder` interface, the `DecodedFrame` lending rule and the
-conversion pass, and its hardware test is the same checksum comparison.
+A new decoder backend uses the parser only if its driver wants parsed syntax.
+NVDEC and oneVPL parse the stream themselves. Every backend shares the
+`Decoder` interface, the `DecodedFrame` lending rule and the conversion pass.
+Its hardware test is the same checksum comparison.
 
 ## Style and licensing
 

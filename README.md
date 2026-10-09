@@ -28,9 +28,8 @@ with open_encoder(1920, 1080, fps=60, bitrate=12_000_000) as encoder:
 `examples/record_triangle.py` is that loop around a real renderer, start to
 finish.
 
-Playing a movie back runs the other way: the GPU's video decoder writes each
-picture, OpenGL reads it as textures, and a conversion pass makes an RGBA
-texture of it.
+Playback runs the other way. The GPU's video decoder writes each picture,
+OpenGL reads it as textures, and a conversion pass makes an RGBA texture.
 
 ```python
 from pyopengl_video.playback import Movie
@@ -40,10 +39,11 @@ player = movie.player()                  # GL thread
 texture = player.frame_at(seconds)       # right way up, sRGB
 ```
 
-`examples/play_movie.py` plays a file in a window, and
+`examples/play_movie.py` plays a file in a window.
 [docs/playback.md](docs/playback.md) covers the player, the decoders and what
-they decode. Decoding runs on AMD (VA-API) today; Intel on Linux is the same
-code, and NVIDIA and Windows are [planned](plans/GPU-VIDEO-DECODE.md).
+they decode. Decoding works on AMD under Linux through VA-API. Intel on Linux
+runs the same code, untested. NVIDIA and Windows are
+[planned](plans/GPU-VIDEO-DECODE.md).
 
 ## What it needs
 
@@ -147,10 +147,9 @@ pytest
 
 Tests that need an encoder, a decoder or a GL context skip themselves without
 one, so the suite runs anywhere. The hardware tests use a hidden GLFW window and
-synthetic frames. The decoder's tests also use the x264 streams under
-`tests/data/decode/`, and every picture they decode has to match the checksum
-`ffmpeg`'s software decoder recorded for it; `tools/make_decode_fixtures.py`
-writes them.
+synthetic frames. The decoder's tests also decode the x264 streams under
+`tests/data/decode/`. Each picture must match the checksum `ffmpeg`'s software
+decoder recorded for it. `tools/make_decode_fixtures.py` writes the streams.
 
 The vendor bindings are hand-written ctypes over large C ABIs, and a layout
 mistake there corrupts a structure rather than raising anything. So each is

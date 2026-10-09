@@ -108,24 +108,23 @@ that of the ITU-T H.264 specification; the field names in the code are the
 specification's own, so the two can be read side by side. No encoder
 implementation was consulted.
 
-`pyopengl_video/vaapi/h264_parse.py` reads the same syntax, and
-`pyopengl_video/vaapi/h264_dpb.py` implements the specification's picture
-order count (8.2.1), reference marking (8.2.5), reference picture lists (8.2.4)
-and output order (annex C.4), from Rec. ITU-T H.264 alone. No decoder
-implementation was consulted; FFmpeg's, GStreamer's and every other copyleft
-decoder's source were excluded. The order libva takes scaling lists in is the
-raster order its header states, confirmed by decoding.
+`pyopengl_video/vaapi/h264_parse.py` reads the same syntax.
+`pyopengl_video/vaapi/h264_dpb.py` implements picture order count (8.2.1),
+reference marking (8.2.5), reference picture lists (8.2.4) and output order
+(annex C.4) from Rec. ITU-T H.264 alone. No decoder's source was consulted,
+FFmpeg's and GStreamer's included. libva takes scaling lists in raster order,
+as its header states; decoding confirmed it.
 
 `pyopengl_video/mp4.py` reads and writes the ISO base media file format of
 ISO/IEC 14496-12, with the `avcC` record of ISO/IEC 14496-15 and the `esds`
 descriptors of ISO/IEC 14496-1. `pyopengl_video/colour.py` uses the code points
 and coefficients of Rec. ITU-T H.273.
 
-The streams under `tests/data/decode/` were written by `ffmpeg` with `libx264`
-from `ffmpeg`'s own test pattern, by `tools/make_decode_fixtures.py`, which
-also records the checksums `ffmpeg`'s decoder gives each picture. They are
-data the tests compare against; `ffmpeg` and `x264` are run as programs, and
-nothing of either is part of this package.
+`tools/make_decode_fixtures.py` runs `ffmpeg` with `libx264` on `ffmpeg`'s
+test pattern to write the streams under `tests/data/decode/`. It also records
+the checksum of each picture `ffmpeg` decodes. The streams and checksums are
+test data. `ffmpeg` and `x264` run as programs, and no part of either is in
+this package.
 
 `pyopengl_video/linux/dmabuf.py` calls `EGL_MESA_image_dma_buf_export` and
 `EGL_EXT_image_dma_buf_import` as specified in the Khronos EGL registry. Mesa is
