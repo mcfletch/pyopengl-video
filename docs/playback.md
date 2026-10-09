@@ -40,8 +40,10 @@ window is created:
 glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)
 ```
 
-It also needs the VA-API driver for the GPU: `mesa-va-drivers` for AMD,
-`intel-media-va-driver` for Intel.
+From a GLX or WGL context the backend reports itself unavailable, and
+`movie.player()` raises `DecoderUnavailable` saying the context is not an EGL
+context. It also needs the VA-API driver for the GPU: `mesa-va-drivers` for
+AMD, `intel-media-va-driver` for Intel.
 
 `decoders()` lists what this machine can decode:
 
@@ -55,7 +57,9 @@ for backend in decoders():
 ## Movies and players
 
 `Movie.open(path)` reads an MP4 file or a raw H.264 (Annex-B) stream. The first
-bytes of the file say which. Opening reads the index and none of the media, so
+bytes of the file say which. An AVI file, an MPEG program or video stream, a
+Matroska or WebM file and an Ogg file are refused with a `ValueError` naming
+the container. Opening reads the index and none of the media, so
 a two-hour movie costs the size of its sample table. It needs no GL, so a game
 can open movies on a loading thread.
 

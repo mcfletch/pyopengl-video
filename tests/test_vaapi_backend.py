@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 import pytest
+from OpenGL import platform as gl_platform
 
 from pyopengl_video import encoder as encoder_module
 from pyopengl_video import encoders, vaapi
@@ -130,6 +131,8 @@ class TestTheContextItWouldRecordFrom:
     def test_no_current_context_is_not_held_against_the_machine(self, egl,
                                                                 monkeypatch):
         monkeypatch.setattr(egl, 'eglGetCurrentContext', lambda: None)
+        monkeypatch.setattr(gl_platform.PLATFORM, 'GetCurrentContext',
+                            lambda *_args, **_named: None)
         assert vaapi._context_can_export() is True  # noqa: SLF001 - one step of probe(), tested alone
 
     def test_a_context_that_cannot_export_makes_the_backend_unavailable(
@@ -139,3 +142,33 @@ class TestTheContextItWouldRecordFrom:
                             lambda: 'this OpenGL context is not an EGL context')
         assert vaapi._context_can_export() is False  # noqa: SLF001 - one step of probe(), tested alone
         assert vaapi.probe() is False
+
+
+@pytest.fixture
+def glx_context(egl, monkeypatch):
+    """A context of another binding current: no EGL context, but PyOpenGL's platform has one."""
+    monkeypatch.setattr(egl, 'eglGetCurrentContext', lambda: None)
+    monkeypatch.setattr(gl_platform.PLATFORM, 'GetCurrentContext',
+                        lambda *_args, **_named: 1)
+    return gl_platform.PLATFORM
+
+
+class TestAContextOfAnotherBinding:
+    """A GLX or WGL context current makes the backend unavailable, for encoding and decoding."""
+
+    def test_its_kind_is_other(self, glx_context):  # noqa: ARG002 - the fixture is the context
+        assert vaapi._context_kind() == 'other'  # noqa: SLF001 - the helper the probes share, tested alone
+
+    def test_no_context_at_all_is_none(self, glx_context, monkeypatch):
+        monkeypatch.setattr(glx_context, 'GetCurrentContext', lambda *_args, **_named: None)
+        assert vaapi._context_kind() is None  # noqa: SLF001 - the helper the probes share, tested alone
+
+    def test_the_encoder_cannot_record_from_it(self, glx_context):  # noqa: ARG002 - the fixture is the context
+        assert vaapi._context_can_export() is False  # noqa: SLF001 - one step of probe(), tested alone
+        assert vaapi.probe() is False
+        assert 'not an EGL context' in vaapi.explain()
+
+    def test_the_decoder_cannot_play_into_it(self, glx_context):  # noqa: ARG002 - the fixture is the context
+        assert vaapi.decoder_probe() is False
+        assert 'not an EGL context' in vaapi.decoder_explain()
+        assert 'CONTEXT_CREATION_API' in vaapi.decoder_explain()

@@ -45,6 +45,15 @@ DEFAULT_AHEAD = 2
 #: The first box types an MP4 file may open with.
 MP4_BOXES = (b'ftyp', b'moov', b'mdat', b'free', b'skip', b'wide', b'pnot')
 
+#: Containers and streams this package does not read, by the bytes they open with.
+OTHER_CONTAINERS = (
+    (b'RIFF', 'an AVI or other RIFF file'),
+    (b'\x00\x00\x01\xba', 'an MPEG program stream'),
+    (b'\x00\x00\x01\xb3', 'an MPEG-1 or MPEG-2 video stream'),
+    (b'\x1a\x45\xdf\xa3', 'a Matroska or WebM file'),
+    (b'OggS', 'an Ogg file'),
+)
+
 
 class VideoSource(Protocol):
     """What a container's video track offers playback.
@@ -143,6 +152,9 @@ class Movie:
              frame_rate: tuple[int, int] | None = None) -> Movie:
         """Open an MP4 file or a raw H.264 stream, by its contents.
 
+        Raises ValueError for a file that is neither, naming the container
+        where its first bytes say which it is.
+
         frame_rate -- for a raw stream that states none, frames per second as
             ``(numerator, denominator)``
         """
@@ -153,6 +165,10 @@ class Movie:
             position = source.tell()
             head = source.read(8)
             source.seek(position)
+        for opening, named in OTHER_CONTAINERS:
+            if head.startswith(opening):
+                raise ValueError(f'{source} is {named}; a Movie reads MP4 files '
+                                 'and raw H.264 streams')
         if head[4:8] in MP4_BOXES:
             reader = MP4Reader(source)
             if reader.video is None:

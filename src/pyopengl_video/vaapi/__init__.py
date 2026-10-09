@@ -85,6 +85,52 @@ def probe() -> bool:
         return False
 
 
+def _context_kind() -> str | None:
+    """Which binding made the OpenGL context current on this thread.
+
+    ``'egl'`` for an EGL context, ``'other'`` for one made through GLX or
+    WGL, and None where no context is current. A GLX context cannot export or
+    import a DMA-BUF, so it is a context this backend cannot serve.
+    """
+    try:
+        from OpenGL import EGL  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
+
+        if EGL.eglGetCurrentContext():
+            return 'egl'
+    except Exception as error:  # noqa: BLE001 - a probe answers, it does not raise
+        log.debug('EGL is not usable here: %s', error)
+    try:
+        from OpenGL import platform  # noqa: PLC0415 - the binding PyOpenGL chose at run time
+
+        current: Any = platform.PLATFORM.GetCurrentContext
+        try:
+            # Ask only the bindings already loaded: a process holding a GLX
+            # context has loaded GLX, and loading it to ask costs a driver.
+            # Only PyOpenGL's Linux platform takes the argument.
+            found = current(probe=False)
+        except TypeError:
+            found = current()
+    except Exception as error:  # noqa: BLE001 - a probe answers, it does not raise
+        log.debug('PyOpenGL could not say which context is current: %s', error)
+        return None
+    return 'other' if found else None
+
+
+#: Why a context made through GLX or WGL cannot be served, and what to do.
+NOT_EGL = ('this OpenGL context is not an EGL context, so it cannot {} a '
+           'DMA-BUF; create the window with '
+           'glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)')
+
+
+def _context_reason(kind: str | None) -> str:
+    """Why the context of `kind` cannot export a texture, or '' where it can or there is none."""
+    if kind is None:
+        return ''
+    if kind == 'other':
+        return NOT_EGL.format('export a texture as')
+    return dmabuf.unavailable_because()
+
+
 def _context_can_export() -> bool:
     """Whether a current OpenGL context could hand a texture over, if there is one.
 
@@ -92,15 +138,7 @@ def _context_can_export() -> bool:
     before a window exists, and the encoder says what is wrong when one is
     registered.
     """
-    try:
-        from OpenGL import EGL  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
-
-        if not EGL.eglGetCurrentContext():
-            return True
-    except Exception as error:  # noqa: BLE001 - a probe answers, it does not raise
-        log.debug('EGL is not usable here, so no context is current: %s', error)
-        return True
-    reason = dmabuf.unavailable_because()
+    reason = _context_reason(_context_kind())
     if reason:
         log.debug('the VA-API backend cannot use this context: %s', reason)
         return False
@@ -149,7 +187,7 @@ def explain() -> str:
     if not SUPPORTED_PLATFORM:
         return ''
     try:
-        reason = dmabuf.unavailable_because() if _context_is_current() else ''
+        reason = _context_reason(_context_kind())
         if reason:
             return reason
         if not _any_device_encodes():
@@ -165,13 +203,8 @@ def explain() -> str:
 
 
 def _context_is_current() -> bool:
-    """Whether there is an EGL context to ask about at all."""
-    try:
-        from OpenGL import EGL  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
-
-        return bool(EGL.eglGetCurrentContext())
-    except Exception:  # noqa: BLE001 - no EGL is not a context
-        return False
+    """Whether an OpenGL context of any binding is current on this thread."""
+    return _context_kind() is not None
 
 
 def _build(width: int, height: int, **options: Any) -> Any:
@@ -211,7 +244,8 @@ def decoder_probe() -> bool:
     if not SUPPORTED_PLATFORM:
         return False
     try:
-        if _context_is_current() and not dmabuf.import_available():
+        kind = _context_kind()
+        if kind == 'other' or (kind == 'egl' and not dmabuf.import_available()):
             log.debug('the VA-API decoder cannot use this context: it cannot '
                       'import a DMA-BUF')
             return False
@@ -239,7 +273,10 @@ def decoder_explain() -> str:
     if not SUPPORTED_PLATFORM:
         return ''
     try:
-        if _context_is_current() and not dmabuf.import_available():
+        kind = _context_kind()
+        if kind == 'other':
+            return NOT_EGL.format('import')
+        if kind == 'egl' and not dmabuf.import_available():
             return ('this OpenGL context cannot import a DMA-BUF '
                     '(EGL_EXT_image_dma_buf_import); create the window with '
                     'glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)')

@@ -304,6 +304,21 @@ class TestMovie:
             assert movie.codec == 'h264'
             assert movie.headers.startswith(b'\x00\x00\x00\x01\x67')
 
+    @pytest.mark.parametrize(('head', 'named'), [
+        (b'RIFF\x00\x10\x00\x00AVI LIST', 'AVI'),
+        (b'\x00\x00\x01\xba\x44\x00\x04\x00', 'MPEG program stream'),
+        (b'\x00\x00\x01\xb3\x14\x00\xf0\x13', 'MPEG-1 or MPEG-2 video'),
+        (b'\x1a\x45\xdf\xa3\x9f\x42\x86\x81', 'Matroska or WebM'),
+        (b'OggS\x00\x02\x00\x00', 'Ogg'),
+    ])
+    def test_another_container_is_refused_by_its_name(self, tmp_path, head, named):
+        movie = tmp_path / 'movie'
+        movie.write_bytes(head + bytes(64))
+        with pytest.raises(ValueError, match=named):
+            Movie.open(movie)
+        with movie.open('rb') as handle, pytest.raises(ValueError, match=named):
+            Movie.open(handle)
+
     def test_a_file_that_is_no_movie_is_refused(self, tmp_path):
         bad = tmp_path / 'notes.txt'
         bad.write_text('nothing to see')
