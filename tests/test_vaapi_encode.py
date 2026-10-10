@@ -12,19 +12,11 @@ from itertools import pairwise
 import numpy as np
 import pytest
 from OpenGL.GL import (
-    GL_COLOR_ATTACHMENT0,
     GL_COLOR_BUFFER_BIT,
     GL_DRAW_FRAMEBUFFER,
-    GL_NEAREST,
-    GL_READ_FRAMEBUFFER,
-    GL_TEXTURE_2D,
     glBindFramebuffer,
-    glBlitFramebuffer,
     glClear,
     glClearColor,
-    glDeleteFramebuffers,
-    glFramebufferTexture2D,
-    glGenFramebuffers,
 )
 
 from pyopengl_video import EncoderError, encoders, open_encoder
@@ -38,7 +30,7 @@ from pyopengl_video.vaapi.encoder import (
     VAAPIEncoder,
     colour_pipeline,
 )
-from tests.conftest import decode_errors, gradient_frame
+from tests.conftest import blit, decode_errors, gradient_frame
 
 SIZE = (320, 240)
 FRAMES = 20
@@ -70,22 +62,6 @@ def paint(handle, colour):
         glClearColor(*colour)
         glClear(GL_COLOR_BUFFER_BIT)
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
-
-
-def blit(handle, texture):
-    """Copy a texture into a handle's own, inside its drawing scope."""
-    width, height = SIZE
-    source = int(glGenFramebuffers(1))
-    with handle.for_drawing():
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, source)
-        glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                               GL_TEXTURE_2D, int(texture), 0)
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, handle.framebuffer)
-        glBlitFramebuffer(0, 0, width, height, 0, 0, width, height,
-                          GL_COLOR_BUFFER_BIT, GL_NEAREST)
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
-    glDeleteFramebuffers(1, [source])
 
 
 def encode_sequence(encoder, handles, frames=FRAMES, paint_frame=None):
@@ -270,7 +246,7 @@ class TestContentSensitivity:
                 packets = []
                 for index, frame in enumerate(frames):
                     handle = handles[index % len(handles)]
-                    blit(handle, upload_texture(frame))
+                    blit(handle, upload_texture(frame), SIZE)
                     packets.extend(encoder.encode(handle, index * TICK))
                 packets.extend(encoder.flush())
                 return sum(len(packet) for packet in packets)
@@ -304,7 +280,7 @@ class TestContentSensitivity:
                     handle = handles[index % len(handles)]
                     phase = index if moving else 0
                     blit(handle, upload_texture(
-                        gradient_frame(width, height, phase=phase)))
+                        gradient_frame(width, height, phase=phase)), SIZE)
                     packets.extend(encoder.encode(handle, index * TICK))
                 packets.extend(encoder.flush())
                 # The first picture is intra either way, so compare the rest.
@@ -397,7 +373,7 @@ class TestOrientation:
         frame = np.zeros((height, width, 4), np.uint8)
         frame[..., 3] = 255
         frame[:height // 2] = (255, 255, 255, 255)     # white across the top
-        blit(handles[0], upload_texture(frame))
+        blit(handles[0], upload_texture(frame), SIZE)
         luma = coded_luma(encoder, handles[0])
         assert luma[height // 4].mean() > 200, 'the top of the picture is white'
         assert luma[3 * height // 4].mean() < 40, 'the bottom is black'
@@ -408,7 +384,7 @@ class TestOrientation:
         frame = np.zeros((height, width, 4), np.uint8)
         frame[..., 3] = 255
         frame[:, :width // 2] = (255, 255, 255, 255)
-        blit(handles[0], upload_texture(frame))
+        blit(handles[0], upload_texture(frame), SIZE)
         luma = coded_luma(encoder, handles[0])
         assert luma[:, width // 4].mean() > 200
         assert luma[:, 3 * width // 4].mean() < 40

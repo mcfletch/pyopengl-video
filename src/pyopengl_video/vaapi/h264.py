@@ -1,4 +1,4 @@
-"""The H.264 control layer: bitstream writing and the parameter sets.
+"""The H.264 control layer: bitstream reading and writing, and the parameter sets.
 
 libva is a slice-level interface. Where NVENC is handed a picture and decides
 everything about how to code it, a libva encoder is told what to code and the
@@ -8,7 +8,9 @@ sequence and picture parameter sets as finished bitstreams.
 
 This module is that half, and it holds no libva at all: a
 :class:`BitWriter` for the exponential-Golomb syntax the specification is
-written in, and :class:`ParameterSets`, which turns a frame size, a frame rate
+written in, a :class:`BitReader` for reading it back, which the decoder's
+parser (:mod:`pyopengl_video.vaapi.h264_parse`) is built on, and
+:class:`ParameterSets`, which turns a frame size, a frame rate
 and a quantiser into the SPS and PPS NAL units that describe them. The values
 it derives -- the level, the coded size in macroblocks, the widths of the
 frame-number and picture-order-count fields -- are what the encoder must also
@@ -154,6 +156,96 @@ class BitWriter:
             int(''.join(str(bit) for bit in bits[index:index + 8]), 2)
             for index in range(0, len(bits), 8)
         )
+
+
+class StreamError(ValueError):
+    """A bitstream breaks the H.264 syntax, or uses a part of it not decoded here."""
+
+
+#: The longest run of leading zeroes an exponential-Golomb code may have. The
+#: specification's ``ue(v)`` values fit in 32 bits, so a longer prefix is data
+#: that is not H.264.
+MAX_EXP_GOLOMB_ZEROES = 32
+
+
+class BitReader:
+    """Reads the bit-packed syntax of an H.264 raw byte sequence payload.
+
+    Bits come out most-significant first, the order the specification writes
+    them in. `data` is an RBSP, with emulation prevention already removed by
+    :func:`rbsp_of`. Reading past its end raises :class:`StreamError`.
+
+    position -- how many bits have been read
+    """
+
+    def __init__(self, data: bytes) -> None:
+        self.data = bytes(data)
+        self.position = 0
+        self._length = len(self.data) * 8
+        self._last_one = self._find_stop_bit()
+
+    def _find_stop_bit(self) -> int:
+        """The bit position of the last one bit, which is the RBSP stop bit."""
+        trimmed = self.data.rstrip(b'\x00')
+        if not trimmed:
+            return -1
+        last = trimmed[-1]
+        lowest = (last & -last).bit_length() - 1
+        return (len(trimmed) - 1) * 8 + (7 - lowest)
+
+    def u(self, count: int) -> int:
+        """An unsigned field `count` bits wide -- ``u(n)``."""
+        if count == 0:
+            return 0
+        end = self.position + count
+        if end > self._length:
+            raise StreamError(
+                f'a {count}-bit field at bit {self.position} runs past the end '
+                f'of a {len(self.data)}-byte payload')
+        first = self.position >> 3
+        last = (end + 7) >> 3
+        chunk = int.from_bytes(self.data[first:last], 'big')
+        self.position = end
+        return (chunk >> (last * 8 - end)) & ((1 << count) - 1)
+
+    def flag(self) -> int:
+        """A one-bit flag."""
+        return self.u(1)
+
+    def ue(self) -> int:
+        """An unsigned exponential-Golomb code -- ``ue(v)``."""
+        zeroes = 0
+        while not self.u(1):
+            zeroes += 1
+            if zeroes > MAX_EXP_GOLOMB_ZEROES:
+                raise StreamError(
+                    f'an exp-Golomb code at bit {self.position} has more than '
+                    f'{MAX_EXP_GOLOMB_ZEROES} leading zeroes')
+        return (1 << zeroes) - 1 + self.u(zeroes)
+
+    def se(self) -> int:
+        """A signed exponential-Golomb code -- ``se(v)``."""
+        code = self.ue()
+        magnitude = (code + 1) >> 1
+        return magnitude if code & 1 else -magnitude
+
+    def more_rbsp_data(self) -> bool:
+        """Whether syntax remains before the stop bit -- ``more_rbsp_data()``."""
+        return self.position < self._last_one
+
+    def byte_aligned(self) -> bool:
+        """Whether the next bit is the first of a byte -- ``byte_aligned()``."""
+        return self.position % 8 == 0
+
+
+def rbsp_of(payload: bytes) -> bytes:
+    """`payload` with its emulation prevention bytes removed.
+
+    An encoder puts a ``0x03`` after every two zero bytes that precede a byte
+    below four, so within a NAL unit every ``00 00 03`` is an escape, and
+    removing the third byte of each, scanning forward, restores the RBSP.
+    """
+    return payload.replace(b'\x00\x00\x03', b'\x00\x00')
 
 
 def emulation_prevented(payload: bytes) -> bytes:

@@ -50,25 +50,38 @@ checked as it goes.
 
 ```
 src/pyopengl_video/
-    encoder.py      the Encoder interface, Packet, and the backend registry
+    backend.py      the Backend record, discovery and VideoError, for both directions
+    encoder.py      the Encoder interface, Packet, and the encoder registry
+    decoder.py      the Decoder interface, Sample, DecodedFrame, the decoder registry
     inputs.py       InputHandle: the texture an encoder reads, and its framebuffer
-    mp4.py          Annex-B into an MP4 file
+    mp4.py          Annex-B into an MP4 file, and MP4Reader back out of one
+    annexb.py       AnnexBReader: access units of a raw .h264 stream
+    colour.py       Colour: H.273 code points and the YUV to RGB transform
+    convert.py      NV12Converter: two planes into an RGBA texture
+    glstate.py      preserved_state(), which every pass draws inside
+    playback.py     Movie, Player and Timeline
     linux/dmabuf.py exporting a texture as a DMA-BUF, and importing one back
     windows/        the Direct3D interop shim every Windows backend uses
     nvenc/api.py    ctypes over NvEncodeAPI: structures, GUIDs, function table
     nvenc/encoder.py    the encoder: register, map, encode, lock, unmap
     vpl/            Intel's oneVPL, over the Windows interop
     vaapi/api.py    ctypes over libva: display, config, context, surfaces, buffers
-    vaapi/h264.py   the control layer libva leaves to the caller
+    vaapi/device.py a libva display on a render node, shared by both directions
+    vaapi/h264.py   the control layer libva leaves to the caller: bits, parameter sets
+    vaapi/h264_parse.py the decoder's parser: NAL units, SPS, PPS, slice headers
+    vaapi/h264_dpb.py   picture order, reference marking and lists, output order
     vaapi/encoder.py    the encoder: export, import, convert, code
+    vaapi/decoder.py    the decoder: parameter buffers, surfaces imported as textures
 tests/
     nvenc_abi.json  sizes and offsets recorded from NVIDIA's header
     vpl_abi.json    the same, from the oneVPL headers
     va_abi.json     the same, from the libva headers, plus their constant values
+    data/decode/    x264 streams and the checksums of their decoded pictures
 tools/
     record_nvenc_abi.py    regenerates those files from real headers
     record_vpl_abi.py
     record_va_abi.py
+    make_decode_fixtures.py  rewrites tests/data/decode/ with ffmpeg and libx264
 ```
 
 ## How the NVENC binding works
@@ -265,6 +278,39 @@ to be on the path, `test_a_muxed_recording_decodes_without_complaint` decodes a
 recording and requires it to be silent; where it is not, the test skips. It is
 not a dependency and the suite does not need it. It earned its keep on the first
 run, on a container whose sample description did not match its samples.
+
+## Testing a decoder
+
+H.264 decoding is exact: a decoder that is right produces the bytes every
+other conforming decoder produces. `tests/test_vaapi_decode.py` decodes each
+stream under `tests/data/decode/`, reads the NV12 planes back out of the
+textures it was handed, and requires each picture's MD5 to equal the one
+`ffmpeg`'s software decoder recorded. The streams come from `libx264` and use
+what our own encoders do not write: B-frame pyramids, weighted prediction,
+several slices a picture, scaling matrices, CAVLC and open groups of pictures.
+`python tools/make_decode_fixtures.py` rewrites them and their checksums; the
+suite itself needs neither `ffmpeg` nor the tool.
+
+The parts that need no driver are tested on any machine:
+
+- `tests/test_h264_parse.py` writes syntax with `BitWriter`, in the order of
+  the specification's tables (the helpers are in `tests/h264_syntax.py`), and
+  reads it back field by field, including what our encoders write.
+- `tests/test_h264_dpb.py` drives the decoded picture buffer with slice
+  headers and checks picture order counts, marking, reference lists and output
+  order against clause 8.2.
+- `tests/test_annexb_reader.py` runs the buffer over the x264 B-pyramid stream
+  and requires the display order it derives to equal the composition times
+  `ffmpeg` wrote into the MP4 of the same stream.
+- `tests/test_vaapi_decode_buffers.py` builds libva's picture, matrix and
+  slice buffers from known headers.
+- `tests/test_playback.py` drives the player with a fake decoder, converter and
+  texture factory, so its seeking and decoding ahead are tested without GL.
+
+A new decoder backend reuses the parser only if its driver wants parsed
+syntax; NVDEC and oneVPL parse the stream themselves. What every backend
+shares is the `Decoder` interface, the `DecodedFrame` lending rule and the
+conversion pass, and its hardware test is the same checksum comparison.
 
 ## Style and licensing
 

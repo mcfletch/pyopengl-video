@@ -24,7 +24,6 @@ import ctypes
 import dataclasses
 import functools
 import logging
-import os
 from collections.abc import Callable
 from typing import Any
 
@@ -50,6 +49,7 @@ from pyopengl_video.encoder import (
 from pyopengl_video.linux import dmabuf
 from pyopengl_video.mp4 import split_annexb
 from pyopengl_video.vaapi import api
+from pyopengl_video.vaapi.device import Device
 from pyopengl_video.vaapi.h264 import (
     COLOUR_PRIMARIES_BT709,
     MATRIX_BT709,
@@ -272,7 +272,7 @@ class VAAPIEncoder(Encoder):
         self.qp = int(qp)
 
         self.api = api.VA.instance()
-        self.display: Any = None
+        self._device: Device | None = None
         self.device = device
         self._config = api.VAConfigID(0)
         self._context = api.VAContextID(0)
@@ -288,8 +288,6 @@ class VAAPIEncoder(Encoder):
         self._coded_slot = 0
         self._coded_sets: dict[int, bytes] = {}
         self._closed = False
-        # Kept alive for as long as the display is: libva holds the pointer.
-        self._silence = api.MESSAGE_CALLBACK(lambda _context, _message: None)
 
         try:
             self._open()
@@ -316,66 +314,18 @@ class VAAPIEncoder(Encoder):
             gop=self.gop, max_num_ref_frames=self.max_num_ref_frames,
             log2_max_frame_num=self.sets.log2_max_frame_num)
 
+    @property
+    def display(self) -> Any:
+        """The libva display the session runs on, or None once closed."""
+        return None if self._device is None else self._device.display
+
     def _open_display(self) -> None:
-        """Open a DRM render node and initialise libva on it."""
+        """Open the first DRM render node with an H.264 encoder."""
         nodes = [self.device] if self.device else api.render_nodes()
-        if not nodes:
-            raise EncoderError(
-                'no DRM render node to open: /dev/dri holds no renderD* device, '
-                'so there is no GPU here to encode with')
-        failures = []
-        for node in nodes:
-            try:
-                self._initialise(node)
-            except (OSError, api.VAError) as error:
-                failures.append(f'{node}: {error}')
-                continue
-            self.device = node
-            return
-        raise EncoderError('no DRM render node here has an H.264 encoder: '
-                           + '; '.join(failures))
-
-    def _initialise(self, node: str) -> None:
-        """Open one render node, or raise and leave nothing behind."""
-        self._device_fd = os.open(node, os.O_RDWR)
-        display = self.api.vaGetDisplayDRM(self._device_fd)
-        if not display:
-            os.close(self._device_fd)
-            self._device_fd = -1
-            raise api.VAError(-1, 'vaGetDisplayDRM', node)
-        # Before vaInitialize, so the driver's own log lines never reach a
-        # caller's stderr: this is a library, and discovery must be quiet.
-        self.api.vaSetInfoCallback(display, self._silence, None)
-        self.api.vaSetErrorCallback(display, self._silence, None)
-        major, minor = ctypes.c_int(), ctypes.c_int()
-        status = self.api.vaInitialize(display, ctypes.byref(major),
-                                       ctypes.byref(minor))
-        if status != api.VA_STATUS_SUCCESS:
-            os.close(self._device_fd)
-            self._device_fd = -1
-            raise api.VAError(status, 'vaInitialize', node)
-        self.display = display
-        self.version = (major.value, minor.value)
-        vendor = self.api.vaQueryVendorString(display)
-        self.vendor = vendor.decode('utf-8', 'replace') if vendor else ''
-        if not self._has_h264_encoder():
-            self._close_display()
-            raise api.VAError(-1, 'vaQueryConfigEntrypoints',
-                              f'{node} has no H.264 encode entrypoint')
-
-    def _has_h264_encoder(self) -> bool:
-        """Does this device offer H.264 slice encoding at all?"""
-        count = self.api.vaMaxNumEntrypoints(self.display)
-        if count <= 0:
-            return False
-        entrypoints = (api.VAEntrypoint * count)()
-        found = ctypes.c_int(0)
-        status = self.api.vaQueryConfigEntrypoints(
-            self.display, api.VAProfileH264High, entrypoints,
-            ctypes.byref(found))
-        if status != api.VA_STATUS_SUCCESS:
-            return False
-        return api.VAEntrypointEncSlice in list(entrypoints)[:found.value]
+        self._device = Device.first(nodes, _encodes_h264, 'an H.264 encoder')
+        self.device = self._device.node
+        self.vendor = self._device.vendor
+        self.version = self._device.version
 
     def _attributes(self, *types: int) -> dict[int, int]:
         """What the H.264 encode entrypoint says about each attribute.
@@ -689,39 +639,14 @@ class VAAPIEncoder(Encoder):
 
     def _picture(self, context: Any, target: int, buffers: list[int],
                  what: str) -> None:
-        """Run one begin/render/end sequence, and give the buffers back after.
-
-        ``vaRenderPicture`` queues buffers and ``vaEndPicture`` is what submits
-        the picture, so a buffer is held until the sequence closes. Mesa reads
-        each one as it is queued and would not notice an earlier release, but
-        the interface does not promise that of every driver, and the cost of
-        holding them one more call is nothing.
-        """
-        array = (api.VABufferID * len(buffers))(*buffers)
-        try:
-            self.api.check(
-                self.api.vaBeginPicture(self.display, context, target),
-                'vaBeginPicture', what)
-            self.api.check(
-                self.api.vaRenderPicture(self.display, context, array,
-                                         len(buffers)),
-                'vaRenderPicture', f'{len(buffers)} buffer(s) for {what}')
-            self.api.check(self.api.vaEndPicture(self.display, context),
-                           'vaEndPicture', what)
-        finally:
-            for buffer in buffers:
-                self.api.vaDestroyBuffer(self.display, buffer)
+        """Run one begin/render/end sequence, and give the buffers back after."""
+        assert self._device is not None
+        self._device.picture(context, target, [buffers], what)
 
     def _buffer(self, context: Any, kind: int, payload: Any) -> int:
         """Create a VA buffer holding `payload`."""
-        buffer = api.VABufferID(0)
-        self.api.check(
-            self.api.vaCreateBuffer(self.display, context, kind,
-                                    ctypes.sizeof(payload), 1,
-                                    ctypes.byref(payload),
-                                    ctypes.byref(buffer)),
-            'vaCreateBuffer', type(payload).__name__)
-        return int(buffer.value)
+        assert self._device is not None
+        return self._device.buffer(context, kind, payload)
 
     def _sequence_buffer(self) -> int:
         """The sequence parameters, which say what the whole stream is."""
@@ -1015,21 +940,22 @@ class VAAPIEncoder(Encoder):
             handle.exported = None
 
     def _destroy_surfaces(self, surfaces: list[int]) -> None:
-        if not surfaces:
-            return
-        array = (api.VASurfaceID * len(surfaces))(*surfaces)
-        self.api.vaDestroySurfaces(self.display, array, len(surfaces))
+        if self._device is not None:
+            self._device.destroy_surfaces(surfaces)
 
     def _close_display(self) -> None:
         """Terminate libva and close the render node, once."""
-        if self.display is not None:
-            self.api.vaTerminate(self.display)
-            self.display = None
-        fd = getattr(self, '_device_fd', -1)
-        if fd >= 0:
-            os.close(fd)
-            self._device_fd = -1
+        if self._device is not None:
+            self._device.close()
+            self._device = None
 
     def _check_open(self) -> None:
         if self._closed:
             raise EncoderError('this encoder has been closed')
+
+
+def _encodes_h264(device: Device) -> str:
+    """'' when a device offers H.264 High slice encoding, or why it does not."""
+    if api.VAEntrypointEncSlice in device.entrypoints(api.VAProfileH264High):
+        return ''
+    return 'no H.264 encode entrypoint (VAEntrypointEncSlice)'

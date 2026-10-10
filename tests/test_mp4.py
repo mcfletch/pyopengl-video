@@ -189,6 +189,17 @@ def test_split_annexb_keeps_a_start_code_pattern_inside_a_unit():
     assert list(split_annexb(stream)) == [bytes([0x41, 0x00, 0x00, 0x03, 0x01, 0x99])]
 
 
+def test_split_annexb_leaves_a_units_trailing_zeroes_but_one_on_it():
+    """Zero bytes before a start code: the last is the four-byte code's own."""
+    stream = b'\x00\x00\x01aa\x00\x00\x00\x00\x01bb'
+    assert list(split_annexb(stream)) == [b'aa\x00', b'bb']
+
+
+def test_split_annexb_skips_empty_units_and_leading_bytes():
+    stream = b'\xff\x00\x00\x01\x00\x00\x01aa\x00\x00\x01'
+    assert list(split_annexb(stream)) == [b'aa']
+
+
 class TestParameterSetsInTheStream:
     """What the stream carries is what describes it.
 

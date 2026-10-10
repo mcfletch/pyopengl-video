@@ -47,6 +47,9 @@ STRUCTURES = [
     api.VAEncSequenceParameterBufferH264,
     api.VAEncPictureParameterBufferH264,
     api.VAEncSliceParameterBufferH264,
+    api.VAPictureParameterBufferH264,
+    api.VAIQMatrixBufferH264,
+    api.VASliceParameterBufferH264,
     api.VAEncPackedHeaderParameterBuffer,
     api.VAEncMiscParameterRateControl,
     api.VAEncMiscParameterFrameRate,
@@ -60,8 +63,8 @@ STRUCTURES = [
 #: is as silent a failure as a field at the wrong offset.
 CONSTANTS = [
     'VA_STATUS_SUCCESS',
-    'VAProfileNone', 'VAProfileH264Main', 'VAProfileH264High',
-    'VAProfileH264ConstrainedBaseline',
+    'VAProfileNone', 'VAProfileH264Main',
+    'VAProfileH264High', 'VAProfileH264ConstrainedBaseline', 'VAProfileH264High10',
     'VAEntrypointVLD', 'VAEntrypointEncSlice', 'VAEntrypointEncSliceLP',
     'VAEntrypointVideoProc',
     'VAConfigAttribRTFormat', 'VAConfigAttribRateControl',
@@ -73,13 +76,18 @@ CONSTANTS = [
     'VA_ENC_PACKED_HEADER_RAW_DATA',
     'VAEncPackedHeaderSequence', 'VAEncPackedHeaderPicture',
     'VAEncPackedHeaderSlice', 'VAEncPackedHeaderRawData',
+    'VAPictureParameterBufferType', 'VAIQMatrixBufferType',
+    'VASliceParameterBufferType', 'VASliceDataBufferType',
+    'VA_SLICE_DATA_FLAG_ALL', 'VA_INVALID_ID', 'VA_INVALID_SURFACE',
     'VAEncCodedBufferType', 'VAEncSequenceParameterBufferType',
     'VAEncPictureParameterBufferType', 'VAEncSliceParameterBufferType',
     'VAEncPackedHeaderParameterBufferType', 'VAEncPackedHeaderDataBufferType',
     'VAEncMiscParameterBufferType', 'VAProcPipelineParameterBufferType',
     'VAEncMiscParameterTypeFrameRate', 'VAEncMiscParameterTypeRateControl',
     'VAEncMiscParameterTypeHRD',
-    'VASurfaceAttribPixelFormat', 'VASurfaceAttribMemoryType',
+    'VASurfaceAttribPixelFormat', 'VASurfaceAttribMinWidth',
+    'VASurfaceAttribMaxWidth', 'VASurfaceAttribMinHeight',
+    'VASurfaceAttribMaxHeight', 'VASurfaceAttribMemoryType',
     'VASurfaceAttribExternalBufferDescriptor', 'VASurfaceAttribUsageHint',
     'VAGenericValueTypeInteger', 'VAGenericValueTypePointer',
     'VA_SURFACE_ATTRIB_SETTABLE',
@@ -90,9 +98,11 @@ CONSTANTS = [
     'VA_SURFACE_ATTRIB_USAGE_HINT_VPP_WRITE',
     'VA_EXPORT_SURFACE_READ_ONLY', 'VA_EXPORT_SURFACE_WRITE_ONLY',
     'VA_EXPORT_SURFACE_SEPARATE_LAYERS', 'VA_EXPORT_SURFACE_COMPOSED_LAYERS',
-    'VA_FOURCC_NV12', 'VA_FOURCC_RGBA', 'VA_FOURCC_BGRA', 'VA_FOURCC_ABGR',
+    'VA_FOURCC_NV12', 'VA_FOURCC_P010', 'VA_FOURCC_RGBA', 'VA_FOURCC_BGRA', 'VA_FOURCC_ABGR',
     'VA_FOURCC_ARGB',
-    'VA_PICTURE_H264_INVALID', 'VA_PICTURE_H264_SHORT_TERM_REFERENCE',
+    'VA_PICTURE_H264_INVALID', 'VA_PICTURE_H264_TOP_FIELD',
+    'VA_PICTURE_H264_BOTTOM_FIELD', 'VA_PICTURE_H264_SHORT_TERM_REFERENCE',
+    'VA_PICTURE_H264_LONG_TERM_REFERENCE',
     'VA_PROGRESSIVE', 'VA_FRAME_PICTURE',
     'VA_SOURCE_RANGE_UNKNOWN', 'VA_SOURCE_RANGE_REDUCED', 'VA_SOURCE_RANGE_FULL',
     'VAProcColorStandardNone', 'VAProcColorStandardBT709',
@@ -150,7 +160,9 @@ def record(include: Path | None = None) -> dict:
         source = Path(workdir) / 'abi.c'
         source.write_text(c_program())
         binary = Path(workdir) / 'abi'
-        command = ['gcc', '-std=c11']
+        # The slice group fields are deprecated in the headers and still in
+        # the structure, so they are measured like any other.
+        command = ['gcc', '-std=c11', '-Wno-deprecated-declarations']
         if include is not None:
             command += ['-I', str(include)]
         command += [str(source), '-o', str(binary)]

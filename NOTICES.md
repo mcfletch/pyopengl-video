@@ -1,7 +1,7 @@
 # Third-party notices
 
-`pyopengl-video` links against video encoder libraries that ship with the
-graphics driver. It contains no third-party code.
+`pyopengl-video` links against video encoder and decoder libraries that ship
+with the graphics driver. It contains no third-party code.
 
 ## NVIDIA NvEncodeAPI
 
@@ -75,7 +75,7 @@ The ctypes declarations in `pyopengl_video/vaapi/api.py` describe the ABI of
 `libva.so.2` and `libva-drm.so.2`, which are the Video Acceleration API runtime
 on Linux. The structure layouts, the enumerations and the constant values are
 taken from the libva headers as published in
-[intel/libva](https://github.com/intel/libva) — `va.h`, `va_vpp.h`,
+[intel/libva](https://github.com/intel/libva), decode and encode alike: `va.h`, `va_vpp.h`,
 `va_enc_h264.h`, `va_drmcommon.h` and `va_drm.h` — and are recorded by machine
 in `tests/va_abi.json` rather than vendored. The headers carry the following
 notice:
@@ -100,13 +100,32 @@ notice:
 > ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 > DEALINGS IN THE SOFTWARE.
 
-## ITU-T H.264 and the Khronos EGL registry
+## ITU-T H.264, ISO/IEC 14496 and the Khronos EGL registry
 
 `pyopengl_video/vaapi/h264.py` writes the sequence parameter set, picture
 parameter set and slice headers of an H.264 stream. The syntax it follows is
 that of the ITU-T H.264 specification; the field names in the code are the
 specification's own, so the two can be read side by side. No encoder
 implementation was consulted.
+
+`pyopengl_video/vaapi/h264_parse.py` reads the same syntax, and
+`pyopengl_video/vaapi/h264_dpb.py` implements the specification's picture
+order count (8.2.1), reference marking (8.2.5), reference picture lists (8.2.4)
+and output order (annex C.4), from Rec. ITU-T H.264 alone. No decoder
+implementation was consulted; FFmpeg's, GStreamer's and every other copyleft
+decoder's source were excluded. The order libva takes scaling lists in is the
+raster order its header states, confirmed by decoding.
+
+`pyopengl_video/mp4.py` reads and writes the ISO base media file format of
+ISO/IEC 14496-12, with the `avcC` record of ISO/IEC 14496-15 and the `esds`
+descriptors of ISO/IEC 14496-1. `pyopengl_video/colour.py` uses the code points
+and coefficients of Rec. ITU-T H.273.
+
+The streams under `tests/data/decode/` were written by `ffmpeg` with `libx264`
+from `ffmpeg`'s own test pattern, by `tools/make_decode_fixtures.py`, which
+also records the checksums `ffmpeg`'s decoder gives each picture. They are
+data the tests compare against; `ffmpeg` and `x264` are run as programs, and
+nothing of either is part of this package.
 
 `pyopengl_video/linux/dmabuf.py` calls `EGL_MESA_image_dma_buf_export` and
 `EGL_EXT_image_dma_buf_import` as specified in the Khronos EGL registry. Mesa is

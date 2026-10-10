@@ -1,6 +1,6 @@
 """ctypes over libva: the types, constants and entry points this backend uses.
 
-``libva.so.2`` is the encoder interface on Linux -- Intel parts through the
+``libva.so.2`` is the video encoder and decoder interface on Linux -- Intel parts through the
 ``iHD`` media driver, AMD parts through Mesa's ``radeonsi`` -- and
 ``libva-drm.so.2`` opens one against a DRM render node, which is what makes the
 path work with no display server.
@@ -43,6 +43,7 @@ VAEntrypoint = ctypes.c_int32
 #: What ``VA_PADDING_LOW`` expands to, which is the tail of nearly every
 #: structure and is what keeps its size stable as the interface grows.
 PADDING_LOW = 4
+PADDING_MEDIUM = 8
 PADDING_LARGE = 32
 
 # ----------------------------------------------------------------- status
@@ -55,6 +56,7 @@ VAProfileNone = -1
 VAProfileH264Main = 6
 VAProfileH264High = 7
 VAProfileH264ConstrainedBaseline = 13
+VAProfileH264High10 = 36
 
 VAEntrypointVLD = 1
 VAEntrypointEncSlice = 6
@@ -98,6 +100,10 @@ VAEncPackedHeaderRawData = 4
 
 # ------------------------------------------------------------- buffer types
 
+VAPictureParameterBufferType = 0
+VAIQMatrixBufferType = 1
+VASliceParameterBufferType = 4
+VASliceDataBufferType = 5
 VAEncCodedBufferType = 21
 VAEncSequenceParameterBufferType = 22
 VAEncPictureParameterBufferType = 23
@@ -114,6 +120,10 @@ VAEncMiscParameterTypeHRD = 5
 # ---------------------------------------------------------- surface attributes
 
 VASurfaceAttribPixelFormat = 1
+VASurfaceAttribMinWidth = 2
+VASurfaceAttribMaxWidth = 3
+VASurfaceAttribMinHeight = 4
+VASurfaceAttribMaxHeight = 5
 VASurfaceAttribMemoryType = 6
 VASurfaceAttribExternalBufferDescriptor = 7
 VASurfaceAttribUsageHint = 8
@@ -129,6 +139,13 @@ VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2 = 0x40000000
 VA_SURFACE_ATTRIB_USAGE_HINT_ENCODER = 0x00000002
 VA_SURFACE_ATTRIB_USAGE_HINT_VPP_READ = 0x00000004
 VA_SURFACE_ATTRIB_USAGE_HINT_VPP_WRITE = 0x00000008
+
+#: A slice data buffer holding the whole of its slice.
+VA_SLICE_DATA_FLAG_ALL = 0x00
+
+#: An ID naming no surface or buffer.
+VA_INVALID_ID = 0xFFFFFFFF
+VA_INVALID_SURFACE = VA_INVALID_ID
 
 VA_EXPORT_SURFACE_READ_ONLY = 0x0001
 VA_EXPORT_SURFACE_WRITE_ONLY = 0x0002
@@ -149,6 +166,7 @@ def fourcc_name(value: int) -> str:
 
 
 VA_FOURCC_NV12 = fourcc('NV12')
+VA_FOURCC_P010 = fourcc('P010')
 VA_FOURCC_RGBA = fourcc('RGBA')
 VA_FOURCC_BGRA = fourcc('BGRA')
 VA_FOURCC_ABGR = fourcc('ABGR')
@@ -159,6 +177,11 @@ VA_FOURCC_ARGB = fourcc('ARGB')
 DRM_FORMAT_ABGR8888 = fourcc('AB24')
 DRM_FORMAT_ARGB8888 = fourcc('AR24')
 DRM_FORMAT_XBGR8888 = fourcc('XB24')
+#: One and two channel layers, which the planes of an NV12 surface export as:
+#: luma as R8, and interleaved Cb and Cr as GR88, Cb in the low byte.
+DRM_FORMAT_R8 = fourcc('R8  ')
+DRM_FORMAT_GR88 = fourcc('GR88')
+DRM_FORMAT_NV12 = fourcc('NV12')
 
 #: What a driver returns for "this layout has no name I can give you".
 DRM_FORMAT_MOD_INVALID = (1 << 56) - 1
@@ -167,7 +190,10 @@ DRM_FORMAT_MOD_LINEAR = 0
 # ------------------------------------------------------------------ pictures
 
 VA_PICTURE_H264_INVALID = 0x00000001
+VA_PICTURE_H264_TOP_FIELD = 0x00000002
+VA_PICTURE_H264_BOTTOM_FIELD = 0x00000004
 VA_PICTURE_H264_SHORT_TERM_REFERENCE = 0x00000008
+VA_PICTURE_H264_LONG_TERM_REFERENCE = 0x00000010
 
 VA_PROGRESSIVE = 0x1
 VA_FRAME_PICTURE = 0x0
@@ -413,6 +439,127 @@ class VAEncSliceParameterBufferH264(ctypes.Structure):
         ('disable_deblocking_filter_idc', ctypes.c_uint8),
         ('slice_alpha_c0_offset_div2', ctypes.c_int8),
         ('slice_beta_offset_div2', ctypes.c_int8),
+        ('va_reserved', ctypes.c_uint32 * PADDING_LOW),
+    ]
+
+
+class _DecSeqFieldsBits(ctypes.Structure):
+    _fields_ = [
+        ('chroma_format_idc', ctypes.c_uint32, 2),
+        ('residual_colour_transform_flag', ctypes.c_uint32, 1),
+        ('gaps_in_frame_num_value_allowed_flag', ctypes.c_uint32, 1),
+        ('frame_mbs_only_flag', ctypes.c_uint32, 1),
+        ('mb_adaptive_frame_field_flag', ctypes.c_uint32, 1),
+        ('direct_8x8_inference_flag', ctypes.c_uint32, 1),
+        ('MinLumaBiPredSize8x8', ctypes.c_uint32, 1),
+        ('log2_max_frame_num_minus4', ctypes.c_uint32, 4),
+        ('pic_order_cnt_type', ctypes.c_uint32, 2),
+        ('log2_max_pic_order_cnt_lsb_minus4', ctypes.c_uint32, 4),
+        ('delta_pic_order_always_zero_flag', ctypes.c_uint32, 1),
+    ]
+
+
+class _DecSeqFields(ctypes.Union):
+    _fields_ = [('bits', _DecSeqFieldsBits), ('value', ctypes.c_uint32)]
+
+
+class _DecPicFieldsBits(ctypes.Structure):
+    _fields_ = [
+        ('entropy_coding_mode_flag', ctypes.c_uint32, 1),
+        ('weighted_pred_flag', ctypes.c_uint32, 1),
+        ('weighted_bipred_idc', ctypes.c_uint32, 2),
+        ('transform_8x8_mode_flag', ctypes.c_uint32, 1),
+        ('field_pic_flag', ctypes.c_uint32, 1),
+        ('constrained_intra_pred_flag', ctypes.c_uint32, 1),
+        ('pic_order_present_flag', ctypes.c_uint32, 1),
+        ('deblocking_filter_control_present_flag', ctypes.c_uint32, 1),
+        ('redundant_pic_cnt_present_flag', ctypes.c_uint32, 1),
+        ('reference_pic_flag', ctypes.c_uint32, 1),
+    ]
+
+
+class _DecPicFields(ctypes.Union):
+    _fields_ = [('bits', _DecPicFieldsBits), ('value', ctypes.c_uint32)]
+
+
+class VAPictureParameterBufferH264(ctypes.Structure):
+    """What a decoder is told about the picture it is about to decode.
+
+    The sequence and picture parameter sets in force, the decoded picture
+    buffer's reference frames, and the picture being decoded as ``CurrPic``.
+    """
+
+    _fields_ = [
+        ('CurrPic', VAPictureH264),
+        ('ReferenceFrames', VAPictureH264 * 16),
+        ('picture_width_in_mbs_minus1', ctypes.c_uint16),
+        ('picture_height_in_mbs_minus1', ctypes.c_uint16),
+        ('bit_depth_luma_minus8', ctypes.c_uint8),
+        ('bit_depth_chroma_minus8', ctypes.c_uint8),
+        ('num_ref_frames', ctypes.c_uint8),
+        ('seq_fields', _DecSeqFields),
+        ('num_slice_groups_minus1', ctypes.c_uint8),
+        ('slice_group_map_type', ctypes.c_uint8),
+        ('slice_group_change_rate_minus1', ctypes.c_uint16),
+        ('pic_init_qp_minus26', ctypes.c_int8),
+        ('pic_init_qs_minus26', ctypes.c_int8),
+        ('chroma_qp_index_offset', ctypes.c_int8),
+        ('second_chroma_qp_index_offset', ctypes.c_int8),
+        ('pic_fields', _DecPicFields),
+        ('frame_num', ctypes.c_uint16),
+        ('va_reserved', ctypes.c_uint32 * PADDING_MEDIUM),
+    ]
+
+
+class VAIQMatrixBufferH264(ctypes.Structure):
+    """The scaling lists in force: six 4x4 lists and the two 8x8 luma lists."""
+
+    _fields_ = [
+        ('ScalingList4x4', (ctypes.c_uint8 * 16) * 6),
+        ('ScalingList8x8', (ctypes.c_uint8 * 64) * 2),
+        ('va_reserved', ctypes.c_uint32 * PADDING_LOW),
+    ]
+
+
+class VASliceParameterBufferH264(ctypes.Structure):
+    """One slice's header as a decoder is given it, with its reference lists.
+
+    slice_data_bit_offset -- where slice_data() begins, in bits from the start
+        of the NAL unit, counted with emulation prevention removed; the slice
+        data buffer itself holds the unit as the stream carries it
+    """
+
+    _fields_ = [
+        ('slice_data_size', ctypes.c_uint32),
+        ('slice_data_offset', ctypes.c_uint32),
+        ('slice_data_flag', ctypes.c_uint32),
+        ('slice_data_bit_offset', ctypes.c_uint16),
+        ('first_mb_in_slice', ctypes.c_uint16),
+        ('slice_type', ctypes.c_uint8),
+        ('direct_spatial_mv_pred_flag', ctypes.c_uint8),
+        ('num_ref_idx_l0_active_minus1', ctypes.c_uint8),
+        ('num_ref_idx_l1_active_minus1', ctypes.c_uint8),
+        ('cabac_init_idc', ctypes.c_uint8),
+        ('slice_qp_delta', ctypes.c_int8),
+        ('disable_deblocking_filter_idc', ctypes.c_uint8),
+        ('slice_alpha_c0_offset_div2', ctypes.c_int8),
+        ('slice_beta_offset_div2', ctypes.c_int8),
+        ('RefPicList0', VAPictureH264 * 32),
+        ('RefPicList1', VAPictureH264 * 32),
+        ('luma_log2_weight_denom', ctypes.c_uint8),
+        ('chroma_log2_weight_denom', ctypes.c_uint8),
+        ('luma_weight_l0_flag', ctypes.c_uint8),
+        ('luma_weight_l0', ctypes.c_int16 * 32),
+        ('luma_offset_l0', ctypes.c_int16 * 32),
+        ('chroma_weight_l0_flag', ctypes.c_uint8),
+        ('chroma_weight_l0', (ctypes.c_int16 * 2) * 32),
+        ('chroma_offset_l0', (ctypes.c_int16 * 2) * 32),
+        ('luma_weight_l1_flag', ctypes.c_uint8),
+        ('luma_weight_l1', ctypes.c_int16 * 32),
+        ('luma_offset_l1', ctypes.c_int16 * 32),
+        ('chroma_weight_l1_flag', ctypes.c_uint8),
+        ('chroma_weight_l1', (ctypes.c_int16 * 2) * 32),
+        ('chroma_offset_l1', (ctypes.c_int16 * 2) * 32),
         ('va_reserved', ctypes.c_uint32 * PADDING_LOW),
     ]
 
@@ -707,6 +854,7 @@ class VA:
     vaCreateConfig: Callable[..., int]
     vaDestroyConfig: Callable[..., int]
     vaCreateSurfaces: Callable[..., int]
+    vaQuerySurfaceAttributes: Callable[..., int]
     vaDestroySurfaces: Callable[..., int]
     vaCreateContext: Callable[..., int]
     vaDestroyContext: Callable[..., int]
@@ -770,6 +918,9 @@ class VA:
              [VADisplay, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
               ctypes.POINTER(VASurfaceID), ctypes.c_uint32,
               ctypes.POINTER(VASurfaceAttrib), ctypes.c_uint32], VAStatus),
+            (self.library, 'vaQuerySurfaceAttributes',
+             [VADisplay, VAConfigID, ctypes.POINTER(VASurfaceAttrib),
+              ctypes.POINTER(ctypes.c_uint)], VAStatus),
             (self.library, 'vaDestroySurfaces',
              [VADisplay, ctypes.POINTER(VASurfaceID), ctypes.c_int], VAStatus),
             (self.library, 'vaCreateContext',

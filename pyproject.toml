@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pyopengl-video"
 dynamic = ["version"]
-description = "Hardware video encoding of OpenGL colour buffers, with the frame never leaving the GPU"
+description = "Hardware video encoding of OpenGL colour buffers and decoding into OpenGL textures, with the frame never leaving the GPU"
 readme = "README.md"
 license = "BSD-3-Clause"
 license-files = ["license.txt"]
@@ -13,7 +13,7 @@ requires-python = ">=3.10"
 authors = [
     { name = "Mike C. Fletcher", email = "mcfletch@vrplumber.com" }
 ]
-keywords = ["OpenGL", "video", "H.264", "NVENC", "VA-API", "encoding", "capture", "recording"]
+keywords = ["OpenGL", "video", "H.264", "NVENC", "VA-API", "encoding", "decoding", "capture", "recording", "playback"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -66,6 +66,14 @@ select = ["OGC121", "OGC131", "OGC141", "OGC151", "OGC161", "OGC201", "OGC221"]
 # The library's own GL calls, which OGC151 holds to restoring the state they
 # change on every exit: the recorder binds and builds inside a renderer's frame.
 pass = ["src/pyopengl_video/**"]
+
+[tool.openglcontext-checks.sanctioned]
+# The context manager a pass draws inside; it restores what OGC151 watches.
+OGC151 = ["pyopengl_video.glstate.preserved_state"]
+
+[tool.openglcontext-checks.per-file-ignores]
+# The sanctioned state manager is made of the calls OGC151 reports.
+"src/pyopengl_video/glstate.py" = ["OGC151"]
 
 [tool.ruff]
 line-length = 100

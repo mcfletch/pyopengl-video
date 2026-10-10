@@ -1,0 +1,151 @@
+{
+  "written_by": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+  "streams": {
+    "high_bpyramid": {
+      "size": [
+        120,
+        68
+      ],
+      "x264": "bframes=3:b-pyramid=normal:ref=4:weightp=2:weightb=1:slices=2:keyint=15:min-keyint=15:scenecut=0",
+      "md5": [
+        "252cf2e5c85be4c8ecfb795c72487f00",
+        "27460d8ebec6955ca4926299746b0f7b",
+        "41f491adffff5e4311f70f0971f45d9f",
+        "ff6a4a13108ccfabe90dbfbd7a7d3727",
+        "26738b801e8912f2c241c36680b318b2",
+        "7b8fa53e30eaa7c86925fcd28db91c1e",
+        "9bfd5580ea586c1a88bef76dddb06955",
+        "65a42ebeed21b74109c3034b7f60b9db",
+        "41328af98413c0b95a983c2966e45498",
+        "0749ed17ca6fa1930dee8f26360d5399",
+        "71190b2d8643389af792347ffaf3be04",
+        "6e81cae0b18923cec6c2988609adcf55",
+        "0ae596d814b858ec999f7b5376db5b81",
+        "d025f8058c2c1e93288cbc15b048f728",
+        "8663a6caf941633e1c98dfa5536bf953",
+        "dc538a4c6008be9f38029be0daa0bea8",
+        "bbbdc3b114e64e069a06e102aa7e65a0",
+        "a933b6f471697464febeccd05b13ebd7",
+        "be78427e852f684a38262f95b73d6ab3",
+        "badaec58e9de88730913c257315de0be",
+        "819c37513a9907c4003bf44d06eaa30b",
+        "aa17de554a92cc5b42a9567f57676438",
+        "14b18a52f9120fe1125383a8b6ec5f88",
+        "3ca59469a4216b04d4500cc4ed71e6fc",
+        "c92b6928033b2e9aa754ef4a7e4b236e",
+        "68a305aa67a122ec11d0d2c602d61226",
+        "19221530e46ca1825a71cf75b89e7ad6",
+        "a5df8d0a72d122d7ac0298de7b411f4e",
+        "cf292ded546d344631556b4f7af68dc5",
+        "78b9cb6839cc7bbb1ee31b607b806f1f",
+        "cb58b87c4a56c2fd76bb1c461740ce35",
+        "7226efecfa82c2c6a85f1a0f7e8b2c24",
+        "c50ba7540f00d4ec3da2ad9b86a31fe4",
+        "517d1a42d88b2c50fd518c7739e633f5",
+        "f7d449e90879b5d0a00d3ce2a1d627c5",
+        "1d9cb5ff77eacae6d7160d3b118c5532",
+        "c953cf7916556c8a5354a39c17ab77a6",
+        "0149f8f6a48391dd0617caa563e3c28c",
+        "1f91c97007ce363c81434cd6fcc7e752",
+        "9586d347992695005cf92e6a6c53e310"
+      ]
+    },
+    "high_cqm": {
+      "size": [
+        64,
+        48
+      ],
+      "x264": "bframes=2:ref=2:cqm=jvt:keyint=10:min-keyint=10:scenecut=0",
+      "md5": [
+        "e77645fa30ce32827dbebb7d3615f740",
+        "e77645fa30ce32827dbebb7d3615f740",
+        "e77645fa30ce32827dbebb7d3615f740",
+        "14aefdc5f2fd792ecb88edc1df222c3f",
+        "8cd13b016f1e7eaaa0e91cec00be7ad1",
+        "8cd13b016f1e7eaaa0e91cec00be7ad1",
+        "8cd13b016f1e7eaaa0e91cec00be7ad1",
+        "03e4f3e4d82eae6d57ad31e2b07b8b12",
+        "22bf8b31cf4ee3ebaae4a3fdb364d830",
+        "22bf8b31cf4ee3ebaae4a3fdb364d830",
+        "2052d0f347697b54c204348fa2fb01cd",
+        "a1fea4106c8fd1762ce73b508c883d92",
+        "a1fea4106c8fd1762ce73b508c883d92",
+        "a1fea4106c8fd1762ce73b508c883d92",
+        "7d47ea89f1874e8b35324623cc9d264c",
+        "329307bcd3794c2fb3c3009b04053d8f",
+        "48c4d9b55594fe21f57a45d4d6709dfc",
+        "efaa1c50672018b091b27ebe8a2b1b4c",
+        "7b934dccf6a93babf569209c2e587c2e",
+        "3a95b42e7fc80dd1d6a93c3e777bacbc"
+      ]
+    },
+    "baseline_cavlc": {
+      "size": [
+        72,
+        40
+      ],
+      "x264": "ref=3:keyint=8:min-keyint=8:scenecut=0",
+      "md5": [
+        "aa0339e01aa8f4485931c4007c11181a",
+        "5af1efe215a8f164835f5d88c03d6a89",
+        "5af1efe215a8f164835f5d88c03d6a89",
+        "44289a06479eef7eec0bd07bc93570fa",
+        "f54bb51492adfe732aa13b3ae5773f47",
+        "f54bb51492adfe732aa13b3ae5773f47",
+        "f54bb51492adfe732aa13b3ae5773f47",
+        "e2daef53ab53c55ae1b055b4afea2216",
+        "048137dae2a2e9e191ad8deead84caee",
+        "fcc52bc52a984d439706df95645851fb",
+        "fcc52bc52a984d439706df95645851fb",
+        "522eefa598029aab07084b691925d0f1",
+        "522eefa598029aab07084b691925d0f1",
+        "522eefa598029aab07084b691925d0f1",
+        "3a35a221c734f377cf0a7db9677dcc0b",
+        "6d8d0835651eafdf1f5d816f9c549a02",
+        "09177894ecdf68d99b5ca3f5ee2fc34f",
+        "09177894ecdf68d99b5ca3f5ee2fc34f",
+        "09177894ecdf68d99b5ca3f5ee2fc34f",
+        "b991d4e6235e64a44a5099b2c256b035"
+      ]
+    },
+    "open_gop": {
+      "size": [
+        96,
+        54
+      ],
+      "x264": "bframes=2:ref=3:open-gop=1:keyint=10:min-keyint=10:scenecut=0",
+      "md5": [
+        "ea305602cd0a665177783d2ecdce084a",
+        "b0174d2dd2de9a347e9875b0bc4dae7e",
+        "f79d258bdad5ca954014fa06c04571f0",
+        "bc558e2b1683555378d0d9ed1a1a2de2",
+        "e90ce7309c348f656fe916d4725bf198",
+        "1d173c3bb0916b217b81c447bb64ffef",
+        "7af2a41965a55bea36ae1e1d4ec9098f",
+        "6d04789a329d6b02bbc52e428dc67bcb",
+        "0a9ae1d4cc41e43aa3c4a338597073a3",
+        "da08806089f6c64ac1c4317f2e43a006",
+        "9ea1b453418ee646f3a31ef72e1db63a",
+        "0c54a1247fb6dbfcbacf6766ddc92537",
+        "ef74cf737ded3ca1700927ba8b44b6a6",
+        "5c7e8e4ba88f1dd1b6b6536d55b5ba22",
+        "32cc66f25b658d49221ef24f21e1f6bf",
+        "01d92d0cc052fcf49be1d50b6276f16d",
+        "e55aef3e17f6f4b9c2c589923d69d4d5",
+        "0d7a5300798e752495a92733d3bc2585",
+        "890bea129b168f8c68f558137d66d694",
+        "e2582f71c5d22dbf5aedea2bdef7c11b",
+        "1e7ad0179e7f0ffcd4e25684b2316d52",
+        "cca13de38806088a53015dd4ac060480",
+        "b6f8fcede77f2049eaecdbd893c7a873",
+        "02d0931005115c2d4e8a7e006e3188fb",
+        "ef566f6793ac00e3563a6210c696db48",
+        "1297606f7ecb299959c76425f8bdf389",
+        "35236859029d4fb318331a5966c43eb4",
+        "c4f65684c13f2ccffa8d8c48b5a8ae33",
+        "9e0b193cd60927bd01860f769d551ac1",
+        "c48a22d788a025e4a6d91f9ea84c5d96"
+      ]
+    }
+  }
+}

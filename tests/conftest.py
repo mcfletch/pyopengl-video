@@ -12,7 +12,12 @@ import numpy as np
 import pytest
 from OpenGL.GL import (
     GL_CLAMP_TO_EDGE,
+    GL_COLOR_ATTACHMENT0,
+    GL_COLOR_BUFFER_BIT,
+    GL_DRAW_FRAMEBUFFER,
     GL_LINEAR,
+    GL_NEAREST,
+    GL_READ_FRAMEBUFFER,
     GL_RGBA,
     GL_RGBA8,
     GL_TEXTURE_2D,
@@ -21,8 +26,13 @@ from OpenGL.GL import (
     GL_TEXTURE_WRAP_S,
     GL_TEXTURE_WRAP_T,
     GL_UNSIGNED_BYTE,
+    glBindFramebuffer,
     glBindTexture,
+    glBlitFramebuffer,
+    glDeleteFramebuffers,
     glDeleteTextures,
+    glFramebufferTexture2D,
+    glGenFramebuffers,
     glGenTextures,
     glTexImage2D,
     glTexParameteri,
@@ -93,6 +103,21 @@ def vaapi_available(gl_context):  # noqa: ARG001 - requested so a GL context is 
 
 
 @pytest.fixture
+def vaapi_decoder_available(gl_context):  # noqa: ARG001 - requested so a GL context is current first
+    """Skip unless libva here can decode H.264 into this OpenGL context."""
+    if not sys.platform.startswith('linux'):
+        pytest.skip('libva is the Linux decoder interface')
+    if not dmabuf.import_available():
+        pytest.skip('this OpenGL context cannot import a DMA-BUF '
+                    '(EGL_EXT_image_dma_buf_import)')
+    vaapi.forget_probe()
+    if not vaapi.decoder_probe():
+        pytest.skip('no VA-API H.264 decoder here: libva must be installed with '
+                    'a driver such as mesa-va-drivers or intel-media-va-driver')
+    return True
+
+
+@pytest.fixture
 def nvenc_available(gl_context):  # noqa: ARG001 - requested so a GL context is current first
     """Skip unless this machine has an NVIDIA encoder to talk to."""
     if not nvenc.probe():
@@ -138,6 +163,22 @@ def decode_errors(path):
         ['ffmpeg', '-v', 'error', '-i', str(path), '-f', 'null', '-'],
         capture_output=True, text=True)
     return [line for line in found.stderr.splitlines() if line.strip()]
+
+
+def blit(handle, texture, size):
+    """Copy a `size` texture into an encoder input, inside its drawing scope."""
+    width, height = size
+    source = int(glGenFramebuffers(1))
+    with handle.for_drawing():
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, source)
+        glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, int(texture), 0)
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, handle.framebuffer)
+        glBlitFramebuffer(0, 0, width, height, 0, 0, width, height,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST)
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
+    glDeleteFramebuffers(1, [source])
 
 
 def gradient_frame(width, height, phase=0):

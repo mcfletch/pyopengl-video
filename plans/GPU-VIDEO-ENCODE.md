@@ -515,7 +515,7 @@ which is a separate program and not a dependency of ours.
 | 2 | PBO readback tier, so every driver with an encoder can record, and the reference the zero-copy paths are compared against | after W4 |
 | 3 | `linux/dmabuf.py` EGL export, VA-API backend with its own H.264 control layer | **landed**, AMD/Linux; Intel/Linux is the same code and untested |
 | 4 | AMF for AMD, HEVC and AV1 where the part has them, audio track | needs hardware |
-| 5 | Decode into an OpenGL texture -- the reverse of everything above | low priority; see *Decoding* |
+| 5 | Decode into an OpenGL texture -- the reverse of everything above | planned in [GPU-VIDEO-DECODE.md](GPU-VIDEO-DECODE.md) |
 
 Phases W1-W3 make the Windows machine record without an NVIDIA part in the path
 at all, which is what makes this a library for everyone rather than for NVIDIA
@@ -523,10 +523,10 @@ owners; phase 3 does the same for Linux.
 
 ## Decoding: a compressed stream into an OpenGL texture
 
-**Low priority.** The library is named for what it does now, which is encode,
-and nothing waiting on it needs the reverse. It is written down because the
-shape is already here and the cost of adding it later grows if the interface
-forgets about it.
+The plan is [GPU-VIDEO-DECODE.md](GPU-VIDEO-DECODE.md). OpenGLContext's
+`MovieTexture` needs it: its PyAV decoder links FFmpeg, which a Linux
+distribution builds with GPL components. The notes below are the first sketch,
+which that plan supersedes.
 
 The capability is a video file or stream in, and an OpenGL texture out, with the
 frame never leaving the GPU -- the same claim the encoder makes, in the other

@@ -1,4 +1,4 @@
-"""VA-API backend: Intel and AMD video encoders on Linux.
+"""VA-API backends: Intel and AMD video encoders and decoders on Linux.
 
 One backend serves both vendors. ``libva`` is the encoder interface on Linux --
 Intel parts through the ``iHD`` media driver, AMD parts through Mesa's
@@ -14,18 +14,22 @@ crosses the bus but the compressed result.
 libva is a slice-level interface, so the codec decisions are this package's:
 :mod:`pyopengl_video.vaapi.h264` holds them and
 :mod:`pyopengl_video.vaapi.encoder` the plumbing.
+
+Decoding runs the other way (:mod:`pyopengl_video.vaapi.decoder`): the driver
+decodes into surfaces exported as DMA-BUFs, which OpenGL imports as textures.
+:mod:`~pyopengl_video.vaapi.h264_parse` and :mod:`~pyopengl_video.vaapi.h264_dpb`
+are the syntax and picture management libva leaves to the caller.
 """
 from __future__ import annotations
 
-import ctypes
 import logging
-import os
 import sys
 from typing import Any
 
-from pyopengl_video.encoder import Backend
+from pyopengl_video.backend import Backend
 from pyopengl_video.linux import dmabuf
 from pyopengl_video.vaapi import api
+from pyopengl_video.vaapi.device import Device
 
 log = logging.getLogger(__name__)
 
@@ -115,39 +119,23 @@ def _any_device_encodes() -> bool:
 
 def _device_encodes(va: Any, node: str) -> bool:
     """Does one render node offer H.264 slice encoding? Never raises."""
-    silence = api.MESSAGE_CALLBACK(lambda _context, _message: None)
-    fd = -1
-    display = None
+    return _device_offers(va, node, api.VAEntrypointEncSlice)
+
+
+def _device_offers(va: Any, node: str, entrypoint: int) -> bool:
+    """Does one render node offer `entrypoint` for H.264 High? Never raises."""
     try:
-        fd = os.open(node, os.O_RDWR)
-        display = va.vaGetDisplayDRM(fd)
-        if not display:
-            return False
-        va.vaSetInfoCallback(display, silence, None)
-        va.vaSetErrorCallback(display, silence, None)
-        major, minor = ctypes.c_int(), ctypes.c_int()
-        if va.vaInitialize(display, ctypes.byref(major),
-                           ctypes.byref(minor)) != api.VA_STATUS_SUCCESS:
-            display = None
-            return False
-        count = va.vaMaxNumEntrypoints(display)
-        if count <= 0:
-            return False
-        entrypoints = (api.VAEntrypoint * count)()
-        found = ctypes.c_int(0)
-        if va.vaQueryConfigEntrypoints(display, api.VAProfileH264High,
-                                       entrypoints,
-                                       ctypes.byref(found)) != api.VA_STATUS_SUCCESS:
-            return False
-        return api.VAEntrypointEncSlice in list(entrypoints)[:found.value]
+        device = Device(node, va)
     except Exception as error:  # noqa: BLE001 - a probe answers, it does not raise
         log.debug('%s does not answer as a VA-API device: %s', node, error)
         return False
+    try:
+        return entrypoint in device.entrypoints(api.VAProfileH264High)
+    except Exception as error:  # noqa: BLE001 - a probe answers, it does not raise
+        log.debug('%s would not list its entrypoints: %s', node, error)
+        return False
     finally:
-        if display is not None:
-            va.vaTerminate(display)
-        if fd >= 0:
-            os.close(fd)
+        device.close()
 
 
 def explain() -> str:
@@ -207,4 +195,79 @@ BACKEND = Backend(
     probe=probe,
     factory=_build,
     explain=explain,
+)
+
+
+# ------------------------------------------------------------------ decoding
+
+
+def decoder_probe() -> bool:
+    """Can this machine decode H.264 into OpenGL textures with libva?
+
+    libva loads, a render node offers H.264 decoding (``VAEntrypointVLD``),
+    and, when an OpenGL context is current, that context can import a
+    DMA-BUF. Quiet, and cheap after the first call.
+    """
+    if not SUPPORTED_PLATFORM:
+        return False
+    try:
+        if _context_is_current() and not dmabuf.import_available():
+            log.debug('the VA-API decoder cannot use this context: it cannot '
+                      'import a DMA-BUF')
+            return False
+        if 'decoder' not in _probed:
+            _probed['decoder'] = _any_device_decodes()
+        return _probed['decoder']
+    except Exception as error:  # noqa: BLE001 - a probe answers, it does not raise
+        log.debug('the VA-API decoder could not answer for this machine: %s', error)
+        return False
+
+
+def _any_device_decodes() -> bool:
+    """Does any DRM render node here offer H.264 High decoding?"""
+    try:
+        va = api.VA.instance()
+    except OSError as error:
+        log.debug('%s is not loadable: %s', api.LIBRARY_NAME, error)
+        return False
+    return any(_device_offers(va, node, api.VAEntrypointVLD)
+               for node in api.render_nodes())
+
+
+def decoder_explain() -> str:
+    """Why the VA-API decoder is unavailable here, in a sentence a caller can act on."""
+    if not SUPPORTED_PLATFORM:
+        return ''
+    try:
+        if _context_is_current() and not dmabuf.import_available():
+            return ('this OpenGL context cannot import a DMA-BUF '
+                    '(EGL_EXT_image_dma_buf_import); create the window with '
+                    'glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)')
+        if not _any_device_decodes():
+            return ('no DRM render node here reports an H.264 decoder. libva needs '
+                    'a driver for the GPU beside it -- mesa-va-drivers for AMD, '
+                    'intel-media-va-driver for Intel -- and `vainfo` will say '
+                    'whether one is loaded')
+    except Exception as error:  # noqa: BLE001 - explaining must not itself fail
+        log.debug('the VA-API decoder could not say why it declined: %s', error)
+    return ''
+
+
+def _build_decoder(**options: Any) -> Any:
+    """Construct a :class:`~pyopengl_video.vaapi.decoder.VAAPIDecoder`."""
+    from pyopengl_video.vaapi.decoder import (  # noqa: PLC0415 - loaded when a decoder is built
+        VAAPIDecoder,
+    )
+    return VAAPIDecoder(**options)
+
+
+DECODER_BACKEND = Backend(
+    name='vaapi',
+    vendor='Intel/AMD',
+    codecs=frozenset({'h264'}),
+    max_size=MAX_SIZE,
+    zero_copy=True,
+    probe=decoder_probe,
+    factory=_build_decoder,
+    explain=decoder_explain,
 )

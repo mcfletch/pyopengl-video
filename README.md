@@ -1,7 +1,7 @@
 # pyopengl-video
 
-Hardware video encoding of OpenGL colour buffers, with the frame never leaving
-the GPU.
+Hardware video encoding of OpenGL colour buffers, and hardware decoding into
+OpenGL textures, with the frame never leaving the GPU.
 
 [![A recording made by this encoder](https://img.youtube.com/vi/hprqotb3TXg/maxresdefault.jpg)](https://youtu.be/hprqotb3TXg)
 
@@ -27,6 +27,23 @@ with open_encoder(1920, 1080, fps=60, bitrate=12_000_000) as encoder:
 
 `examples/record_triangle.py` is that loop around a real renderer, start to
 finish.
+
+Playing a movie back runs the other way: the GPU's video decoder writes each
+picture, OpenGL reads it as textures, and a conversion pass makes an RGBA
+texture of it.
+
+```python
+from pyopengl_video.playback import Movie
+
+movie = Movie.open('intro.mp4')          # any thread: reads the index
+player = movie.player()                  # GL thread
+texture = player.frame_at(seconds)       # right way up, sRGB
+```
+
+`examples/play_movie.py` plays a file in a window, and
+[docs/playback.md](docs/playback.md) covers the player, the decoders and what
+they decode. Decoding runs on AMD (VA-API) today; Intel on Linux is the same
+code, and NVIDIA and Windows are [planned](plans/GPU-VIDEO-DECODE.md).
 
 ## What it needs
 
@@ -111,12 +128,15 @@ assume one frame in means one packet out.
 
 - [docs/usage.md](docs/usage.md) — the recording loop, every encoder setting,
   timing, colour, reordering, muxing, errors and limits.
+- [docs/playback.md](docs/playback.md): playing a movie into a texture, the
+  decoders, seeking, colour and what is decoded.
 - [docs/development.md](docs/development.md) — how the binding works, the ABI
   harness, and what a new backend has to implement.
 - [plans/](plans/) — the design and its open questions:
   [the whole picture](plans/GPU-VIDEO-ENCODE.md),
   [Intel and AMD](plans/VAAPI-BACKEND.md),
-  [Windows](plans/WINDOWS-SUPPORT.md).
+  [Windows](plans/WINDOWS-SUPPORT.md),
+  [decoding into a texture](plans/GPU-VIDEO-DECODE.md).
 
 ## Development
 
@@ -125,9 +145,12 @@ pip install -e '.[dev]'
 pytest
 ```
 
-Tests that need an encoder or a GL context skip themselves without one, so the
-suite runs anywhere. The hardware tests use a hidden GLFW window and synthetic
-frames.
+Tests that need an encoder, a decoder or a GL context skip themselves without
+one, so the suite runs anywhere. The hardware tests use a hidden GLFW window and
+synthetic frames. The decoder's tests also use the x264 streams under
+`tests/data/decode/`, and every picture they decode has to match the checksum
+`ffmpeg`'s software decoder recorded for it; `tools/make_decode_fixtures.py`
+writes them.
 
 The vendor bindings are hand-written ctypes over large C ABIs, and a layout
 mistake there corrupts a structure rather than raising anything. So each is
@@ -151,7 +174,6 @@ field at the wrong offset.
 
 ## Licence
 
-BSD-3-Clause; see `license.txt`. It contains no third-party code — see
-`NOTICES.md` for where the NVENC ABI facts come from and under what terms.
-
-The project is maintained on [GitHub](https://github.com/mcfletch/pyopengl-video)
+BSD-3-Clause; see `license.txt`. It contains no third-party code; see
+`NOTICES.md` for where the driver ABI facts and the specifications come from,
+and under what terms.

@@ -23,10 +23,16 @@ from __future__ import annotations
 import dataclasses
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable, Iterator
 from typing import Any
 
+from pyopengl_video.backend import Backend, VideoError, available
+from pyopengl_video.backend import explanations as backend_explanations
 from pyopengl_video.inputs import InputHandle, create_framebuffer, create_rgba_texture
+
+__all__ = ['BACKENDS', 'Backend', 'Encoder', 'EncoderError', 'EncoderUnavailable',
+           'Packet', 'available_backends', 'default_bitrate', 'explanations',
+           'frame_rate_ratio']
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +62,7 @@ def default_bitrate(size: tuple[int, int], frame_rate: tuple[int, int]) -> int:
     return int(width * height * (numerator / denominator) * DEFAULT_BITS_PER_PIXEL)
 
 
-class EncoderError(RuntimeError):
+class EncoderError(VideoError):
     """An encoder rejected a call, or failed part-way through a stream."""
 
 
@@ -81,45 +87,6 @@ class Packet:
 
     def __len__(self) -> int:
         return len(self.data)
-
-
-@dataclasses.dataclass(frozen=True)
-class Backend:
-    """What one encoder implementation can do, and how to construct it.
-
-    name -- short identifier a caller can pass to :func:`open_encoder`
-    vendor -- whose hardware it drives
-    codecs -- the codec names it accepts
-    max_size -- the largest frame it will encode, as (width, height)
-    zero_copy -- True when frames reach the encoder without passing through
-        host memory
-    probe -- returns True when this machine can actually run the backend; it is
-        called during discovery, so it must be cheap and must not raise
-    factory -- called as ``factory(width, height, codec=..., **options)``
-    explain -- optional: why this backend is unavailable here, in a sentence
-        the caller could act on, or '' when there is nothing useful to say.
-        :func:`open_encoder` puts it in the error it raises when nothing fits,
-        because "none available" is not an answer anyone can do anything with
-        and the reason is very often a fixable one.
-    """
-
-    name: str
-    vendor: str
-    codecs: frozenset[str]
-    max_size: tuple[int, int]
-    zero_copy: bool
-    probe: Callable[[], bool]
-    factory: Callable[..., Encoder]
-    explain: Callable[[], str] | None = None
-
-    def supports(self, width: int, height: int, codec: str) -> bool:
-        """Can this backend encode a `width` x `height` frame as `codec`?"""
-        return (codec in self.codecs
-                and width <= self.max_size[0] and height <= self.max_size[1])
-
-    def replace(self, **changes: Any) -> Backend:
-        """A copy of this record with `changes` applied."""
-        return dataclasses.replace(self, **changes)
 
 
 class Encoder(ABC):
@@ -234,36 +201,15 @@ class Encoder(ABC):
 
 #: Every backend that exists, in the order :func:`open_encoder` prefers them.
 #: Populated at import of :mod:`pyopengl_video`; tests replace it wholesale.
-BACKENDS: list[Backend] = []
+BACKENDS: list[Backend[Encoder]] = []
 
 
-def available_backends(backends: Iterable[Backend] | None = None) -> Iterator[Backend]:
-    """Yield the backends whose hardware and driver are present."""
-    for backend in (BACKENDS if backends is None else backends):
-        if backend.probe():
-            yield backend
+def available_backends(backends: Iterable[Backend[Encoder]] | None = None,
+                       ) -> Iterator[Backend[Encoder]]:
+    """Yield the encoder backends whose hardware and driver are present."""
+    return available(BACKENDS if backends is None else backends)
 
 
-def explanations(backends: Iterable[Backend] | None = None) -> list[str]:
-    """Why each unavailable backend declined, for the ones that will say.
-
-    A backend that is available, that offers no explanation, or that has
-    nothing useful to say contributes nothing. An explanation that raises is
-    dropped: saying why is a courtesy and must never stand in the way of the
-    answer it was meant to decorate.
-    """
-    found = []
-    for backend in (BACKENDS if backends is None else backends):
-        if backend.explain is None:
-            continue
-        try:
-            if backend.probe():
-                continue
-            reason = backend.explain()
-        except Exception:
-            log.debug('%s could not say why it is unavailable', backend.name,
-                      exc_info=True)
-            continue
-        if reason:
-            found.append(f'{backend.name}: {reason}')
-    return found
+def explanations(backends: Iterable[Backend[Encoder]] | None = None) -> list[str]:
+    """Why each unavailable encoder backend declined, for the ones that will say."""
+    return backend_explanations(BACKENDS if backends is None else backends)

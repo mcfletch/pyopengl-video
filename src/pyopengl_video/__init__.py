@@ -1,4 +1,4 @@
-"""Hardware video encoding of OpenGL colour buffers.
+"""Hardware video encoding of OpenGL colour buffers, and decoding into textures.
 
 The renderer has already put the frame in GPU memory, and every GPU we support
 has a video encoder on the same die. This package hands one to the other::
@@ -14,12 +14,30 @@ has a video encoder on the same die. This package hands one to the other::
                 movie.write(encoder.encode(handle, timestamp=frame * 1500))
             movie.write(encoder.flush())
 
-Which backend that gets you depends on the machine; :func:`encoders` says what
-is available and what each one can do.
+Playing a movie back is the reverse: a container reader, a decoder and a
+conversion pass into an RGBA texture, which :class:`~pyopengl_video.playback.Movie`
+puts together::
+
+    from pyopengl_video.playback import Movie
+
+    movie = Movie.open('intro.mp4')         # any thread: reads the index
+    player = movie.player()                 # GL thread: decoder and textures
+    texture = player.frame_at(seconds)
+
+Which backend that gets you depends on the machine; :func:`encoders` and
+:func:`decoders` say what is available and what each one can do.
 """
+from pyopengl_video import decoder as _decoder
 from pyopengl_video import encoder as _encoder
+from pyopengl_video.backend import Backend, VideoError, with_reasons
+from pyopengl_video.decoder import (
+    DecodedFrame,
+    Decoder,
+    DecoderError,
+    DecoderUnavailable,
+    Sample,
+)
 from pyopengl_video.encoder import (
-    Backend,
     Encoder,
     EncoderError,
     EncoderUnavailable,
@@ -28,17 +46,20 @@ from pyopengl_video.encoder import (
 )
 from pyopengl_video.nvenc import BACKEND as NVENC_BACKEND
 from pyopengl_video.vaapi import BACKEND as VAAPI_BACKEND
+from pyopengl_video.vaapi import DECODER_BACKEND as VAAPI_DECODER_BACKEND
 from pyopengl_video.vpl import BACKEND as VPL_BACKEND
 
 __version__ = '1.0.0a1'
 
 __all__ = [
-    'Backend', 'Encoder', 'EncoderError', 'EncoderUnavailable', 'Packet',
-    'encoders', 'open_encoder', '__version__',
+    'Backend', 'DecodedFrame', 'Decoder', 'DecoderError', 'DecoderUnavailable',
+    'Encoder', 'EncoderError', 'EncoderUnavailable', 'Packet', 'Sample',
+    'VideoError', 'decoders', 'encoders', 'open_decoder', 'open_encoder',
+    '__version__',
 ]
 
 
-def encoders() -> list[Backend]:
+def encoders() -> list[Backend[Encoder]]:
     """The encoder backends this machine can actually run.
 
     Each record says which codecs it accepts, how large a frame it will take and
@@ -61,30 +82,60 @@ def open_encoder(width: int, height: int, *, codec: str = 'h264',
     if backend is not None:
         candidates = [found for found in candidates if found.name == backend]
         if not candidates:
-            raise EncoderUnavailable(_why(
+            raise EncoderUnavailable(with_reasons(
                 f'no encoder backend named {backend!r} is available here; '
                 f'available: '
                 f'{[found.name for found in available_backends()] or "none"}',
-                only=backend))
+                _encoder.BACKENDS, only=backend))
     capable = [found for found in candidates if found.supports(width, height, codec)]
     if not capable:
-        raise EncoderUnavailable(_why(
+        raise EncoderUnavailable(with_reasons(
             f'no encoder here can produce {width}x{height} {codec}; available: '
-            f'{[(found.name, sorted(found.codecs), found.max_size) for found in candidates] or "none"}'))
+            f'{[(found.name, sorted(found.codecs), found.max_size) for found in candidates] or "none"}',
+            _encoder.BACKENDS))
     return capable[0].factory(width, height, codec=codec, **options)
 
 
-def _why(message: str, only: str | None = None) -> str:
-    """Add what the unavailable backends had to say for themselves.
+def decoders() -> list[Backend[Decoder]]:
+    """The decoder backends this machine can actually run."""
+    return list(_decoder.available_backends())
 
-    Very often one of them declined for a reason the caller can act on -- an
-    OpenGL context of the wrong kind, a driver package not installed -- and a
-    bare "none available" sends them looking at their hardware instead.
+
+def open_decoder(codec: str = 'h264', *, headers: bytes = b'',
+                 size: tuple[int, int] | None = None, backend: str | None = None,
+                 **options: object) -> Decoder:
+    """Open a decoder for a stream of `codec`.
+
+    headers -- the stream's parameter sets as Annex-B, when the container
+        stores them apart from the samples; a decoder can then report
+        :attr:`~Decoder.size` before the first sample
+    size -- the picture size, when known, so a backend that cannot reach it is
+        passed over; it is also given to the backend
+    backend -- pick one by name instead of taking the best available
+    options -- passed to the backend, which documents what it honours
+
+    Raises :class:`DecoderUnavailable` when nothing on this machine fits.
     """
-    reasons = _encoder.explanations()
-    if only is not None:
-        reasons = [line for line in reasons if line.startswith(f'{only}:')]
-    return '\n'.join([message, *(f'  {line}' for line in reasons)])
+    candidates = list(_decoder.available_backends())
+    if backend is not None:
+        candidates = [found for found in candidates if found.name == backend]
+        if not candidates:
+            raise DecoderUnavailable(with_reasons(
+                f'no decoder backend named {backend!r} is available here; '
+                f'available: '
+                f'{[found.name for found in _decoder.available_backends()] or "none"}',
+                _decoder.BACKENDS, only=backend))
+    width, height = size or (0, 0)
+    capable = [found for found in candidates if found.supports(width, height, codec)]
+    if not capable:
+        wanted = f'{width}x{height} {codec}' if size else codec
+        raise DecoderUnavailable(with_reasons(
+            f'no decoder here can read {wanted}; available: '
+            f'{[(found.name, sorted(found.codecs), found.max_size) for found in candidates] or "none"}',
+            _decoder.BACKENDS))
+    if size is not None:
+        options['size'] = size
+    return capable[0].factory(codec=codec, headers=headers, **options)
 
 
 def _register_builtin_backends() -> None:
@@ -95,6 +146,7 @@ def _register_builtin_backends() -> None:
     The order is the order :func:`open_encoder` prefers them in.
     """
     _encoder.BACKENDS.extend([NVENC_BACKEND, VPL_BACKEND, VAAPI_BACKEND])
+    _decoder.BACKENDS.extend([VAAPI_DECODER_BACKEND])
 
 
 _register_builtin_backends()

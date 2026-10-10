@@ -1,6 +1,7 @@
 # Using pyopengl-video
 
-Recording what a renderer draws, without the frame leaving the GPU.
+Recording what a renderer draws, without the frame leaving the GPU. Playing a
+movie back into a texture is [docs/playback.md](playback.md).
 
 - [Installing](#installing)
 - [The recording loop](#the-recording-loop)
