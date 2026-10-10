@@ -493,14 +493,97 @@ Not yet done from the sections above: the ITU-T H.264.1 conformance streams
 (the fetch tool and its terms check), the cross-vendor test (an NVENC stream on
 VA-API), four 1080p movies in one context, and P010 for 10-bit streams.
 
+## A software floor: OpenH264
+
+**Not pursued** (2026-10-09). The B-frame fault below makes it unsuitable as a
+floor for movies, and its licence keeps it out of a shipped package. The
+findings stay here as the reason.
+
+Investigated 2026-10-09 for machines with no hardware decoder: CI runners,
+llvmpipe, a GPU older than its codec. Cisco's binaries 2.6.0 and 2.4.1 were run
+from a C probe built against the BSD-2 headers in `codec/api/wels/`, on the
+fixtures under `tests/data/decode/` and a 1080p60 x264 stream.
+
+### Licence
+
+- The source and the headers are BSD-2-Clause. The binary carries the same BSD
+  terms, plus Cisco's MPEG LA patent coverage under conditions.
+- The coverage holds only for Cisco's own binary, "not integrated into or
+  combined with third party software prior to being downloaded to the end
+  user's device". So the binary cannot ship inside a wheel or a game; the
+  user's machine downloads it from `ciscobinary.openh264.org`.
+- The user must be able to enable and disable it, and the application must
+  show "OpenH264 Video Codec provided by Cisco Systems, Inc." and reproduce
+  the licence text where it presents licensing information.
+- A distribution's own build (Debian's `libopenh264-7` is built from source) is
+  BSD software with no patent coverage from Cisco. Loading one the user
+  installed is the user's choice, as with any system library.
+- Whether this suits a commercial game is the maintainer's decision, with
+  legal advice; the patent terms are written for personal, non-commercial use.
+
+### What it decodes
+
+| Stream | Exact pictures | Note |
+| --- | --- | --- |
+| `baseline_cavlc` | 20 of 20 | |
+| `high_cqm` (B-frames, scaling matrices) | 20 of 20 | |
+| `high_bpyramid` | 12 of 40 | every I and nearly every P exact |
+| `open_gop` | 19 of 30 | the same |
+| our VA-API encoder's 640x480 recording (P only) | 90 of 90 | |
+| x264 with B-frames, `partitions=none` | 30 of 30 | |
+| x264 with B-frames, `partitions=b8x8` | 12 of 30 | |
+| x264 defaults | 2 of 30 | |
+
+B macroblocks coded with 8x8 sub-partitions decode wrongly, in both versions.
+The wrong pictures measure 35 to 55 dB PSNR against `ffmpeg`, with local errors
+up to 105 levels, and P pictures that refer to them drift by one or two levels.
+A few B pictures are wrong without `b8x8` too, so it is not the only trigger.
+x264's defaults use `b8x8`, so most movies a developer is handed show the
+fault. Output order is display order, and `uiOutYuvTimeStamp` carries the
+input's index through the reordering.
+
+### Speed and threads
+
+- 1080p60 High with three B-frames, single-threaded: 16 ms a frame on this
+  machine's CPU, about 63 frames a second.
+- `DECODER_OPTION_NUM_OF_THREADS` is read by `Initialize`. Set after it, the
+  decoder takes its threaded path with no threads and dereferences a null
+  semaphore (a segfault in `SemWait`, from `ThreadDecodeFrameInternal`). A
+  binding sets it first.
+- Set first, 2, 4 and 8 threads reach 9.4, 5.5 and 4.5 ms a frame, but 3 of 10
+  runs hung and every completed run's pictures differed from the
+  single-threaded decode, I pictures included (mean 1 level, up to 30). The
+  threaded mode is marked experimental upstream; a binding leaves it off.
+
+### The backend it would have been
+
+- An `openh264` backend in `pyopengl_video/openh264/`: `api.py` with the
+  `ISVCDecoderVtbl` and `SBufferInfo` layouts, recorded by an
+  `tools/record_openh264_abi.py` as the other bindings are.
+- `DecodeFrameNoDelay` per access unit, `FlushFrame` while
+  `DECODER_OPTION_NUM_OF_FRAMES_REMAINING_IN_BUFFER` is above zero.
+- The I420 planes go to three `GL_R8` textures through a pixel buffer object,
+  about 3 MB a 1080p frame; the converter gains an `'i420'` layout.
+  `zero_copy` is False.
+- The library is loaded by name from a user cache or the system. A
+  `pyopengl_video.openh264.fetch()` call, made only when the application or
+  user asks, downloads Cisco's binary for the platform and checks it against
+  SHA-256 sums pinned in the package for each version. It is never fetched by
+  discovery.
+- Streams with B slices are refused by default with the reason above, since
+  their pictures come out visibly wrong. Our own recordings, which are P only,
+  decode exactly, so the floor serves the encoder round trip in CI and replay
+  viewers of recorded games.
+
+What a backend would have needed, had it been built: P-only streams and CI,
+behind the explicit download. The floor for movies, if one is built, is
+OxideAV, measured the same way.
+
 ## Open questions
 
-- A floor for machines with no hardware decoder: CI runners, llvmpipe, a GPU
-  older than its codec. Cisco's OpenH264 is BSD-licensed and can be loaded by
-  name at run time as the vendor libraries are. Which profiles its decoder
-  handles in full, and whether Cisco's binary licence suits a game, are both to
-  be checked before it is proposed. OxideAV's H.264 decoder (see *Audio*) is
-  the other candidate.
+- A floor for machines with no hardware decoder. OpenH264 was measured and
+  set aside (see *A software floor: OpenH264*); OxideAV's H.264 decoder (see
+  *Audio*) is the remaining candidate.
 - Whether WGL_NV_DX_interop2 registers an NV12 texture on the Intel laptop. Yes
   removes the VPP stage from D6.
 - Interlaced streams (field pictures, MBAFF, PAFF). The first VA-API control
