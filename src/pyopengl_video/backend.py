@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any, Generic, TypeVar
 
 log = logging.getLogger(__name__)
@@ -32,8 +32,12 @@ class Backend(Generic[T]):
     name -- short identifier a caller can pass to :func:`~pyopengl_video.open_encoder`
         or :func:`~pyopengl_video.open_decoder`
     vendor -- whose hardware it drives
-    codecs -- the codec names it handles
-    max_size -- the largest frame it will take, as (width, height)
+    codecs -- the codec names it handles. On a record from
+        :func:`~pyopengl_video.encoders` or :func:`~pyopengl_video.decoders`
+        these are the codecs this machine's hardware has.
+    max_size -- the largest frame it will take in any codec, as (width, height)
+    sizes -- the largest frame for each codec that has a limit of its own;
+        :meth:`largest` reads it
     zero_copy -- True when frames move between it and OpenGL without passing
         through host memory
     probe -- returns True when this machine can actually run the backend; it is
@@ -44,6 +48,10 @@ class Backend(Generic[T]):
         the caller could act on, or '' when there is nothing useful to say.
         The error raised when nothing fits includes it, since the reason is
         very often a fixable one.
+    capabilities -- optional: the codecs this machine's hardware offers through
+        the backend, each with its largest frame. Called during discovery after
+        `probe` has passed, so it must not raise. A backend without one is
+        reported with the `codecs` it was registered with.
     """
 
     name: str
@@ -54,11 +62,39 @@ class Backend(Generic[T]):
     probe: Callable[[], bool]
     factory: Callable[..., T]
     explain: Callable[[], str] | None = None
+    capabilities: Callable[[], Mapping[str, tuple[int, int]]] | None = None
+    sizes: Mapping[str, tuple[int, int]] = dataclasses.field(
+        default_factory=dict, hash=False)
+
+    def largest(self, codec: str) -> tuple[int, int]:
+        """The largest frame of `codec` this backend takes, as (width, height)."""
+        return self.sizes.get(codec, self.max_size)
 
     def supports(self, width: int, height: int, codec: str) -> bool:
         """Can this backend handle a `width` x `height` frame of `codec`?"""
-        return (codec in self.codecs
-                and width <= self.max_size[0] and height <= self.max_size[1])
+        most = self.largest(codec)
+        return codec in self.codecs and width <= most[0] and height <= most[1]
+
+    def on_this_machine(self) -> Backend[T] | None:
+        """This record narrowed to what the hardware here offers.
+
+        None when the hardware offers none of the backend's codecs. A backend
+        with no `capabilities` is returned as it is.
+        """
+        if self.capabilities is None:
+            return self
+        try:
+            found = {codec: size for codec, size in self.capabilities().items()
+                     if codec in self.codecs}
+        except Exception:
+            log.debug('%s could not list its codecs', self.name, exc_info=True)
+            return None
+        if not found:
+            return None
+        return self.replace(
+            codecs=frozenset(found), sizes=found,
+            max_size=(max(width for width, _ in found.values()),
+                      max(height for _, height in found.values())))
 
     def replace(self, **changes: Any) -> Backend[T]:
         """A copy of this record with `changes` applied."""
@@ -66,10 +102,24 @@ class Backend(Generic[T]):
 
 
 def available(backends: Iterable[Backend[T]]) -> Iterator[Backend[T]]:
-    """Yield the backends whose hardware and driver are present."""
+    """Yield the backends whose hardware and driver are present.
+
+    Each record carries the codecs the hardware here offers, where the backend
+    can ask it.
+    """
     for backend in backends:
-        if backend.probe():
-            yield backend
+        if not backend.probe():
+            continue
+        found = backend.on_this_machine()
+        if found is not None:
+            yield found
+
+
+def describe(backends: Iterable[Backend[Any]]) -> str:
+    """Each backend's name, codecs and largest frame, for an error message."""
+    found = [(backend.name, sorted(backend.codecs), backend.max_size)
+             for backend in backends]
+    return str(found) if found else 'none'
 
 
 def explanations(backends: Iterable[Backend[Any]]) -> list[str]:

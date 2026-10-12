@@ -85,8 +85,8 @@ def test_an_encoder_opens_on_the_adapter_the_context_uses(encoder):
 @pytest.mark.usefixtures('vpl_available')
 def test_it_refuses_a_codec_it_does_not_encode():
     with pytest.raises(EncoderError) as caught:
-        VPLEncoder(320, 240, codec='av1')
-    assert 'av1' in str(caught.value)
+        VPLEncoder(320, 240, codec='mpeg2')
+    assert 'mpeg2' in str(caught.value)
 
 
 @pytest.mark.usefixtures('vpl_available')

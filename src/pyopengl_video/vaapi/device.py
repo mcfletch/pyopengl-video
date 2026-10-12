@@ -98,12 +98,55 @@ class Device:
             return []
         return list(found)[:number.value]
 
+    def surface_limits(self, config: Any) -> dict[int, int]:
+        """The size limits of a configuration's surfaces, by surface attribute type.
+
+        The keys are ``VASurfaceAttribMinWidth``, ``MaxWidth``, ``MinHeight``
+        and ``MaxHeight``; a limit the driver does not state is absent.
+        """
+        count = ctypes.c_uint(0)
+        self.check(self.va.vaQuerySurfaceAttributes(self.display, config, None,
+                                                    ctypes.byref(count)),
+                   'vaQuerySurfaceAttributes', 'counting')
+        attributes = (api.VASurfaceAttrib * count.value)()
+        self.check(self.va.vaQuerySurfaceAttributes(self.display, config, attributes,
+                                                    ctypes.byref(count)),
+                   'vaQuerySurfaceAttributes', 'size limits')
+        wanted = (api.VASurfaceAttribMinWidth, api.VASurfaceAttribMaxWidth,
+                  api.VASurfaceAttribMinHeight, api.VASurfaceAttribMaxHeight)
+        return {entry.type: int(entry.value.value.i)
+                for entry in list(attributes)[:count.value]
+                if entry.type in wanted and entry.value.type == api.VAGenericValueTypeInteger}
+
+    def largest(self, profile: int, entrypoint: int) -> tuple[int, int] | None:
+        """The largest surface `profile` takes at `entrypoint`, as (width, height).
+
+        None where the driver states no limit, or will not make the
+        configuration to ask about.
+        """
+        config = api.VAConfigID(0)
+        status = self.va.vaCreateConfig(self.display, profile, entrypoint, None, 0,
+                                        ctypes.byref(config))
+        if status != api.VA_STATUS_SUCCESS:
+            return None
+        try:
+            limits = self.surface_limits(config)
+        except api.VAError:
+            return None
+        finally:
+            self.va.vaDestroyConfig(self.display, config)
+        width = limits.get(api.VASurfaceAttribMaxWidth)
+        height = limits.get(api.VASurfaceAttribMaxHeight)
+        return (width, height) if width and height else None
+
     def check(self, status: int, call: str, context: str = '') -> None:
         """Raise :class:`~pyopengl_video.vaapi.api.VAError` unless `status` is success."""
         self.va.check(status, call, context)
 
     def buffer(self, context: Any, kind: int, payload: Any) -> int:
-        """A VA buffer holding `payload`, a ctypes object."""
+        """A VA buffer holding `payload`, a ctypes object or bytes."""
+        if isinstance(payload, (bytes, bytearray, memoryview)):
+            payload = (ctypes.c_uint8 * len(payload)).from_buffer_copy(payload)
         buffer = api.VABufferID(0)
         self.check(self.va.vaCreateBuffer(self.display, context, kind,
                                           ctypes.sizeof(payload), 1,

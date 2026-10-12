@@ -2,7 +2,8 @@
 
 The whole shape of playback: open the movie with no GL, make a player in the
 GL context, and each frame ask it for the texture showing the current time.
-Run it with an MP4 or a raw ``.h264`` file::
+Run it with an MP4, an IVF file or a raw ``.h264`` or ``.h265`` stream, in any
+codec the machine decodes (H.264, HEVC, AV1 or VP9)::
 
     python examples/play_movie.py movie.mp4
     python examples/play_movie.py movie.mp4 --loop
@@ -163,7 +164,7 @@ class Clock:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    parser.add_argument('path', help='an .mp4 or a raw .h264 stream')
+    parser.add_argument('path', help='an .mp4, an .ivf, or a raw .h264 or .h265 stream')
     parser.add_argument('--loop', action='store_true', help='start again at the end')
     parser.add_argument('--size', default=None, metavar='WxH',
                         help="the window's size; the movie's own by default")

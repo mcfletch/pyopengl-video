@@ -526,7 +526,8 @@ context and holds the frame time.
 | D5 | NVDEC with CUDA-GL interop, Linux and Windows | landed on Linux; Windows is the same code, untested |
 | D6 | oneVPL decode with VPP into the interop texture | Intel/Windows, the laptop |
 | D7 | Decoding ahead on a worker thread, after D3 to D5 are measured | D5 |
-| D8 | HEVC and AV1 on VA-API (control layers of their own); AMF decode; fragmented MP4 and WebM | hardware per row |
+| D8 | HEVC, AV1 and VP9 on VA-API (control layers of their own), 10-bit as P010, MP4 and IVF for each | landed on AMD 2026-10-12; Intel/Linux is the same code, untested |
+| D9 | AMF decode; fragmented MP4 and WebM | hardware per row |
 
 D1 and D2 go first because every backend needs them and neither needs a
 particular GPU. D3 is on this machine, so the first movie plays here, and D4
@@ -550,7 +551,34 @@ Windows backends land.
 
 Not yet done from the sections above: the ITU-T H.264.1 conformance streams
 (the fetch tool and its terms check), the cross-vendor test (an NVENC stream on
-VA-API), four 1080p movies in one context, and P010 for 10-bit streams.
+VA-API), and four 1080p movies in one context.
+
+### Every codec the hardware has (D8, 2026-10-12)
+
+- `VAAPIDecoder` is the device, the surfaces and the lending, for every
+  codec. Each codec's rules are a `DecodeControl` (`vaapi/control.py`) given a
+  session to decode through: `h264_decode.py`, `hevc_decode.py`,
+  `av1_decode.py`, `vp9_decode.py`, with their parsers beside them.
+  `vaapi/codecs.py` lists them, and one entry there switches a codec on.
+- `Backend.capabilities` asks the hardware which codecs it has, and
+  `decoders()` reports those with each one's largest frame.
+- A 10-bit stream decodes into P010 surfaces, imported as `GL_R16` and
+  `GL_RG16`. `DecodedFrame.layout` is `'p010'`, and the conversion pass takes
+  either layout.
+- `MP4Reader` reads `hvc1`, `hev1`, `av01` and `vp09` tracks. `ivf.py` reads
+  IVF, `obu.py` splits AV1 temporal units, and `AnnexBReader` reads raw HEVC.
+  `Movie.open` recognises each.
+- Fixtures: 6 x265 streams, 13 from libaom and SVT-AV1, 7 from libvpx, each
+  decoding to `ffmpeg`'s bytes on a Radeon 8060S with Mesa 25.2.8, film grain
+  and 10 bits included.
+- Refused by name: HEVC beyond Main and Main 10 at 4:2:0, AV1 beyond Main
+  profile and frame sizes that change between key frames, VP9 profiles 1 and 3
+  and 12 bits. HEVC pictures under the device's minimum surface (64x64 on
+  VCN) are refused, since the driver takes the picture size from the surface.
+- Not exercised on hardware, for want of a stream: HEVC tiles, long-term
+  references and dependent slice segments (x265 emits none), VP9 intra-only
+  frames and reference scaling, AV1 reference scaling.
+- AV1 render size is not applied: a picture is its coded frame.
 
 ## What landed in D5
 
@@ -566,7 +594,7 @@ VA-API), four 1080p movies in one context, and P010 for 10-bit streams.
   `tests/test_nvdec_decode.py` (the checksum comparison, the NVENC round trip
   and a recording played back through `Movie`).
 - `tests/data/decode/interlaced_mbaff.h264`, with its checksums under
-  `interlaced` in `fixtures.json`.
+  `interlaced` in `h264.json`.
 
 Not run: Windows (`nvcuda.dll`, `nvcuvid.dll`), a WGL context, and a machine
 with two GPUs where the NVIDIA one does not draw; the last was stood in for
@@ -674,7 +702,10 @@ OxideAV, measured the same way.
   where the user installed it, or AAC left silent until one of those lands.
   Either licence is read in full before this is decided.
 - Output format for HDR video (PQ or HLG), where the engine would want a float
-  texture rather than an sRGB one.
+  texture rather than an sRGB one. 10-bit streams decode now and convert into
+  the same sRGB texture, their transfer curve left as it is.
+- Whether an AV1 picture should be shown at its render size. AMD's AV1
+  encoder pads the frame and states the picture's size there.
 
 ## Licensing
 

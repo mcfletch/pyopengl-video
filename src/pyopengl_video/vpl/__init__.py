@@ -23,9 +23,15 @@ from pyopengl_video.vpl.api import LIBRARY_NAME
 
 log = logging.getLogger(__name__)
 
-#: H.264 on Intel hardware. Older parts stop at 4096 in each direction, and
-#: nothing here goes beyond that.
-MAX_SIZE = (4096, 4096)
+#: The largest frame assumed of each codec. H.264 stops at 4096 in each
+#: direction; HEVC, AV1 and VP9 reach 8192 on the parts that have them. The
+#: runtime refuses a size the part does not reach when the encoder is built.
+MAX_SIZE = (8192, 8192)
+H264_MAX_SIZE = (4096, 4096)
+
+#: The codecs the backend asks the runtime for. Which of them a part encodes
+#: depends on its generation, and building the encoder is what finds out.
+CODECS = frozenset({'h264', 'hevc', 'av1', 'vp9'})
 
 #: The interop this backend feeds the encoder through exists on Windows alone.
 #: Intel hardware on Linux is reached over VA-API instead.
@@ -33,7 +39,7 @@ SUPPORTED_PLATFORM = sys.platform == 'win32'
 
 
 def probe() -> bool:
-    """Can this machine encode H.264 with Intel hardware, from OpenGL?
+    """Can this machine encode with Intel hardware, from OpenGL?
 
     Cheap by design, since discovery calls it: the dispatcher is loaded and
     nothing else is asked. That it loads does not prove the part has an encoder
@@ -67,8 +73,9 @@ def _build(width: int, height: int, **options: Any) -> Any:
 BACKEND = Backend(
     name='vpl',
     vendor='Intel',
-    codecs=frozenset({'h264'}),
+    codecs=CODECS,
     max_size=MAX_SIZE,
+    sizes={'h264': H264_MAX_SIZE},
     zero_copy=True,
     probe=probe,
     factory=_build,

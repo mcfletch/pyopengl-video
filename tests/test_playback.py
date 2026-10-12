@@ -20,7 +20,7 @@ from pyopengl_video.vaapi.encoder import VAAPIEncoder
 from tests.conftest import blit, gradient_frame
 
 DATA = Path(__file__).parent / 'data' / 'decode'
-FIXTURES = json.loads((DATA / 'fixtures.json').read_text())['streams']
+FIXTURES = json.loads((DATA / 'h264.json').read_text())['streams']
 TICK = 3000                                     # 30 fps at 90 kHz
 
 
@@ -32,6 +32,8 @@ class FakeSource:
     """
 
     timescale = 90000
+    codec = 'h264'
+    size = (64, 48)
 
     def __init__(self, shown, keys, offset=0):
         self.shown = list(shown)

@@ -16,7 +16,7 @@ from pyopengl_video.vaapi.h264 import BitWriter, StreamError, annexb, nal_unit
 from tests.h264_syntax import sps_bytes, write_pps_head
 
 DATA = Path(__file__).parent / 'data' / 'decode'
-FIXTURES = json.loads((DATA / 'fixtures.json').read_text())['streams']
+FIXTURES = json.loads((DATA / 'h264.json').read_text())['streams']
 
 
 @pytest.mark.parametrize('name', sorted(FIXTURES))

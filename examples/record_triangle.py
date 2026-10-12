@@ -4,6 +4,7 @@ This is the whole shape of a recording: render, blit the finished frame into a
 texture the encoder reads, encode, mux. Run it with a path::
 
     python examples/record_triangle.py triangle.mp4 --frames 120
+    python examples/record_triangle.py triangle.mp4 --codec hevc
 
 Three details matter to anyone recording their own renderer, and all are here.
 
@@ -144,6 +145,8 @@ def main(argv=None):
     parser.add_argument('--fps', type=int, default=60)
     parser.add_argument('--bframes', type=int, default=0,
                         help='B-pictures between reference pictures')
+    parser.add_argument('--codec', default='h264',
+                        help='h264, hevc, av1 or vp9, where the GPU encodes it')
     options = parser.parse_args(argv)
     width, _, height = options.size.partition('x')
     width, height = int(width), int(height)
@@ -169,7 +172,7 @@ def main(argv=None):
     triangle = make_triangle()
     turn = glGetUniformLocation(program, 'turn')
 
-    with open_encoder(width, height, fps=options.fps,
+    with open_encoder(width, height, codec=options.codec, fps=options.fps,
                       bframes=options.bframes) as encoder:
         # The encoder allocates its own inputs: on some platforms its surface is
         # a resource only the driver can make, and this way the loop is the same

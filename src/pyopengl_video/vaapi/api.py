@@ -55,7 +55,13 @@ VA_STATUS_SUCCESS = 0
 VAProfileNone = -1
 VAProfileH264Main = 6
 VAProfileH264High = 7
+VAProfileJPEGBaseline = 12
 VAProfileH264ConstrainedBaseline = 13
+VAProfileHEVCMain = 17
+VAProfileHEVCMain10 = 18
+VAProfileVP9Profile0 = 19
+VAProfileVP9Profile2 = 21
+VAProfileAV1Profile0 = 32
 VAProfileH264High10 = 36
 
 VAEntrypointVLD = 1
@@ -75,6 +81,8 @@ VAConfigAttribEncMaxRefFrames = 13
 VA_ATTRIB_NOT_SUPPORTED = 0x80000000
 
 VA_RT_FORMAT_YUV420 = 0x00000001
+#: 4:2:0 at ten bits a sample, which a surface holds as P010.
+VA_RT_FORMAT_YUV420_10 = 0x00000100
 VA_RT_FORMAT_RGB32 = 0x00020000
 
 VA_RC_CBR = 0x00000002
@@ -182,6 +190,10 @@ DRM_FORMAT_XBGR8888 = fourcc('XB24')
 DRM_FORMAT_R8 = fourcc('R8  ')
 DRM_FORMAT_GR88 = fourcc('GR88')
 DRM_FORMAT_NV12 = fourcc('NV12')
+#: The same two layers at sixteen bits a channel, which the planes of a P010
+#: surface export as. A ten-bit sample sits in the high bits of its channel.
+DRM_FORMAT_R16 = fourcc('R16 ')
+DRM_FORMAT_GR1616 = fourcc('GR32')
 
 #: What a driver returns for "this layout has no name I can give you".
 DRM_FORMAT_MOD_INVALID = (1 << 56) - 1
@@ -848,6 +860,8 @@ class VA:
     vaTerminate: Callable[..., int]
     vaSetInfoCallback: Callable[..., Any]
     vaSetErrorCallback: Callable[..., Any]
+    vaMaxNumProfiles: Callable[..., int]
+    vaQueryConfigProfiles: Callable[..., int]
     vaMaxNumEntrypoints: Callable[..., int]
     vaQueryConfigEntrypoints: Callable[..., int]
     vaGetConfigAttributes: Callable[..., int]
@@ -902,6 +916,10 @@ class VA:
              [VADisplay, MESSAGE_CALLBACK, ctypes.c_void_p], ctypes.c_void_p),
             (self.library, 'vaSetErrorCallback',
              [VADisplay, MESSAGE_CALLBACK, ctypes.c_void_p], ctypes.c_void_p),
+            (self.library, 'vaMaxNumProfiles', [VADisplay], ctypes.c_int),
+            (self.library, 'vaQueryConfigProfiles',
+             [VADisplay, ctypes.POINTER(VAProfile),
+              ctypes.POINTER(ctypes.c_int)], VAStatus),
             (self.library, 'vaMaxNumEntrypoints', [VADisplay], ctypes.c_int),
             (self.library, 'vaQueryConfigEntrypoints',
              [VADisplay, VAProfile, ctypes.POINTER(VAEntrypoint),

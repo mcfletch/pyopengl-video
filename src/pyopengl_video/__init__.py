@@ -27,9 +27,10 @@ puts together::
 Which backend that gets you depends on the machine; :func:`encoders` and
 :func:`decoders` say what is available and what each one can do.
 """
+from pyopengl_video import codecs as _codecs
 from pyopengl_video import decoder as _decoder
 from pyopengl_video import encoder as _encoder
-from pyopengl_video.backend import Backend, VideoError, with_reasons
+from pyopengl_video.backend import Backend, VideoError, describe, with_reasons
 from pyopengl_video.decoder import (
     DecodedFrame,
     Decoder,
@@ -64,8 +65,9 @@ __all__ = [
 def encoders() -> list[Backend[Encoder]]:
     """The encoder backends this machine can actually run.
 
-    Each record says which codecs it accepts, how large a frame it will take and
-    whether it reaches the encoder without copying through host memory.
+    Each record says which codecs the hardware here encodes through it, how
+    large a frame it takes in each (:meth:`~pyopengl_video.backend.Backend.largest`)
+    and whether it reaches the encoder without copying through host memory.
     """
     return list(available_backends())
 
@@ -74,32 +76,37 @@ def open_encoder(width: int, height: int, *, codec: str = 'h264',
                  backend: str | None = None, **options: object) -> Encoder:
     """Open an encoder for `width` x `height` frames of `codec`.
 
+    codec -- ``'h264'``, ``'hevc'`` or ``'av1'``, where this machine's
+        hardware encodes it; :func:`encoders` says which it does
     backend -- pick one by name instead of taking the best available
     options -- passed to the backend: ``fps``, ``bitrate``, ``preset``,
         ``tuning``, ``gop``, ``bframes``; each backend documents what it honours
 
     Raises :class:`EncoderUnavailable` when nothing on this machine fits.
     """
-    candidates = list(available_backends())
+    codec = _codecs.canonical(codec)
+    present = list(available_backends())
+    candidates = present
     if backend is not None:
-        candidates = [found for found in candidates if found.name == backend]
+        candidates = [found for found in present if found.name == backend]
         if not candidates:
             raise EncoderUnavailable(with_reasons(
                 f'no encoder backend named {backend!r} is available here; '
-                f'available: '
-                f'{[found.name for found in available_backends()] or "none"}',
+                f'available: {[found.name for found in present] or "none"}',
                 _encoder.BACKENDS, only=backend))
     capable = [found for found in candidates if found.supports(width, height, codec)]
     if not capable:
         raise EncoderUnavailable(with_reasons(
             f'no encoder here can produce {width}x{height} {codec}; available: '
-            f'{[(found.name, sorted(found.codecs), found.max_size) for found in candidates] or "none"}',
-            _encoder.BACKENDS))
+            f'{describe(candidates)}', _encoder.BACKENDS))
     return capable[0].factory(width, height, codec=codec, **options)
 
 
 def decoders() -> list[Backend[Decoder]]:
-    """The decoder backends this machine can actually run."""
+    """The decoder backends this machine can actually run.
+
+    Each record says which codecs the hardware here decodes through it.
+    """
     return list(_decoder.available_backends())
 
 
@@ -108,9 +115,12 @@ def open_decoder(codec: str = 'h264', *, headers: bytes = b'',
                  **options: object) -> Decoder:
     """Open a decoder for a stream of `codec`.
 
-    headers -- the stream's parameter sets as Annex-B, when the container
-        stores them apart from the samples; a decoder can then report
-        :attr:`~Decoder.size` before the first sample
+    codec -- ``'h264'``, ``'hevc'``, ``'av1'`` or ``'vp9'``, where this
+        machine's hardware decodes it; :func:`decoders` says which it does
+    headers -- the stream's configuration, when the container stores it apart
+        from the samples: parameter sets as Annex-B for H.264 and HEVC, the
+        configuration OBUs for AV1. A decoder can then report
+        :attr:`~Decoder.size` before the first sample.
     size -- the picture size, when known, so a backend that cannot reach it is
         passed over; it is also given to the backend
     backend -- pick one by name instead of taking the best available
@@ -118,22 +128,22 @@ def open_decoder(codec: str = 'h264', *, headers: bytes = b'',
 
     Raises :class:`DecoderUnavailable` when nothing on this machine fits.
     """
-    candidates = list(_decoder.available_backends())
+    codec = _codecs.canonical(codec)
+    present = list(_decoder.available_backends())
+    candidates = present
     if backend is not None:
-        candidates = [found for found in candidates if found.name == backend]
+        candidates = [found for found in present if found.name == backend]
         if not candidates:
             raise DecoderUnavailable(with_reasons(
                 f'no decoder backend named {backend!r} is available here; '
-                f'available: '
-                f'{[found.name for found in _decoder.available_backends()] or "none"}',
+                f'available: {[found.name for found in present] or "none"}',
                 _decoder.BACKENDS, only=backend))
     width, height = size or (0, 0)
     capable = [found for found in candidates if found.supports(width, height, codec)]
     if not capable:
         wanted = f'{width}x{height} {codec}' if size else codec
         raise DecoderUnavailable(with_reasons(
-            f'no decoder here can read {wanted}; available: '
-            f'{[(found.name, sorted(found.codecs), found.max_size) for found in candidates] or "none"}',
+            f'no decoder here can read {wanted}; available: {describe(candidates)}',
             _decoder.BACKENDS))
     if size is not None:
         options['size'] = size

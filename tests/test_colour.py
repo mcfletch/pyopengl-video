@@ -37,6 +37,31 @@ class TestRanges:
         assert convert(colour, 255, 128, 128) == pytest.approx([1, 1, 1], abs=1e-6)
 
 
+class TestTenBits:
+    """A 10-bit stream's code values are four times an 8-bit stream's."""
+
+    @staticmethod
+    def convert(colour, y, u, v):
+        matrix = np.array(colour.yuv_to_rgb(depth=10))
+        return matrix @ np.array([y / 1023, u / 1023, v / 1023, 1.0])
+
+    @pytest.mark.parametrize('matrix', [MATRIX_BT601, MATRIX_BT709, MATRIX_BT2020])
+    def test_limited_range_black_and_white(self, matrix):
+        colour = Colour(matrix=matrix, full_range=False)
+        assert self.convert(colour, 64, 512, 512) == pytest.approx([0, 0, 0], abs=1e-6)
+        assert self.convert(colour, 940, 512, 512) == pytest.approx([1, 1, 1], abs=1e-6)
+
+    def test_full_range_black_and_white(self):
+        colour = Colour(matrix=MATRIX_BT709, full_range=True)
+        assert self.convert(colour, 0, 512, 512) == pytest.approx([0, 0, 0], abs=1e-6)
+        assert self.convert(colour, 1023, 512, 512) == pytest.approx([1, 1, 1], abs=1e-6)
+
+    def test_a_colour_matches_the_same_colour_at_eight_bits(self):
+        colour = Colour(matrix=MATRIX_BT709)
+        assert self.convert(colour, 81 * 4, 90 * 4, 240 * 4) == pytest.approx(
+            convert(colour, 81, 90, 240), abs=1e-6)
+
+
 class TestMatrices:
     def test_bt601_has_the_familiar_coefficients(self):
         """R = 1.164(Y-16) + 1.596(Cr-128), and so on, for limited range."""

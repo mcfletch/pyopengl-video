@@ -1,4 +1,4 @@
-"""The QuickSync encoder: a Direct3D 11 texture in, an H.264 stream out.
+"""The QuickSync encoder: a Direct3D 11 texture in, a compressed stream out.
 
 Intel's encoder reads a Direct3D surface, and OpenGL cannot hand it one -- so
 the encoder makes the surfaces itself, through
@@ -20,11 +20,13 @@ pass: the surface is handed over as it was drawn.
 from __future__ import annotations
 
 import ctypes
+import dataclasses
 import logging
 import time
 from ctypes import byref, c_void_p
 from typing import Any
 
+from pyopengl_video import codecs, obu
 from pyopengl_video.encoder import (
     Encoder,
     EncoderError,
@@ -197,11 +199,81 @@ _DXGI_FOR_FOURCC = {
 }
 
 
+@dataclasses.dataclass(frozen=True)
+class CodecSettings:
+    """What the runtime is told to make one codec.
+
+    codec_id/profile -- the ``MFX_CODEC_*`` and ``MFX_PROFILE_*`` values
+    idr_interval -- ``IdrInterval`` such that every group opens with a picture
+        decoding can start at. H.264 counts from zero and HEVC from one.
+    signal_info -- the codec's stream carries a colour description the runtime
+        writes from ``mfxExtVideoSignalInfo``
+    title -- the codec in words, for messages
+    """
+
+    codec_id: int
+    profile: int
+    idr_interval: int
+    signal_info: bool
+    title: str
+
+
+#: The codecs this backend asks the runtime for. Which of them a part encodes
+#: depends on its generation, and ``MFXVideoENCODE_Init`` refuses the rest.
+CODECS = {
+    'h264': CodecSettings(api.MFX_CODEC_AVC, api.MFX_PROFILE_AVC_HIGH, 0, True, 'H.264'),
+    'hevc': CodecSettings(api.MFX_CODEC_HEVC, api.MFX_PROFILE_HEVC_MAIN, 1, True, 'HEVC'),
+    'av1': CodecSettings(api.MFX_CODEC_AV1, api.MFX_PROFILE_AV1_MAIN, 0, True, 'AV1'),
+    'vp9': CodecSettings(api.MFX_CODEC_VP9, api.MFX_PROFILE_VP9_0, 0, False, 'VP9'),
+}
+
+
+def signal_info() -> api.mfxExtVideoSignalInfo:
+    """A colour description of limited-range BT.709: primaries, transfer and matrix."""
+    signal = api.mfxExtVideoSignalInfo()
+    signal.Header.BufferId = api.MFX_EXTBUFF_VIDEO_SIGNAL_INFO
+    signal.Header.BufferSz = ctypes.sizeof(signal)
+    signal.VideoFormat = 5                 # unspecified
+    signal.VideoFullRange = 0              # limited range, 16-235
+    signal.ColourDescriptionPresent = 1
+    signal.ColourPrimaries = 1             # BT.709
+    signal.TransferCharacteristics = 1     # BT.709
+    signal.MatrixCoefficients = 1          # BT.709
+    return signal
+
+
+def extension_buffers(codec: str) -> list[Any]:
+    """The extension buffers `codec`'s configuration carries.
+
+    The colour description, for the codecs whose stream states one. For AV1
+    and VP9, the buffer that keeps the runtime from wrapping the stream in IVF
+    headers, so that a packet is a temporal unit or a frame and nothing else.
+    """
+    found: list[Any] = []
+    if CODECS[codec].signal_info:
+        found.append(signal_info())
+    if codec == 'av1':
+        bitstream = api.mfxExtAV1BitstreamParam()
+        bitstream.Header.BufferId = api.MFX_EXTBUFF_AV1_BITSTREAM_PARAM
+        bitstream.Header.BufferSz = ctypes.sizeof(bitstream)
+        bitstream.WriteIVFHeaders = api.MFX_CODINGOPTION_OFF
+        found.append(bitstream)
+    elif codec == 'vp9':
+        vp9 = api.mfxExtVP9Param()
+        vp9.Header.BufferId = api.MFX_EXTBUFF_VP9_PARAM
+        vp9.Header.BufferSz = ctypes.sizeof(vp9)
+        vp9.WriteIVFHeaders = api.MFX_CODINGOPTION_OFF
+        found.append(vp9)
+    return found
+
+
 class VPLEncoder(Encoder):
-    """H.264 from OpenGL, on Intel hardware, through Direct3D 11.
+    """H.264, HEVC, AV1 or VP9 from OpenGL, on Intel hardware, through Direct3D 11.
 
     width/height -- frame size
-    codec -- ``'h264'``
+    codec -- ``'h264'``, ``'hevc'``, ``'av1'`` or ``'vp9'``, where the part has
+        an encoder for it; the runtime refuses one it lacks when the encoder
+        is built
     fps -- frames per second, a number or an exact ``(numerator, denominator)``
         pair. It sets the stream's declared rate and rate control's idea of
         time; it paces nothing.
@@ -230,8 +302,12 @@ class VPLEncoder(Encoder):
                  preset: str = 'p4', rate_control: str = 'vbr',
                  gop: int | None = None, bframes: int = 0,
                  adapter: d3d11.Adapter | None = None):
-        if codec != 'h264':
-            raise EncoderError(f'the oneVPL backend encodes h264, not {codec!r}')
+        codec = codecs.canonical(codec)
+        if codec not in CODECS:
+            raise EncoderError(
+                f'the oneVPL backend encodes {", ".join(sorted(CODECS))}, not {codec!r}')
+        self.codec = codec
+        self._sequence_header = b''
         self.size = (int(width), int(height))
         self.frame_rate = frame_rate_ratio(fps)
         self.bframes = int(bframes)
@@ -329,8 +405,9 @@ class VPLEncoder(Encoder):
         params.AsyncDepth = 1
         params.IOPattern = api.MFX_IOPATTERN_IN_VIDEO_MEMORY
         mfx = params.mfx
-        mfx.CodecId = api.MFX_CODEC_AVC
-        mfx.CodecProfile = api.MFX_PROFILE_AVC_HIGH
+        settings = CODECS[self.codec]
+        mfx.CodecId = settings.codec_id
+        mfx.CodecProfile = settings.profile
         mfx.TargetUsage = target_usage
         mfx.RateControlMethod = mode
         # Rate control counts in kilobits, in a 16-bit field: the multiplier is
@@ -343,35 +420,26 @@ class VPLEncoder(Encoder):
                        else min(65535, mfx.TargetKbps * 3 // 2))
         mfx.GopPicSize = self.gop
         mfx.GopRefDist = self.bframes + 1
-        mfx.IdrInterval = 0                    # every group starts with an IDR
+        mfx.IdrInterval = settings.idr_interval
         self._frame_info(mfx.FrameInfo)
-        self._attach_colour(params)
+        self._attach_extensions(params)
         return params
 
-    def _attach_colour(self, params: api.mfxVideoParam) -> None:
-        """State the stream's colour, rather than leaving a player to guess.
+    def _attach_extensions(self, params: api.mfxVideoParam) -> None:
+        """Attach the codec's extension buffers (:func:`extension_buffers`).
 
         The hardware converts RGB to YUV with a matrix of its own choosing, so
-        the stream says which one it was: limited-range BT.709, primaries,
-        transfer and matrix alike. That is what the NVENC backend writes into
-        its video usability information, and a recording should not describe
-        itself differently depending on whose GPU made it.
+        the stream says which one it was: limited-range BT.709, as the other
+        backends declare. A recording should not describe itself differently
+        depending on whose GPU made it.
 
         The buffers are kept on the encoder because the runtime reads them
         during initialisation, from the pointers handed over here.
         """
-        signal = api.mfxExtVideoSignalInfo()
-        signal.Header.BufferId = api.MFX_EXTBUFF_VIDEO_SIGNAL_INFO
-        signal.Header.BufferSz = ctypes.sizeof(signal)
-        signal.VideoFormat = 5                 # unspecified
-        signal.VideoFullRange = 0              # limited range, 16-235
-        signal.ColourDescriptionPresent = 1
-        signal.ColourPrimaries = 1             # BT.709
-        signal.TransferCharacteristics = 1     # BT.709
-        signal.MatrixCoefficients = 1          # BT.709
-        self._colour = signal
-        self._ext_buffers = (c_void_p * 1)(ctypes.cast(byref(signal), c_void_p))
-        params.NumExtParam = 1
+        self._extensions = extension_buffers(self.codec)
+        self._ext_buffers = (c_void_p * len(self._extensions))(
+            *(ctypes.cast(byref(buffer), c_void_p) for buffer in self._extensions))
+        params.NumExtParam = len(self._extensions)
         params.ExtParam = ctypes.cast(self._ext_buffers, ctypes.POINTER(c_void_p))
 
     def _initialise(self, preset: str, rate_control: str) -> None:
@@ -395,9 +463,10 @@ class VPLEncoder(Encoder):
         if status < 0:
             width, height = self.size
             raise api.VPLError(status, 'MFXVideoENCODE_Init',
-                               f'{width}x{height} h264')
+                               f'{width}x{height} {self.codec}')
         if status == api.MFX_WRN_PARTIAL_ACCELERATION:
-            log.warning('this part encodes H.264 only partly in hardware')
+            log.warning('this part encodes %s only partly in hardware',
+                        CODECS[self.codec].title)
         self._initialised = True
 
         # What the driver settled on, which is not always what was asked for.
@@ -528,12 +597,24 @@ class VPLEncoder(Encoder):
         timestamp = int(bitstream.TimeStamp)
         if timestamp == api.MFX_TIMESTAMP_UNKNOWN:      # pragma: no cover - driver quirk
             timestamp = 0
+        if keyframe and self.codec == 'av1':
+            self._sequence_header = obu.sequence_header(data) or self._sequence_header
         return Packet(data=data, timestamp=timestamp, duration=duration,
                       keyframe=keyframe)
 
     def headers(self) -> bytes:
-        """The sequence and picture parameter sets, as an Annex-B fragment."""
+        """The stream's configuration, as a container stores it up front.
+
+        The parameter sets as an Annex-B fragment for H.264 and HEVC. For AV1,
+        the sequence header OBU of the last key frame coded, which is empty
+        before the first. VP9 has none.
+        """
         self._require_open()
+        if self.codec == 'av1':
+            return self._sequence_header
+        if self.codec == 'vp9':
+            return b''
+        vps = (ctypes.c_uint8 * 1024)()
         sps = (ctypes.c_uint8 * 1024)()
         pps = (ctypes.c_uint8 * 1024)()
         option = api.mfxExtCodingOptionSPSPPS()
@@ -543,15 +624,27 @@ class VPLEncoder(Encoder):
         option.PPSBuffer = ctypes.cast(pps, ctypes.POINTER(ctypes.c_uint8))
         option.SPSBufSize = ctypes.sizeof(sps)
         option.PPSBufSize = ctypes.sizeof(pps)
+        wanted: list[Any] = [option]
+        video = api.mfxExtCodingOptionVPS()
+        if self.codec == 'hevc':
+            video.Header.BufferId = api.MFX_EXTBUFF_CODING_OPTION_VPS
+            video.Header.BufferSz = ctypes.sizeof(video)
+            video.VPSBuffer = ctypes.cast(vps, ctypes.POINTER(ctypes.c_uint8))
+            video.VPSBufSize = ctypes.sizeof(vps)
+            wanted.append(video)
 
-        buffers = (c_void_p * 1)(ctypes.cast(byref(option), c_void_p))
+        buffers = (c_void_p * len(wanted))(
+            *(ctypes.cast(byref(buffer), c_void_p) for buffer in wanted))
         params = api.mfxVideoParam()
-        params.NumExtParam = 1
+        params.NumExtParam = len(wanted)
         params.ExtParam = ctypes.cast(buffers, ctypes.POINTER(c_void_p))
         self.api.check(
             self.api.MFXVideoENCODE_GetVideoParam(self.session, byref(params)),
-            'MFXVideoENCODE_GetVideoParam(SPS/PPS)')
-        return bytes(sps[:option.SPSBufSize]) + bytes(pps[:option.PPSBufSize])
+            'MFXVideoENCODE_GetVideoParam(parameter sets)')
+        found = bytes(sps[:option.SPSBufSize]) + bytes(pps[:option.PPSBufSize])
+        if self.codec == 'hevc':
+            found = bytes(vps[:video.VPSBufSize]) + found
+        return found
 
     # ------------------------------------------------------------ internals
 

@@ -16,7 +16,7 @@ from pyopengl_video.encoder import Packet
 from pyopengl_video.mp4 import MP4Error, MP4Reader, MP4Writer, split_annexb
 
 DATA = Path(__file__).parent / 'data' / 'decode'
-FIXTURES = json.loads((DATA / 'fixtures.json').read_text())['streams']
+FIXTURES = json.loads((DATA / 'h264.json').read_text())['streams']
 
 TIMESCALE = 90000
 FRAME = 3000

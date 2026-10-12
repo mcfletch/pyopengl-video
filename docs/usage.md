@@ -66,10 +66,33 @@ for backend in encoders():
 encoder = open_encoder(1280, 720, backend='nvenc')
 ```
 
-`encoders()` lists only what is usable here: it loads each driver library and
-checks the platform. A machine with no encoder returns an empty list, and
-`open_encoder` raises `EncoderUnavailable` naming what was asked for and what
-was available.
+`encoders()` lists only what is usable here: it loads each driver library,
+checks the platform, and asks the hardware which codecs it encodes. A machine
+with no encoder returns an empty list, and `open_encoder` raises
+`EncoderUnavailable` naming what was asked for and what was available.
+
+### Codecs
+
+`codec` is `'h264'`, `'hevc'`, `'av1'` or `'vp9'`. `'h265'` and `'avc'` are
+accepted too. A backend's record lists the codecs this machine's hardware
+encodes through it, each with the largest frame it takes:
+
+```python
+for backend in encoders():
+    for codec in sorted(backend.codecs):
+        print(backend.name, codec, backend.largest(codec))
+
+encoder = open_encoder(3840, 2160, codec='hevc', fps=60)
+```
+
+| Backend | Codecs it drives | How the hardware is asked |
+| --- | --- | --- |
+| `vaapi` | H.264, HEVC, AV1 | the device's profile list, when discovery runs |
+| `nvenc` | H.264, HEVC, AV1 | the encoder session, which needs a current OpenGL context on the NVIDIA GPU. Without one the record lists all three, and building the encoder refuses a codec the GPU lacks, naming those it has. |
+| `vpl` | H.264, HEVC, AV1, VP9 | not asked at discovery. The runtime refuses a codec the part lacks when the encoder is built. |
+
+A codec nothing here encodes raises `EncoderUnavailable`, listing each
+backend's codecs. `encoder.codec` is the name of the codec being produced.
 
 ## Encoder settings
 
@@ -77,10 +100,10 @@ All are keyword arguments to `open_encoder`. These are taken by every backend:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `codec` | `'h264'` | The codec to produce. |
+| `codec` | `'h264'` | The codec to produce: `'h264'`, `'hevc'`, `'av1'` or `'vp9'`, where the hardware encodes it. |
 | `fps` | `60` | Declared frame rate, a number or `(numerator, denominator)`. A float becomes the broadcast ratio for it, so `29.97` records as `30000/1001`. It sets what the stream says and what rate control believes about time; it paces nothing. |
 | `bitrate` | derived | Target bits per second. The default is the frame size times the rate times `DEFAULT_BITS_PER_PIXEL`, which puts 1080p60 near 8.7 Mbit/s. |
-| `gop` | two seconds | Frames between key frames. Every group opens with an IDR, which is where a player can seek to. `gop=1` makes every frame a key frame. |
+| `gop` | two seconds | Frames between key frames. Every group opens with an IDR picture or an AV1 or VP9 key frame, which is where a player can seek to. `gop=1` makes every frame a key frame. |
 | `bframes` | `0` | B-pictures between reference pictures. Better compression, at the cost of reordering — see below. |
 | `rate_control` | per backend | How the bits are spent; the names differ, below. |
 
@@ -97,7 +120,7 @@ All are keyword arguments to `open_encoder`. These are taken by every backend:
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `rate_control` | `'cbr'` | `'cbr'`, `'vbr'`, or `'cqp'` to code at a fixed quantiser. A mode the driver does not offer is refused, naming the ones it does. |
-| `qp` | `26` | The quantiser, 0 to 51. What `'cqp'` codes at, and what the other modes start from. Lower is better quality and more bits. |
+| `qp` | `26` | The quantiser, 0 to 51. What `'cqp'` codes at, and what the other modes start from. Lower is better quality and more bits. The scale is H.264's and HEVC's; for AV1 it is multiplied by five onto AV1's own scale of 1 to 255. |
 | `device` | first that has an encoder | Which DRM render node to open, such as `'/dev/dri/renderD128'`. |
 | `bframes` | `0` | Must be zero: this backend codes pictures in display order. |
 
@@ -231,8 +254,10 @@ packets' durations. A frame rate of no frames per second raises `EncoderError`.
 
 The hardware converts RGB to YUV, and the stream declares what it did: BT.709
 primaries, BT.709 transfer, BT.709 matrix, limited range (16-235), with the frame
-rate in the timing information. A player that reads the declaration reproduces
-the colours it was given.
+rate in the timing information. H.264 and HEVC carry the declaration in their
+video usability information and AV1 in its sequence header. A player that
+reads the declaration reproduces the colours it was given. Every codec is
+coded at 8 bits, 4:2:0.
 
 This is fixed for now. Full-range or a different matrix means converting in a
 shader before the encoder sees the frame, and telling the encoder to leave the
@@ -262,7 +287,8 @@ out.
 
 ## Writing a file
 
-`MP4Writer` takes the frame size, timescale and parameter sets from the encoder:
+`MP4Writer` takes the codec, frame size, timescale and configuration from the
+encoder, and writes an `avc1`, `hvc1`, `av01` or `vp09` track:
 
 ```python
 with MP4Writer('out.mp4', encoder) as movie:
@@ -274,13 +300,36 @@ more memory than a short one; the sample tables are written when the movie
 closes. That means the file is not ready to stream over a network without a
 further pass — the trade for not buffering the video.
 
-Packets can also be written straight to a `.h264` file: they are an Annex-B
-elementary stream, which players and `ffmpeg` read directly.
+What a packet holds depends on the codec:
+
+| Codec | `packet.data` | `encoder.headers()` | Stored in MP4 as |
+| --- | --- | --- | --- |
+| H.264 | an Annex-B access unit | SPS and PPS, Annex-B | `avc1`, the sets in `avcC` |
+| HEVC | an Annex-B access unit | VPS, SPS and PPS, Annex-B | `hvc1`, the sets in `hvcC` |
+| AV1 | a temporal unit: OBUs with size fields | the sequence header OBU | `av01`, the header in `av1C`, temporal delimiters dropped |
+| VP9 | one frame | nothing | `vp09`, with a `vpcC` describing profile 0 |
+
+H.264 and HEVC packets can be written straight to a `.h264` or `.h265` file:
+they are an Annex-B elementary stream, which players and `ffmpeg` read
+directly.
 
 ```python
-with open('out.h264', 'wb') as raw:
+with open('out.h265', 'wb') as raw:
     for packet in packets:
         raw.write(packet.data)
+```
+
+AV1 and VP9 have no such raw form, so `IVFWriter` writes theirs: a 32-byte
+header and each packet behind its size and timestamp, which `ffmpeg`, the
+reference decoders and `Movie.open` read.
+
+```python
+from pyopengl_video.ivf import IVFWriter
+
+with open_encoder(1280, 720, codec='av1') as encoder, \
+        IVFWriter('out.ivf', encoder) as stream:
+    ...
+    stream.write(encoder.encode(handle, timestamp))
 ```
 
 To mux with something else, `Packet` carries everything a container needs:
@@ -330,8 +379,19 @@ game is the game plus a blit.
 
 ## Limits
 
-- **H.264 only**, up to 4096x4096. HEVC and AV1 are hardware the parts have and
-  the library does not use yet.
+- **8-bit 4:2:0 in every codec.** HEVC Main and AV1 Main, from a `GL_RGBA8`
+  texture. The largest frame is the hardware's for each codec:
+  `backend.largest(codec)`.
+- **HEVC and AV1 on `nvenc`, and HEVC, AV1 and VP9 on `vpl`, have not been
+  run.** They are written from the vendors' headers, their structures are
+  checked against those headers, and their settings are tested without a
+  driver. H.264 has run on both.
+- **AV1 on AMD pads the frame.** The VCN encoder codes a frame of at least
+  128x128 whose size it rounds up to its own blocks, and writes the size asked
+  for as the stream's render size. A 1920x1080 recording is a 1920x1082 frame
+  with two black rows; a player that follows the render size scales the frame
+  to 1920x1080. Sizes the encoder does not round, such as 1280x720 and
+  3840x2160, are coded as asked.
 - **NVIDIA and AMD on Linux, Intel on Windows.** Intel on Linux is the `vaapi`
   backend against a different driver and has not been run; NVIDIA on Windows
   goes through the same Direct3D interop the Intel backend uses, which is
@@ -339,7 +399,8 @@ game is the game plus a blit.
   the whole matrix.
 - **`vaapi` needs an EGL context**, because exporting a texture as a DMA-BUF is
   an EGL extension — see *Getting the frame to the encoder*.
-- **`vaapi` codes in display order.** `bframes` above zero is refused there.
+- **`vaapi` codes in display order.** `bframes` above zero is refused there,
+  in every codec.
 - **One context.** A session belongs to the OpenGL context that was current when
   it was opened, and every call must come from that context's thread.
 - **No audio.** The muxer writes a video track.

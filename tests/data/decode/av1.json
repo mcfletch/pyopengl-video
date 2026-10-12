@@ -1,0 +1,423 @@
+{
+  "written_by": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+  "streams": {
+    "av1_altref": {
+      "size": [
+        120,
+        68
+      ],
+      "depth": 8,
+      "file": "av1_altref.ivf",
+      "coding": "-c:v libaom-av1 -cpu-used 4 -b:v 150k -g 20 -lag-in-frames 19 -auto-alt-ref 1",
+      "md5": [
+        "d3d2b0de10aa76c7f8526d76205f2f57",
+        "b4ed722b19645a5c047b7d6486d76e89",
+        "94aafb98bbc97498f81aaa90d7bf4bc6",
+        "4c729f73bd1e295f90d4537bc7f3049c",
+        "512c72b512ceaecd46db6ca20cfc395e",
+        "dc756ea7f17dcf575b7cabf74a4ecc40",
+        "1dc65e4a9f4636a3cb6520e91343a249",
+        "b73ad108a9005f8d4c239cdc296c957f",
+        "e343d071d4397c553e8f0bf40e89adfc",
+        "c63290467c901fd33a0b9b14f8aa112e",
+        "0235479802cf6ab75f73fd71ff2b3143",
+        "94a3fe66a65ed8e460e74534e1459161",
+        "1226a9616cd7835e84dd0759566e9ff4",
+        "208ec9221c1549b379ca9324ae908016",
+        "d2a8c19d1d6970536cc96cb714931bc1",
+        "f2abbde066ff475fb08fcd904c691805",
+        "1c7bc5043680250355ab710df0c7c150",
+        "851fdcf09236abc4ce33fef5023d59c8",
+        "5fedc6d6c720eb5d92ec0ac9a69f6c72",
+        "f9dfc200b5b4f2777b3a2fccf3d4c18b",
+        "c8130ab6aa731d93e5767e763ba94a65",
+        "19384a8c202c382bcb48c260654f443b",
+        "f285ff7d9bda0bcacdc84f5a3b718ccc",
+        "9d70153f159fdf7e4a31dc61b2b08fa4",
+        "8a777aa58e59a0aba34b07b4e55be394",
+        "b576eda99832b4c54a70274f6cf5ae07",
+        "9c686294133ccdaf7d3cce60716f8ffd",
+        "f3600d96db6a37418e9032dff6a9ee3c",
+        "e453ec035cc55ae42c08bc94c0bb0bc6",
+        "803c2c7791b77f13e0e43863c5a4c13a",
+        "a00072f2187eb2d9bb0d2456b0dde4ea",
+        "6a2db9cee3f363b24f1a6f752d3565b5",
+        "948fc2eac09f254bba52074a4446790c",
+        "61101d1763d9e478655c48a8a344f84f",
+        "b2fccb8caa8eb4cf09151c13fa8feb25",
+        "9511a6fef3df544a6f59242b7c45d246",
+        "1b69010631081548a646d86ce785ec28",
+        "11d0d71ea6ea91900457f067eed640ca",
+        "4b9c019a0cc574e1e9feeeaa0cefd373",
+        "865df695080e8cae577fe7642183ad01"
+      ]
+    },
+    "av1_tiles": {
+      "size": [
+        160,
+        90
+      ],
+      "depth": 8,
+      "file": "av1_tiles.ivf",
+      "coding": "-c:v libaom-av1 -cpu-used 5 -b:v 200k -g 10 -tile-columns 1 -tile-rows 1 -aq-mode 1 -aom-params deltaq-mode=1:delta-lf-mode=1:enable-qm=1",
+      "md5": [
+        "87eaf446576920181b30bfcba717f29d",
+        "3eb5df283f36360895ee0e40955300ef",
+        "d0031fa5855478a55d0ad8898f221712",
+        "8c6183d784f10163321c504e1d2b8cf1",
+        "0c3af023439b787433076830b6607fcc",
+        "149bf6768a7b293442d7fe8b4cf406b7",
+        "bc0871e7ee10876fa72e87f72e784af1",
+        "e55ca0c3ac3282252fc2ba579c640f88",
+        "2e9e1d824d5ff9968aed8284599f80f8",
+        "5cf12dba6ac4719dc35531d9a9ce1b11",
+        "426aa74c32fe6003fd32777be2f43402",
+        "34f1a3cdb28a2ce8eaf0fbfed2a774e4",
+        "db5d1076aee4fe5828b2b5daf328db12",
+        "b422bd94fe5ca4174ae0337f937b42a7",
+        "5aeb653a3800b2d3d64a09fd23a6e85f",
+        "3da4af98dd3a11607de610cea8e31c00",
+        "20a25be79cd62e3dda1f6a960637daf3",
+        "a5db9eea62170e37575222b805016b08",
+        "4f09937437c03281d1936fd3ba877241",
+        "672d74ddc184afae424569e45a02eef0"
+      ]
+    },
+    "av1_tile_sizes": {
+      "size": [
+        160,
+        90
+      ],
+      "depth": 8,
+      "file": "av1_tile_sizes.ivf",
+      "coding": "-c:v libaom-av1 -cpu-used 5 -b:v 200k -g 6 -aom-params tile-width=1,2:tile-height=1,1",
+      "md5": [
+        "ca68277103ea2948626af7aa4538d267",
+        "695afd4bc99c32c7f4ae90b5b6128848",
+        "d30a28ec4b832d632688592fe2cbb9ff",
+        "f9cd4c8ca6db46e4bcbdbba0b084ee40",
+        "00c748de1d617920e98ce6db1ec15b33",
+        "77e675eaf0ab7d6a345a5b030ed96071",
+        "f3fbd71daa65afb389b0551cafae6ade",
+        "24005d4c6a8c4fa094360d83ff56df20",
+        "d2416b58308c1800171fdb9376cdc61f",
+        "3524881d590c74b65f4cf5dbc294ab43",
+        "0bb55eaf2adbd2b3edc93ce109ec3d66",
+        "afeddee7094cd8e9831cb319885b441e"
+      ]
+    },
+    "av1_grain": {
+      "size": [
+        120,
+        68
+      ],
+      "depth": 8,
+      "file": "av1_grain.ivf",
+      "coding": "-c:v libaom-av1 -cpu-used 5 -b:v 150k -g 10 -aom-params film-grain-test=3",
+      "md5": [
+        "7dddb372e132cda2361b3b32088183a7",
+        "26348ba6bda4dec0f20c5cf683caf591",
+        "d49f2fdb3563eb4626b234605497f869",
+        "73090107ce43ad34c60f6b51d936315c",
+        "a24f69f0142a6e587ad8c066a3130c9d",
+        "185476dc74358d222b8d16c69c300d98",
+        "7f2fa707f49548ed20a374c8ef1ef931",
+        "21b4a30365b40f2d16f36de70ca54d96",
+        "32a228c42cc875428bd796ee8485732f",
+        "33459a51d941177a94b3e95567e90816",
+        "9564424c8ab681456976f70da960b489",
+        "743cd23184190f842ef94568fe2629c8",
+        "b9307a0849005d3aac2598054e18b6e8",
+        "5160f28a967320104f7f69266ff8a59f",
+        "035d9937d195de10c61d1779c0f4b9fb",
+        "f55aaa8f25895ab321d2735dc1056a70",
+        "9dd0838febcecaa4232165a342386697",
+        "82216c00882f2b2e1f65cbc86b26289d",
+        "b5aafe9d1a76331726ef4d446b8641a7",
+        "5307b151d1ac1dac7697d4b5bad82b02"
+      ]
+    },
+    "av1_grain10": {
+      "size": [
+        96,
+        54
+      ],
+      "depth": 10,
+      "file": "av1_grain10.ivf",
+      "coding": "-c:v libaom-av1 -cpu-used 5 -b:v 150k -g 10 -aom-params film-grain-test=7",
+      "md5": [
+        "e4a0ac511bbbe075e00d9587eaf0e6d7",
+        "74fda81e353d725addc5e96f9bcf086f",
+        "1536879ba5488bc9d831901b3e67ee77",
+        "6224390c2e21064d2e9efb0e63ea0c6d",
+        "441e70a6612203231df90bab92926e61",
+        "1685726fc76029f3962fce31750493d6",
+        "1ff750900f1166b9a093491bd48d5612",
+        "b21d7a1d96559779fcdb3526fb4adb9d",
+        "93e6b241e9e7bf4ea1bbd0230abb5480",
+        "3cd5fd646165e1c8f0125eb90b20b75d",
+        "eb3c6bb290b3a2b69e6113af40dbc2d1",
+        "bb56c1a0b2a1983cf98c146a60048839",
+        "708b43e496ea73399c281161e7435f30",
+        "561b22901b7d609f398dea4d1851efc6",
+        "8c4ac0788b16db8883118766b46d3f9d",
+        "9e0c8bf2c4da8261931b55d06f19265c",
+        "325153c31efb083aaf28b783c360335d",
+        "aa6015de15a120c93948bc8d231900ba",
+        "c31a95886f139cd6a38bf8aa392feffc",
+        "4aa0fef3358faf7ce0a2ee6975cf038e"
+      ]
+    },
+    "av1_switchable10": {
+      "size": [
+        120,
+        68
+      ],
+      "depth": 10,
+      "file": "av1_switchable10.ivf",
+      "coding": "-c:v libsvtav1 -preset 6 -g 10 -svtav1-params tile-columns=1",
+      "md5": [
+        "7520af6c15e6adbff45f99e34ec57cf4",
+        "280989c6c28d799494b42a5b55acf6f4",
+        "0180172ad06d03cea92fabaa32df857a",
+        "173ef1d3ed5c3eb794b84dc89e0a7fcc",
+        "e1ff5a72a224072d5373e51393efaba6",
+        "e742a652d315e61d36f24b2b9f9de5e5",
+        "f567d734398f022a793458f16ebd5a26",
+        "056ddbc455cfa639cb4c48cc45a5f5ed",
+        "6e6518983eeac4c1bc1faf453aac4ace",
+        "d86a2dde2273363675db3a7bd3aa9280",
+        "e6275b74058abaa36ec47c0b68eb4e4f",
+        "115b7f4acd49701fea37c1d27d3b6329",
+        "29bc23901e14e2577f2717b93b3165b8",
+        "4af361199f59c0f8b1e6d0a889ed4116",
+        "e48f2a412c9f0dfb940e50d2c20e6eb2",
+        "06ba189d88706c8c4a42f804dcd7911a",
+        "ea4eb6c282d6532bad0e5a49f1dc79c7",
+        "74136a70980a1398d45bce212dea2083",
+        "5e1b87e2ef33754caea45d5343a598d2",
+        "acb915bdd3b64044bef48c80d907fc40"
+      ]
+    },
+    "av1_intra_only": {
+      "size": [
+        110,
+        66
+      ],
+      "depth": 8,
+      "file": "av1_intra_only.ivf",
+      "coding": "-c:v libsvtav1 -preset 8 -g 12 -svtav1-params irefresh-type=1",
+      "md5": [
+        "fc00ec42e1b1221a09fe9e04ea755d4e",
+        "b9bb410d3c7ca46d94fb136b412a84ce",
+        "655546a124dcf6e4810d3b73af15d5f0",
+        "6807d4549b39018cae723ad12c5403f6",
+        "b6f244154fb965ab20258487a69f41ca",
+        "92029d2e45256353d23f944a64b282f0",
+        "b756c600aae927be8e5d553b106cea67",
+        "ab10f24deabe7ba99f3e899988a57c8c",
+        "a0a473081f18000a1997a8d95b2844e4",
+        "c7c241ba4aee77f6243cea3d44e4fe62",
+        "e2d848d51de1dd1230252f201a354871",
+        "97eac6f9add782a833fa00b594906f57",
+        "3df23fb8b9587cd8d529b9a32521094d",
+        "8ff79b359d7279ec3e60169b92547b1f",
+        "18defd9476ac703dcc9255a0029e8428",
+        "114a5a6fd990345f740653936f6410c2",
+        "2a779822f6a602a9e58c301f2763ec28",
+        "9240dca15d07547f8b85507d91f85637",
+        "7838d94b239866edf93f15aadbe291cb",
+        "b59ec5a94d96082e4cc50a2aa4a6c88a",
+        "4bb241f8324fa7f00556e8619fc775c2",
+        "65ba3a7103217c67790f6247888420e4",
+        "e4e31f7fbcf1fcad5a3b0e10f886324d",
+        "cc1b292cb46b780d5543b7b3bacba9c0",
+        "a332f96aa3981ca4b50b49a316257ff0",
+        "c5e7d171da7b744a3e7ab749848104ea",
+        "4255961303674bdea45ada0f9b37cd5b",
+        "2391bc6db2b2b0701413a70b401e5ea5",
+        "14f96d1e6ca0ce1bbea48f12bc2328d2",
+        "8bacba1a98bd2310e3e9a13a86ffeb1e",
+        "87be21590d687b675ad600d4dac45486",
+        "76f7e1ea50a84f8ef3fa58951dd15f60",
+        "d9c01ff6dd8b35ac6bcca36236952267",
+        "a55e745b8fbb0698fd101cb94f430e09",
+        "13e862e131c21d22037c564b695db15d",
+        "f0190cc1f1ca96207f97bf9dd9fee336",
+        "e0df2fd6e7e07845fbb1732ae0de1797",
+        "70aef603558a386adb0350e7f5d50972",
+        "c92556d8011585b63e5816a0bc3f0037",
+        "a3f432d8f24487dd977848ab85ffc2e0"
+      ]
+    },
+    "av1_superres": {
+      "size": [
+        120,
+        72
+      ],
+      "depth": 8,
+      "file": "av1_superres.ivf",
+      "coding": "-c:v libsvtav1 -preset 8 -g 10 -svtav1-params superres-mode=1:superres-denom=12:superres-kf-denom=12",
+      "md5": [
+        "47a451e899fffb0e5da89780a08f4cdf",
+        "7c59f31d295f4ad5567d38071b39fccf",
+        "e6333aa82229049a6ca128d9d384f7b9",
+        "9308b39a504c5bdea073e97092b159cc",
+        "dfb16464ad816a7587e08b7a11776c30",
+        "6bf0cba95210bb165cc89920b56a3021",
+        "204830c5293170c5a59bfc975cfbf072",
+        "d56c499fe11409b8238cfed5f61ee00d",
+        "53c0aa74921093f7a49c5d5039ea35f4",
+        "d329bf889a5a4a1a4eff6f8ca987f0bd",
+        "cc06336eac858bc5ca241abd12047d49",
+        "f960ddcdc54a44985028a237892f790b",
+        "942890c913907569d99708536a962a94",
+        "88bef36aec2eb25fbe13d08959980fd3",
+        "fa861eabac97a64b4ffca6b400fd6829",
+        "665c788f5a94a4b43d68e159f6a93eeb",
+        "29ca16b485cb9642b2345f4fa2b95db1",
+        "db3794ea32ad5069fc3e393f890619b7",
+        "4f990cb691a126ec698d461e8099f0d3",
+        "777afc97bd5b96c4719b3480f662f8a1"
+      ]
+    },
+    "av1_switch_frames": {
+      "size": [
+        96,
+        54
+      ],
+      "depth": 8,
+      "file": "av1_switch_frames.ivf",
+      "coding": "-c:v librav1e -speed 6 -g 30 -rav1e-params switch_frame_interval=8:low_latency=true",
+      "md5": [
+        "925af716627eafccb6aaa4595b3233e9",
+        "8358ca5ff6f5247f1e63385427ce6dcd",
+        "09b928b3f613655718906fa7a0708fd7",
+        "6510123777c8d259ad5ff4b977d96acc",
+        "09b25992b7b7b079456da5dffa1aaf4f",
+        "a83ebe3af0df19c5143d6baccf961463",
+        "e7ef441f5ed6eae4b08959c5300ddb17",
+        "7baf09b3bcb191c83e43e97e17825b37",
+        "e794fc67e891d167a63ece289ffba084",
+        "a9d60ced46b881504bc7a9a2d5cbd313",
+        "5544a23bc375439076c48990559689f1",
+        "7b2fe7b8ba1bb73cf94f095ab03569d8",
+        "d61f8d67a0d26a7bd1f04e20a4aaa89c",
+        "9eee6ec2551c6e018ec91ee558210510",
+        "4924502e6acdc102a20b0d24119f33db",
+        "fcebd393d35af6df36f14d8c1830461f",
+        "8b32af58dcf1f863e10fa48957b3ea31",
+        "2db503f24687b5607dcffc94bc3933ae",
+        "d28d475aad6573607c2e6c4a3c29d989",
+        "8c5df34c26f4731382f845123a8028b2",
+        "9d06f8fcb1ab847925284eac6c5d9223",
+        "18b1d0f7150be86d9cbd71bc4e7a43d1",
+        "d3c5b454e21c139c1a2a7774369fe285",
+        "e5713b651100cabc224d348bcd7aeb93",
+        "36edaa7582d2eaa16f9a0dc56362271f",
+        "5b438c8e5433f7bea10755af4e94b694",
+        "e6f6e96ae530790f30a9441b1726c498",
+        "1a1e3bb312a126d158a579b20962a19a",
+        "7ddd6a9cd3a83e50a7f8fddb5911e267",
+        "7922a80d0f4a2c52e3c8b9b9c833a9cd"
+      ]
+    },
+    "av1_global_motion": {
+      "size": [
+        160,
+        90
+      ],
+      "depth": 8,
+      "file": "av1_global_motion.ivf",
+      "coding": "-vf rotate=0.03*n:fillcolor=gray,zoompan=z=1+0.004*on:d=1:s=160x90 -c:v libaom-av1 -cpu-used 2 -b:v 200k -g 20 -enable-global-motion 1",
+      "md5": [
+        "b2fd9a79612341d4a1721213e8bfe8e5",
+        "6ef982786685143390e579af8e9a6000",
+        "3659c678b6787dcdf4723cc319ae491a",
+        "5d3c448b97d73015d1b8667fa7db7da7",
+        "345c3ead87662c3433f500264f77878c",
+        "7f0a3bd1b9504f061ab5b9fdae3101c5",
+        "c089fc8a27867e4a039d4b8b403ec1c2",
+        "f764f60c62ea15373a5cbc3e62bdc5d1",
+        "e502e0826ed24d1be6adbdb3d79f75ec",
+        "2ae374f2484afb15831782e5d3bc478b",
+        "829a142f4312ba375f1f1170375f2f89",
+        "cabbc4a508340acd5fd3d6dcbb4518f1",
+        "cbf67eb8025eec84726f9b1732235f84",
+        "7d1d7502f941259a77c2e9100b7ab474",
+        "17c0b17f4e2e70fe5b5806f1a21ac59c",
+        "087288d006c718b8a2bab6f5c554f8f7",
+        "2c5d915945d600f50092154d91a00af1",
+        "782779a29cc46e62cd01bd7bec77f9a9",
+        "8dcd1cbe86eda823ed41b1e5f4e0d7a3",
+        "ea84a8f7e385265ab27f9eed233b1159"
+      ]
+    },
+    "av1_resilient": {
+      "size": [
+        88,
+        50
+      ],
+      "depth": 8,
+      "file": "av1_resilient.ivf",
+      "coding": "-c:v libaom-av1 -cpu-used 5 -b:v 120k -g 10 -error-resilience default",
+      "md5": [
+        "8d3ee5f7d10cabc36d5208d4beb0d8ed",
+        "69fd059686f5c1b8dae6ca70a3f40cfe",
+        "5e3fac034cef1a9d8fec25286ecc3cfb",
+        "5639b78adc8dab0d19f6bab2ec19ed3b",
+        "e8c14e0f1d3e7594d9e7c2644299a0f5",
+        "094bdb613a36b9f4e4376ec85b15d4c7",
+        "98c159ea5d65e42c46e3d1b05d9ec423",
+        "f0b230f79ad0574f021eb3c2b65608d3",
+        "eac9dfa405d899958a3333ff1b90e93a",
+        "210e658c21332a6baeede98b73f18f4f",
+        "2036734279a1f377bbcf2feef4f12209",
+        "387d86c46267b19b2a349d6afb62257c",
+        "5d6eb0bc3af47d0a5e49190a86e31c07",
+        "512be3b76d638419e66f2489214f135d",
+        "6d7dfe541b82b4d32731e7b707b4617b",
+        "a9af9d884e5b5b2a62e19f2c70c87f9c",
+        "5e6b75e44d1390e5ffac2c94a7921b00",
+        "19af37779d5edb9713af790b3965e65c",
+        "1bbc178ed3c4bc55b78d35e192df8b56",
+        "5f480a95b06bce6fe5fa4c1c9c88edcb"
+      ]
+    },
+    "av1_monochrome": {
+      "size": [
+        72,
+        40
+      ],
+      "depth": 8,
+      "file": "av1_monochrome.ivf",
+      "coding": "-pix_fmt gray -c:v libaom-av1 -cpu-used 5 -b:v 80k -g 6",
+      "md5": [
+        "922a4483de24f09651166352af00cd5b",
+        "922a4483de24f09651166352af00cd5b",
+        "922a4483de24f09651166352af00cd5b",
+        "344ba4338ff608b29f69a23ed52e1edd",
+        "a846e3424c5bf834dde42c5ca31dab71",
+        "a846e3424c5bf834dde42c5ca31dab71",
+        "5ce938ac2f97593be81958aef0719c0f",
+        "5ce938ac2f97593be81958aef0719c0f",
+        "5ce938ac2f97593be81958aef0719c0f",
+        "5ce938ac2f97593be81958aef0719c0f",
+        "5ce938ac2f97593be81958aef0719c0f",
+        "e748f5de50b06bf709fd3c9f0bcd58dd"
+      ]
+    },
+    "av1_still": {
+      "size": [
+        64,
+        36
+      ],
+      "depth": 8,
+      "file": "av1_still.ivf",
+      "coding": "-c:v libaom-av1 -cpu-used 5 -still-picture 1",
+      "md5": [
+        "707ccc1d67cb37e0ad8ebcf8530fc23d"
+      ]
+    }
+  }
+}

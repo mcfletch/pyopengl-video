@@ -6,7 +6,9 @@
         120,
         68
       ],
-      "x264": "bframes=3:b-pyramid=normal:ref=4:weightp=2:weightb=1:slices=2:keyint=15:min-keyint=15:scenecut=0",
+      "depth": 8,
+      "file": "high_bpyramid.h264",
+      "coding": "-c:v libx264 -profile:v high -x264-params bframes=3:b-pyramid=normal:ref=4:weightp=2:weightb=1:slices=2:keyint=15:min-keyint=15:scenecut=0",
       "md5": [
         "252cf2e5c85be4c8ecfb795c72487f00",
         "27460d8ebec6955ca4926299746b0f7b",
@@ -55,7 +57,9 @@
         64,
         48
       ],
-      "x264": "bframes=2:ref=2:cqm=jvt:keyint=10:min-keyint=10:scenecut=0",
+      "depth": 8,
+      "file": "high_cqm.h264",
+      "coding": "-c:v libx264 -profile:v high -x264-params bframes=2:ref=2:cqm=jvt:keyint=10:min-keyint=10:scenecut=0",
       "md5": [
         "e77645fa30ce32827dbebb7d3615f740",
         "e77645fa30ce32827dbebb7d3615f740",
@@ -84,7 +88,9 @@
         72,
         40
       ],
-      "x264": "ref=3:keyint=8:min-keyint=8:scenecut=0",
+      "depth": 8,
+      "file": "baseline_cavlc.h264",
+      "coding": "-c:v libx264 -profile:v baseline -x264-params ref=3:keyint=8:min-keyint=8:scenecut=0",
       "md5": [
         "aa0339e01aa8f4485931c4007c11181a",
         "5af1efe215a8f164835f5d88c03d6a89",
@@ -113,7 +119,9 @@
         96,
         54
       ],
-      "x264": "bframes=2:ref=3:open-gop=1:keyint=10:min-keyint=10:scenecut=0",
+      "depth": 8,
+      "file": "open_gop.h264",
+      "coding": "-c:v libx264 -profile:v high -x264-params bframes=2:ref=3:open-gop=1:keyint=10:min-keyint=10:scenecut=0",
       "md5": [
         "ea305602cd0a665177783d2ecdce084a",
         "b0174d2dd2de9a347e9875b0bc4dae7e",
@@ -154,7 +162,9 @@
         64,
         48
       ],
-      "x264": "tff=1:bframes=1:keyint=6:min-keyint=6:scenecut=0",
+      "depth": 8,
+      "file": "interlaced_mbaff.h264",
+      "coding": "-c:v libx264 -profile:v high -flags +ildct+ilme -x264-params tff=1:bframes=1:keyint=6:min-keyint=6:scenecut=0",
       "md5": [
         "6d0e6e18a99e4523d0f57981ce084db1",
         "6d0e6e18a99e4523d0f57981ce084db1",

@@ -29,85 +29,17 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
-from pyopengl_video.vaapi import api
+from pyopengl_video.vaapi import api, av1_api, hevc_api, vp9_api
 
-#: Structures the binding declares that have a C counterpart to measure. The
-#: private pieces a union or an array is made of are measured through the
-#: structure that contains them.
-STRUCTURES = [
-    api.VAConfigAttrib,
-    api.VAGenericValue,
-    api.VASurfaceAttrib,
-    api.VARectangle,
-    api.VACodedBufferSegment,
-    api.VAImageFormat,
-    api.VAImage,
-    api.VAPictureH264,
-    api.VAEncSequenceParameterBufferH264,
-    api.VAEncPictureParameterBufferH264,
-    api.VAEncSliceParameterBufferH264,
-    api.VAPictureParameterBufferH264,
-    api.VAIQMatrixBufferH264,
-    api.VASliceParameterBufferH264,
-    api.VAEncPackedHeaderParameterBuffer,
-    api.VAEncMiscParameterRateControl,
-    api.VAEncMiscParameterFrameRate,
-    api.VAEncMiscParameterHRD,
-    api.VAProcColorProperties,
-    api.VAProcPipelineParameterBuffer,
-    api.VADRMPRIMESurfaceDescriptor,
-]
+#: The modules that declare libva structures and constants. Every public
+#: ``ctypes.Structure`` in one is measured, and so is every integer constant
+#: whose name the headers also define.
+MODULES = (api, hevc_api, av1_api, vp9_api)
 
-#: Constants the binding names and the headers define. A value that has drifted
-#: is as silent a failure as a field at the wrong offset.
-CONSTANTS = [
-    'VA_STATUS_SUCCESS',
-    'VAProfileNone', 'VAProfileH264Main',
-    'VAProfileH264High', 'VAProfileH264ConstrainedBaseline', 'VAProfileH264High10',
-    'VAEntrypointVLD', 'VAEntrypointEncSlice', 'VAEntrypointEncSliceLP',
-    'VAEntrypointVideoProc',
-    'VAConfigAttribRTFormat', 'VAConfigAttribRateControl',
-    'VAConfigAttribEncPackedHeaders', 'VAConfigAttribEncMaxRefFrames',
-    'VA_RT_FORMAT_YUV420', 'VA_RT_FORMAT_RGB32',
-    'VA_RC_CBR', 'VA_RC_VBR', 'VA_RC_CQP',
-    'VA_ENC_PACKED_HEADER_SEQUENCE', 'VA_ENC_PACKED_HEADER_PICTURE',
-    'VA_ENC_PACKED_HEADER_SLICE', 'VA_ENC_PACKED_HEADER_MISC',
-    'VA_ENC_PACKED_HEADER_RAW_DATA',
-    'VAEncPackedHeaderSequence', 'VAEncPackedHeaderPicture',
-    'VAEncPackedHeaderSlice', 'VAEncPackedHeaderRawData',
-    'VAPictureParameterBufferType', 'VAIQMatrixBufferType',
-    'VASliceParameterBufferType', 'VASliceDataBufferType',
-    'VA_SLICE_DATA_FLAG_ALL', 'VA_INVALID_ID', 'VA_INVALID_SURFACE',
-    'VAEncCodedBufferType', 'VAEncSequenceParameterBufferType',
-    'VAEncPictureParameterBufferType', 'VAEncSliceParameterBufferType',
-    'VAEncPackedHeaderParameterBufferType', 'VAEncPackedHeaderDataBufferType',
-    'VAEncMiscParameterBufferType', 'VAProcPipelineParameterBufferType',
-    'VAEncMiscParameterTypeFrameRate', 'VAEncMiscParameterTypeRateControl',
-    'VAEncMiscParameterTypeHRD',
-    'VASurfaceAttribPixelFormat', 'VASurfaceAttribMinWidth',
-    'VASurfaceAttribMaxWidth', 'VASurfaceAttribMinHeight',
-    'VASurfaceAttribMaxHeight', 'VASurfaceAttribMemoryType',
-    'VASurfaceAttribExternalBufferDescriptor', 'VASurfaceAttribUsageHint',
-    'VAGenericValueTypeInteger', 'VAGenericValueTypePointer',
-    'VA_SURFACE_ATTRIB_SETTABLE',
-    'VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME',
-    'VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2',
-    'VA_SURFACE_ATTRIB_USAGE_HINT_ENCODER',
-    'VA_SURFACE_ATTRIB_USAGE_HINT_VPP_READ',
-    'VA_SURFACE_ATTRIB_USAGE_HINT_VPP_WRITE',
-    'VA_EXPORT_SURFACE_READ_ONLY', 'VA_EXPORT_SURFACE_WRITE_ONLY',
-    'VA_EXPORT_SURFACE_SEPARATE_LAYERS', 'VA_EXPORT_SURFACE_COMPOSED_LAYERS',
-    'VA_FOURCC_NV12', 'VA_FOURCC_P010', 'VA_FOURCC_RGBA', 'VA_FOURCC_BGRA', 'VA_FOURCC_ABGR',
-    'VA_FOURCC_ARGB',
-    'VA_PICTURE_H264_INVALID', 'VA_PICTURE_H264_TOP_FIELD',
-    'VA_PICTURE_H264_BOTTOM_FIELD', 'VA_PICTURE_H264_SHORT_TERM_REFERENCE',
-    'VA_PICTURE_H264_LONG_TERM_REFERENCE',
-    'VA_PROGRESSIVE', 'VA_FRAME_PICTURE',
-    'VA_SOURCE_RANGE_UNKNOWN', 'VA_SOURCE_RANGE_REDUCED', 'VA_SOURCE_RANGE_FULL',
-    'VAProcColorStandardNone', 'VAProcColorStandardBT709',
-    'VA_CODED_BUF_STATUS_PICTURE_AVE_QP_MASK',
-]
+#: Names that begin as a header constant does and are this binding's own.
+NOT_IN_THE_HEADERS = frozenset({'VA_ATTRIB_NOT_SUPPORTED'})
 
 #: Fields the binding spells for its own convenience, or that C reaches through
 #: a nested structure the binding flattens.
@@ -118,6 +50,37 @@ RENAMED: dict[tuple[str, str], str] = {
 
 #: Fields with no C counterpart of that name to take an offset of.
 SKIPPED: set[tuple[str, str]] = set()
+
+
+def structures() -> list[type]:
+    """Every public structure the binding declares, each measured once."""
+    found: dict[str, type] = {}
+    for module in MODULES:
+        for name, value in vars(module).items():
+            if (isinstance(value, type) and issubclass(value, ctypes.Structure)
+                    and not name.startswith('_') and value.__module__ == module.__name__):
+                found[name] = value
+    return list(found.values())
+
+
+def constants() -> list[str]:
+    """Every integer the binding names the way the headers name theirs."""
+    found: list[str] = []
+    for module in MODULES:
+        for name, value in vars(module).items():
+            if (name.startswith('VA') and type(value) is int
+                    and name not in NOT_IN_THE_HEADERS and name not in found):
+                found.append(name)
+    return found
+
+
+def declared(name: str) -> Any:
+    """The binding's declaration of `name`, from whichever module holds it."""
+    for module in MODULES:
+        if hasattr(module, name):
+            return getattr(module, name)
+    raise AttributeError(f'no libva binding module declares {name}')
+
 
 HEADERS = ('va/va.h', 'va/va_vpp.h', 'va/va_enc_h264.h', 'va/va_drmcommon.h',
            'va/va_drm.h')
@@ -140,14 +103,14 @@ def c_program() -> str:
     lines = ['#include <stdio.h>', '#include <stddef.h>']
     lines += [f'#include <{header}>' for header in HEADERS]
     lines.append('int main(void) {')
-    for structure in STRUCTURES:
+    for structure in structures():
         name = structure.__name__
         lines.append(f'    printf("size {name} %zu\\n", sizeof({name}));')
         for field, expression in fields_of(structure):
             lines.append(
                 f'    printf("offset {name}.{field} %zu\\n", '
                 f'offsetof({name}, {expression}));')
-    for constant in CONSTANTS:
+    for constant in constants():
         lines.append(
             f'    printf("constant {constant} %lld\\n", (long long)({constant}));')
     lines += ['    return 0;', '}']
@@ -193,10 +156,10 @@ def record(include: Path | None = None) -> dict:
 def disagreements(abi: dict) -> list[str]:
     """What the binding says that the headers do not."""
     wrong = [name for name, size in abi['sizes'].items()
-             if ctypes.sizeof(getattr(api, name)) != size]
-    wrong += [f'{name} = {getattr(api, name)}, headers say {value}'
+             if ctypes.sizeof(declared(name)) != size]
+    wrong += [f'{name} = {declared(name)}, headers say {value}'
               for name, value in abi['constants'].items()
-              if getattr(api, name) != value]
+              if declared(name) != value]
     return wrong
 
 

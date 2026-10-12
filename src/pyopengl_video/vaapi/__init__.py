@@ -12,13 +12,19 @@ processing block converts RGB to NV12 and the video engine codes it, so nothing
 crosses the bus but the compressed result.
 
 libva is a slice-level interface, so the codec decisions are this package's:
-:mod:`pyopengl_video.vaapi.h264` holds them and
-:mod:`pyopengl_video.vaapi.encoder` the plumbing.
+each codec has a control layer (:mod:`pyopengl_video.vaapi.control`) holding
+them, and :mod:`pyopengl_video.vaapi.encoder` is the plumbing.
 
 Decoding runs the other way (:mod:`pyopengl_video.vaapi.decoder`): the driver
-decodes into surfaces exported as DMA-BUFs, which OpenGL imports as textures.
-:mod:`~pyopengl_video.vaapi.h264_parse` and :mod:`~pyopengl_video.vaapi.h264_dpb`
-are the syntax and picture management libva leaves to the caller.
+decodes into surfaces exported as DMA-BUFs, which OpenGL imports as textures,
+and the codec's control layer supplies the syntax and the picture management
+libva leaves to the caller.
+
+Which codecs a machine gets is the device's to say.
+:data:`pyopengl_video.vaapi.codecs.ENCODERS` and
+:data:`~pyopengl_video.vaapi.codecs.DECODERS` list the codecs with a control
+layer, and :func:`encoder_codecs` and :func:`decoder_codecs` the ones the
+devices here offer.
 """
 from __future__ import annotations
 
@@ -29,13 +35,16 @@ from typing import Any
 from pyopengl_video.backend import Backend, context_kind
 from pyopengl_video.linux import dmabuf
 from pyopengl_video.vaapi import api
-from pyopengl_video.vaapi.device import Device
+from pyopengl_video.vaapi.codecs import DECODERS, ENCODERS, Support, capabilities
 
 log = logging.getLogger(__name__)
 
-#: H.264 on the parts this backend runs on. A driver that will not go this far
-#: refuses the size when the encoder is built, and says so.
-MAX_SIZE = (4096, 4096)
+#: The largest frame any codec here reaches on the parts this backend runs on.
+#: Discovery replaces it with what the device states for each codec.
+MAX_SIZE = (8192, 8192)
+
+#: What H.264 reaches, which is less than the newer codecs do.
+H264_MAX_SIZE = (4096, 4096)
 
 #: libva is the Linux interface; the vendors' Windows encoders are reached
 #: through Direct3D instead.
@@ -44,7 +53,7 @@ SUPPORTED_PLATFORM = sys.platform.startswith('linux')
 #: What :func:`probe` found, kept because discovery may be called repeatedly and
 #: the answer only changes when the hardware does. Cleared by
 #: :func:`forget_probe`, which the tests use.
-_probed: dict[str, bool] = {}
+_probed: dict[str, dict[str, tuple[int, int]]] = {}
 
 
 def forget_probe() -> None:
@@ -53,13 +62,14 @@ def forget_probe() -> None:
 
 
 def probe() -> bool:
-    """Can this machine encode H.264 from an OpenGL texture with libva?
+    """Can this machine encode from an OpenGL texture with libva?
 
-    Four things have to be true, and this reports all four honestly: libva
-    loads, a DRM render node opens, that device offers H.264 slice encoding,
-    and -- when an OpenGL context is current -- that context can export a
-    texture as a DMA-BUF. libva is installed on plenty of machines whose GPU
-    has no encoder, so asking the device is the only reliable answer.
+    Four things have to be true: libva loads, a DRM render node opens, that
+    device offers slice encoding for a codec in
+    :data:`~pyopengl_video.vaapi.codecs.ENCODERS`, and -- when an OpenGL
+    context is current -- that context can export a texture as a DMA-BUF.
+    libva is installed on plenty of machines whose GPU has no encoder, so
+    asking the device is the only reliable answer.
 
     Quiet, and cheap after the first call: opening a driver costs enough that
     the answer is kept. A context that cannot export makes this false, because
@@ -73,9 +83,7 @@ def probe() -> bool:
     try:
         if not _context_can_export():
             return False
-        if 'device' not in _probed:
-            _probed['device'] = _any_device_encodes()
-        return _probed['device']
+        return bool(_offered('encode', ENCODERS))
     except Exception as error:  # noqa: BLE001 - see below
         # Discovery calls this, and a backend that cannot answer is a backend
         # that is not available -- never one that stops a caller finding the
@@ -114,35 +122,39 @@ def _context_can_export() -> bool:
     return True
 
 
-def _any_device_encodes() -> bool:
-    """Does any DRM render node here offer H.264 slice encoding?"""
-    try:
-        va = api.VA.instance()
-    except OSError as error:
-        log.debug('%s is not loadable: %s', api.LIBRARY_NAME, error)
-        return False
-    return any(_device_encodes(va, node) for node in api.render_nodes())
+def _offered(direction: str, table: dict[str, Support]) -> dict[str, tuple[int, int]]:
+    """The codecs of `table` the devices here offer, asked once and kept."""
+    if direction not in _probed:
+        try:
+            _probed[direction] = capabilities(table)
+        except OSError as error:
+            log.debug('%s is not loadable: %s', api.LIBRARY_NAME, error)
+            _probed[direction] = {}
+    return _probed[direction]
 
 
-def _device_encodes(va: Any, node: str) -> bool:
-    """Does one render node offer H.264 slice encoding? Never raises."""
-    return _device_offers(va, node, api.VAEntrypointEncSlice)
+def encoder_codecs() -> dict[str, tuple[int, int]]:
+    """The codecs this machine's devices encode, each with its largest frame.
+
+    Empty where libva does not load or no device has an encoder. Quiet, and
+    cheap after the first call.
+    """
+    if not SUPPORTED_PLATFORM:
+        return {}
+    return dict(_offered('encode', ENCODERS))
 
 
-def _device_offers(va: Any, node: str, entrypoint: int) -> bool:
-    """Does one render node offer `entrypoint` for H.264 High? Never raises."""
-    try:
-        device = Device(node, va)
-    except Exception as error:  # noqa: BLE001 - a probe answers, it does not raise
-        log.debug('%s does not answer as a VA-API device: %s', node, error)
-        return False
-    try:
-        return entrypoint in device.entrypoints(api.VAProfileH264High)
-    except Exception as error:  # noqa: BLE001 - a probe answers, it does not raise
-        log.debug('%s would not list its entrypoints: %s', node, error)
-        return False
-    finally:
-        device.close()
+def decoder_codecs() -> dict[str, tuple[int, int]]:
+    """The codecs this machine's devices decode, each with its largest frame."""
+    if not SUPPORTED_PLATFORM:
+        return {}
+    return dict(_offered('decode', DECODERS))
+
+
+#: What to install where libva finds no driver with the codecs wanted.
+NO_DRIVER = ('libva needs a driver for the GPU beside it -- mesa-va-drivers for '
+             'AMD, intel-media-va-driver for Intel -- and `vainfo` will say '
+             'whether one is loaded')
 
 
 def explain() -> str:
@@ -159,13 +171,9 @@ def explain() -> str:
         reason = _context_reason(context_kind())
         if reason:
             return reason
-        if not _any_device_encodes():
-            return (
-                'no DRM render node here reports an H.264 encoder. libva needs '
-                'a driver for the GPU beside it -- mesa-va-drivers for AMD, '
-                'intel-media-va-driver for Intel -- and `vainfo` will say '
-                'whether one is loaded'
-            )
+        if not encoder_codecs():
+            return (f'no DRM render node here reports an encoder for any of '
+                    f'{", ".join(sorted(ENCODERS))}. {NO_DRIVER}')
     except Exception as error:  # noqa: BLE001 - explaining must not itself fail
         log.debug('the VA-API backend could not say why it declined: %s', error)
     return ''
@@ -191,12 +199,14 @@ def _build(width: int, height: int, **options: Any) -> Any:
 BACKEND = Backend(
     name='vaapi',
     vendor='Intel/AMD',
-    codecs=frozenset({'h264'}),
+    codecs=frozenset(ENCODERS),
     max_size=MAX_SIZE,
+    sizes={'h264': H264_MAX_SIZE},
     zero_copy=True,
     probe=probe,
     factory=_build,
     explain=explain,
+    capabilities=encoder_codecs,
 )
 
 
@@ -204,11 +214,12 @@ BACKEND = Backend(
 
 
 def decoder_probe() -> bool:
-    """Can this machine decode H.264 into OpenGL textures with libva?
+    """Can this machine decode into OpenGL textures with libva?
 
-    libva loads, a render node offers H.264 decoding (``VAEntrypointVLD``),
-    and, when an OpenGL context is current, that context can import a
-    DMA-BUF. Quiet, and cheap after the first call.
+    libva loads, a render node offers decoding (``VAEntrypointVLD``) for a
+    codec in :data:`~pyopengl_video.vaapi.codecs.DECODERS`, and, when an
+    OpenGL context is current, that context can import a DMA-BUF. Quiet, and
+    cheap after the first call.
     """
     if not SUPPORTED_PLATFORM:
         return False
@@ -218,23 +229,10 @@ def decoder_probe() -> bool:
             log.debug('the VA-API decoder cannot use this context: it cannot '
                       'import a DMA-BUF')
             return False
-        if 'decoder' not in _probed:
-            _probed['decoder'] = _any_device_decodes()
-        return _probed['decoder']
+        return bool(_offered('decode', DECODERS))
     except Exception as error:  # noqa: BLE001 - a probe answers, it does not raise
         log.debug('the VA-API decoder could not answer for this machine: %s', error)
         return False
-
-
-def _any_device_decodes() -> bool:
-    """Does any DRM render node here offer H.264 High decoding?"""
-    try:
-        va = api.VA.instance()
-    except OSError as error:
-        log.debug('%s is not loadable: %s', api.LIBRARY_NAME, error)
-        return False
-    return any(_device_offers(va, node, api.VAEntrypointVLD)
-               for node in api.render_nodes())
 
 
 def decoder_explain() -> str:
@@ -249,11 +247,9 @@ def decoder_explain() -> str:
             return ('this OpenGL context cannot import a DMA-BUF '
                     '(EGL_EXT_image_dma_buf_import); create the window with '
                     'glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)')
-        if not _any_device_decodes():
-            return ('no DRM render node here reports an H.264 decoder. libva needs '
-                    'a driver for the GPU beside it -- mesa-va-drivers for AMD, '
-                    'intel-media-va-driver for Intel -- and `vainfo` will say '
-                    'whether one is loaded')
+        if not decoder_codecs():
+            return (f'no DRM render node here reports a decoder for any of '
+                    f'{", ".join(sorted(DECODERS))}. {NO_DRIVER}')
     except Exception as error:  # noqa: BLE001 - explaining must not itself fail
         log.debug('the VA-API decoder could not say why it declined: %s', error)
     return ''
@@ -270,10 +266,12 @@ def _build_decoder(**options: Any) -> Any:
 DECODER_BACKEND = Backend(
     name='vaapi',
     vendor='Intel/AMD',
-    codecs=frozenset({'h264'}),
+    codecs=frozenset(DECODERS),
     max_size=MAX_SIZE,
+    sizes={'h264': H264_MAX_SIZE},
     zero_copy=True,
     probe=decoder_probe,
     factory=_build_decoder,
     explain=decoder_explain,
+    capabilities=decoder_codecs,
 )

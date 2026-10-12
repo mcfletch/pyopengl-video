@@ -51,7 +51,7 @@ from pyopengl_video.playback import Movie
 from tests.conftest import blit, decode_all, gradient_frame, md5s
 
 DATA = Path(__file__).parent / 'data' / 'decode'
-RECORDED = json.loads((DATA / 'fixtures.json').read_text())
+RECORDED = json.loads((DATA / 'h264.json').read_text())
 FIXTURES = RECORDED['streams']
 INTERLACED = RECORDED['interlaced']
 TICK = 3000                                  # 30 fps in a 90 kHz timescale

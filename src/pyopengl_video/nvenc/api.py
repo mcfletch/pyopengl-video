@@ -181,6 +181,8 @@ NV_ENC_CODEC_H264_GUID = _guid(
     0x6bc82762, 0x4e63, 0x4ca4, 0xaa, 0x85, 0x1e, 0x50, 0xf3, 0x21, 0xf6, 0xbf)
 NV_ENC_CODEC_HEVC_GUID = _guid(
     0x790cdc88, 0x4522, 0x4d7b, 0x94, 0x25, 0xbd, 0xa9, 0x97, 0x5f, 0x76, 0x03)
+NV_ENC_CODEC_AV1_GUID = _guid(
+    0x0a352289, 0x0aa7, 0x4759, 0x86, 0x2d, 0x5d, 0x15, 0xcd, 0x16, 0xd2, 0x54)
 NV_ENC_H264_PROFILE_HIGH_GUID = _guid(
     0xe7cbc309, 0x4f7a, 0x4b89, 0xaf, 0x2a, 0xd5, 0x37, 0xc9, 0x2b, 0xe3, 0x10)
 
@@ -204,7 +206,17 @@ TUNING_INFO = {
     'ultra_high_quality': NV_ENC_TUNING_INFO_ULTRA_HIGH_QUALITY,
 }
 
-CODEC_GUIDS = {'h264': NV_ENC_CODEC_H264_GUID, 'hevc': NV_ENC_CODEC_HEVC_GUID}
+#: The codecs a session may offer, by the name this package gives each.
+CODEC_GUIDS = {'h264': NV_ENC_CODEC_H264_GUID, 'hevc': NV_ENC_CODEC_HEVC_GUID,
+               'av1': NV_ENC_CODEC_AV1_GUID}
+
+#: ``NV_ENC_CAPS`` values: the largest frame a codec takes on this part.
+NV_ENC_CAPS_WIDTH_MAX = 16
+NV_ENC_CAPS_HEIGHT_MAX = 17
+
+#: The H.273 code point for BT.709, which the ``NV_ENC_VUI_*`` enumerations
+#: number primaries, transfer and matrix by alike.
+NV_ENC_VUI_BT709 = 1
 
 
 class NV_ENC_QP(Structure):
@@ -345,15 +357,133 @@ class NV_ENC_CONFIG_H264(Structure):
     ]
 
 
-class NV_ENC_CODEC_CONFIG(Union):
-    """Only the H.264 arm is declared; the reserved array fixes the size.
+class NV_ENC_CONFIG_HEVC(Structure):
+    """HEVC's arm of the codec configuration. Its VUI is H.264's structure."""
 
-    A union is as large as its largest member, and the header gives that member
-    as a 320-word reserved array, so a codec whose configuration this package
-    does not yet write still occupies the right space.
+    _fields_ = [
+        ('level', c_uint32),
+        ('tier', c_uint32),
+        ('minCUSize', c_uint32),
+        ('maxCUSize', c_uint32),
+        ('useConstrainedIntraPred', c_uint32, 1),
+        ('disableDeblockAcrossSliceBoundary', c_uint32, 1),
+        ('outputBufferingPeriodSEI', c_uint32, 1),
+        ('outputPictureTimingSEI', c_uint32, 1),
+        ('outputAUD', c_uint32, 1),
+        ('enableLTR', c_uint32, 1),
+        ('disableSPSPPS', c_uint32, 1),
+        ('repeatSPSPPS', c_uint32, 1),
+        ('enableIntraRefresh', c_uint32, 1),
+        ('chromaFormatIDC', c_uint32, 2),
+        ('reserved3', c_uint32, 3),
+        ('enableFillerDataInsertion', c_uint32, 1),
+        ('enableConstrainedEncoding', c_uint32, 1),
+        ('enableAlphaLayerEncoding', c_uint32, 1),
+        ('singleSliceIntraRefresh', c_uint32, 1),
+        ('outputRecoveryPointSEI', c_uint32, 1),
+        ('outputTimeCodeSEI', c_uint32, 1),
+        ('enableTemporalSVC', c_uint32, 1),
+        ('enableMVHEVC', c_uint32, 1),
+        ('outputHevc3DReferenceDisplayInfo', c_uint32, 1),
+        ('outputMaxCll', c_uint32, 1),
+        ('outputMasteringDisplay', c_uint32, 1),
+        ('reserved0', c_uint32, 1),
+        ('enableRefPicListModification', c_uint32, 1),
+        ('reserved', c_uint32, 5),
+        ('idrPeriod', c_uint32),
+        ('intraRefreshPeriod', c_uint32),
+        ('intraRefreshCnt', c_uint32),
+        ('maxNumRefFramesInDPB', c_uint32),
+        ('ltrNumFrames', c_uint32),
+        ('vpsId', c_uint32),
+        ('spsId', c_uint32),
+        ('ppsId', c_uint32),
+        ('sliceMode', c_uint32),
+        ('sliceModeData', c_uint32),
+        ('maxTemporalLayersMinus1', c_uint32),
+        ('hevcVUIParameters', NV_ENC_CONFIG_H264_VUI_PARAMETERS),
+        ('ltrTrustMode', c_uint32),
+        ('useBFramesAsRef', c_uint32),
+        ('numRefL0', c_uint32),
+        ('numRefL1', c_uint32),
+        ('tfLevel', c_uint32),
+        ('disableDeblockingFilterIDC', c_uint32),
+        ('outputBitDepth', c_uint32),
+        ('inputBitDepth', c_uint32),
+        ('numTemporalLayers', c_uint32),
+        ('numViews', c_uint32),
+        ('reserved1', c_uint32 * 208),
+        ('reserved2', c_void_p * 64),
+    ]
+
+
+class NV_ENC_CONFIG_AV1(Structure):
+    """AV1's arm of the codec configuration.
+
+    AV1 has no VUI: the colour description is fields of the sequence header,
+    which this structure sets directly.
     """
 
-    _fields_ = [('h264Config', NV_ENC_CONFIG_H264), ('reserved', c_uint32 * 320)]
+    _fields_ = [
+        ('level', c_uint32),
+        ('tier', c_uint32),
+        ('minPartSize', c_uint32),
+        ('maxPartSize', c_uint32),
+        ('outputAnnexBFormat', c_uint32, 1),
+        ('enableTimingInfo', c_uint32, 1),
+        ('enableDecoderModelInfo', c_uint32, 1),
+        ('enableFrameIdNumbers', c_uint32, 1),
+        ('disableSeqHdr', c_uint32, 1),
+        ('repeatSeqHdr', c_uint32, 1),
+        ('enableIntraRefresh', c_uint32, 1),
+        ('chromaFormatIDC', c_uint32, 2),
+        ('enableBitstreamPadding', c_uint32, 1),
+        ('enableCustomTileConfig', c_uint32, 1),
+        ('enableFilmGrainParams', c_uint32, 1),
+        ('enableLTR', c_uint32, 1),
+        ('enableTemporalSVC', c_uint32, 1),
+        ('outputMaxCll', c_uint32, 1),
+        ('outputMasteringDisplay', c_uint32, 1),
+        ('reserved4', c_uint32, 2),
+        ('reserved', c_uint32, 14),
+        ('idrPeriod', c_uint32),
+        ('intraRefreshPeriod', c_uint32),
+        ('intraRefreshCnt', c_uint32),
+        ('maxNumRefFramesInDPB', c_uint32),
+        ('numTileColumns', c_uint32),
+        ('numTileRows', c_uint32),
+        ('reserved2', c_uint32),
+        ('tileWidths', c_void_p),
+        ('tileHeights', c_void_p),
+        ('maxTemporalLayersMinus1', c_uint32),
+        ('colorPrimaries', c_uint32),
+        ('transferCharacteristics', c_uint32),
+        ('matrixCoefficients', c_uint32),
+        ('colorRange', c_uint32),
+        ('chromaSamplePosition', c_uint32),
+        ('useBFramesAsRef', c_uint32),
+        ('filmGrainParams', c_void_p),
+        ('numFwdRefs', c_uint32),
+        ('numBwdRefs', c_uint32),
+        ('outputBitDepth', c_uint32),
+        ('inputBitDepth', c_uint32),
+        ('ltrNumFrames', c_uint32),
+        ('numTemporalLayers', c_uint32),
+        ('tfLevel', c_uint32),
+        ('reserved1', c_uint32 * 230),
+        ('reserved3', c_void_p * 62),
+    ]
+
+
+class NV_ENC_CODEC_CONFIG(Union):
+    """The configuration of whichever codec the session encodes.
+
+    A union is as large as its largest member. The header's reserved arm is a
+    320-word array, which keeps the size where a later header adds a codec.
+    """
+
+    _fields_ = [('h264Config', NV_ENC_CONFIG_H264), ('hevcConfig', NV_ENC_CONFIG_HEVC),
+                ('av1Config', NV_ENC_CONFIG_AV1), ('reserved', c_uint32 * 320)]
 
 
 class NV_ENC_CONFIG(Structure):

@@ -92,13 +92,15 @@ No code from any vendor sample or SDK is reproduced.
 
 ## libva
 
-The ctypes declarations in `pyopengl_video/vaapi/api.py` describe the ABI of
-`libva.so.2` and `libva-drm.so.2`, which are the Video Acceleration API runtime
-on Linux. The structure layouts, the enumerations and the constant values are
-taken from the libva headers as published in
-[intel/libva](https://github.com/intel/libva), decode and encode alike: `va.h`, `va_vpp.h`,
-`va_enc_h264.h`, `va_drmcommon.h` and `va_drm.h` — and are recorded by machine
-in `tests/va_abi.json` rather than vendored. The headers carry the following
+The ctypes declarations in `pyopengl_video/vaapi/api.py`, `hevc_api.py`,
+`av1_api.py` and `vp9_api.py` describe the ABI of `libva.so.2` and
+`libva-drm.so.2`, which are the Video Acceleration API runtime on Linux. The
+structure layouts, the enumerations and the constant values are taken from the
+libva headers as published in [intel/libva](https://github.com/intel/libva),
+decode and encode alike: `va.h`, `va_vpp.h`, `va_enc_h264.h`, `va_dec_hevc.h`,
+`va_enc_hevc.h`, `va_dec_av1.h`, `va_enc_av1.h`, `va_dec_vp9.h`,
+`va_drmcommon.h` and `va_drm.h`. They are recorded by machine in
+`tests/va_abi.json` rather than vendored. The headers carry the following
 notice:
 
 > Copyright (c) 2007 Intel Corporation. All Rights Reserved.
@@ -141,12 +143,40 @@ ISO/IEC 14496-12, with the `avcC` record of ISO/IEC 14496-15 and the `esds`
 descriptors of ISO/IEC 14496-1. `pyopengl_video/colour.py` uses the code points
 and coefficients of Rec. ITU-T H.273.
 
-`tools/make_decode_fixtures.py` runs `ffmpeg` with `libx264` on `ffmpeg`'s
-test pattern to write the streams under `tests/data/decode/`, the interlaced
-one included. It also records
-the checksum of each picture `ffmpeg` decodes. The streams and checksums are
-test data. `ffmpeg` and `x264` run as programs, and no part of either is in
-this package.
+`tools/make_decode_fixtures.py` runs `ffmpeg` with `libx264`, `libx265`,
+`libaom-av1`, `libsvtav1` and `libvpx-vp9` on `ffmpeg`'s test pattern to write
+the streams under `tests/data/decode/`, the interlaced H.264 one included. It
+also records the checksum of each picture `ffmpeg` decodes. The streams and checksums are test data. `ffmpeg`
+and the encoders run as programs, and no part of any of them is in this
+package. The parsers' tests hold header values that `ffmpeg`'s `trace_headers`
+bitstream filter printed for those streams, which is its output and not its
+source.
+
+## ITU-T H.265, the AV1 and VP9 specifications, and their container bindings
+
+`pyopengl_video/vaapi/hevc_parse.py`, `hevc_dpb.py`, `hevc_decode.py`,
+`hevc.py` and `hevc_encode.py` read and write HEVC from Rec. ITU-T H.265: the
+syntax of clause 7, picture order count and reference picture sets (8.3), and
+output order (annex C.5). The field names are the specification's.
+
+`pyopengl_video/vaapi/av1_parse.py`, `av1_decode.py`, `av1.py`,
+`av1_encode.py` and `pyopengl_video/obu.py` follow the AV1 Bitstream and
+Decoding Process Specification of the Alliance for Open Media.
+`pyopengl_video/vaapi/vp9_parse.py`, `vp9_tables.py` and `vp9_decode.py`
+follow the VP9 Bitstream and Decoding Process Specification, whose
+dequantisation tables `vp9_tables.py` holds as the facts they are.
+
+`pyopengl_video/mp4.py` writes and reads the `hvcC` record of ISO/IEC
+14496-15, the `av1C` record of the AV1 Codec ISO Media File Format Binding and
+the `vpcC` record of the VP Codec ISO Media File Format Binding.
+`pyopengl_video/ivf.py` reads and writes the IVF layout: a 32-byte header and
+each frame behind its size and timestamp.
+
+No decoder's or encoder's copyleft source was consulted for any of these,
+FFmpeg's, GStreamer's and x265's included. Where a driver's behaviour is not
+stated by libva's headers, Mesa's source (MIT) was read for it: which packed
+headers its AV1 and HEVC encoders take and what they write themselves, and
+how its encoder treats a colour conversion that precedes an encode.
 
 `pyopengl_video/linux/dmabuf.py` calls `EGL_MESA_image_dma_buf_export` and
 `EGL_EXT_image_dma_buf_import` as specified in the Khronos EGL registry. Mesa is

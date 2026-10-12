@@ -17,9 +17,11 @@ from OpenGL.GL import (
     GL_FRAMEBUFFER_SRGB,
     GL_LINEAR,
     GL_R8,
+    GL_R16,
     GL_RED,
     GL_RG,
     GL_RG8,
+    GL_RG16,
     GL_RGBA,
     GL_SCISSOR_TEST,
     GL_SRGB8_ALPHA8,
@@ -34,6 +36,7 @@ from OpenGL.GL import (
     GL_TEXTURE_WRAP_T,
     GL_UNPACK_ALIGNMENT,
     GL_UNSIGNED_BYTE,
+    GL_UNSIGNED_SHORT,
     GL_VERTEX_ARRAY_BINDING,
     GL_VIEWPORT,
     glActiveTexture,
@@ -81,7 +84,7 @@ def converter(gl_context):  # noqa: ARG001 - requested so a GL context is curren
 def textures(gl_context):  # noqa: ARG001 - requested so a GL context is current first
     made = []
 
-    def plane(data, internal, external):
+    def plane(data, internal, external, kind=GL_UNSIGNED_BYTE):
         texture = int(glGenTextures(1))
         made.append(texture)
         glBindTexture(GL_TEXTURE_2D, texture)
@@ -93,7 +96,7 @@ def textures(gl_context):  # noqa: ARG001 - requested so a GL context is current
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
         height, width = data.shape[:2]
         glTexImage2D(GL_TEXTURE_2D, 0, internal, width, height, 0, external,
-                     GL_UNSIGNED_BYTE, np.ascontiguousarray(data))
+                     kind, np.ascontiguousarray(data))
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4)
         glBindTexture(GL_TEXTURE_2D, 0)
         return texture
@@ -101,6 +104,13 @@ def textures(gl_context):  # noqa: ARG001 - requested so a GL context is current
     def nv12(luma, chroma):
         """Textures for planes given in surface order, first row at the top."""
         return plane(luma, GL_R8, GL_RED), plane(chroma, GL_RG8, GL_RG)
+
+    def p010(luma, chroma):
+        """Sixteen-bit textures holding 10-bit planes in their high bits."""
+        return (plane((luma.astype(np.uint16) << 6), GL_R16, GL_RED, GL_UNSIGNED_SHORT),
+                plane((chroma.astype(np.uint16) << 6), GL_RG16, GL_RG, GL_UNSIGNED_SHORT))
+
+    nv12.p010 = p010
 
     def output(width, height):
         texture = create_output_texture(width, height)
@@ -120,13 +130,13 @@ def read(texture, width, height):
     return np.frombuffer(data, dtype=np.uint8).reshape(height, width, 4)
 
 
-def planes(y, u, v, texture=TEXTURE, visible=VISIBLE):
+def planes(y, u, v, texture=TEXTURE, visible=VISIBLE, dtype=np.uint8):
     """Constant planes over the visible picture, padding elsewhere."""
     width, height = texture
     x0, y0, w, h = visible
-    luma = np.full((height, width), PADDING, np.uint8)
+    luma = np.full((height, width), PADDING, dtype)
     luma[y0:y0 + h, x0:x0 + w] = y
-    chroma = np.full((height // 2, width // 2, 2), PADDING, np.uint8)
+    chroma = np.full((height // 2, width // 2, 2), PADDING, dtype)
     chroma[y0 // 2:(y0 + h) // 2, x0 // 2:(x0 + w) // 2] = (u, v)
     return luma, chroma
 
@@ -156,6 +166,21 @@ class TestColour:
             want = expected(colour, y, u, v)
             assert np.abs(found[..., :3].astype(int) - want).max() <= 1, (y, u, v)
             assert (found[..., 3] == 255).all()
+
+    @pytest.mark.parametrize('full_range', [False, True])
+    def test_ten_bit_planes_match_the_arithmetic(self, converter, textures, full_range):
+        colour = Colour(matrix=MATRIX_BT709, full_range=full_range)
+        width, height = VISIBLE[2:]
+        target = textures.output(width, height)
+        for y, u, v in ((324, 360, 960), (64, 512, 512), (940, 512, 512), (801, 243, 799)):
+            luma, chroma = textures.p010(*planes(y, u, v, dtype=np.uint16))
+            converter.draw(luma, chroma, visible=VISIBLE, colour=colour,
+                           target=target, size=(width, height), depth=10)
+            rgb = np.array(colour.yuv_to_rgb(depth=10)) @ np.array(
+                [y / 1023, u / 1023, v / 1023, 1.0])
+            want = np.clip(np.round(rgb * 255), 0, 255)
+            found = read(target, width, height)
+            assert np.abs(found[..., :3].astype(int) - want).max() <= 1, (y, u, v)
 
     def test_an_unspecified_matrix_is_chosen_by_height(self, converter, textures):
         width, height = VISIBLE[2:]

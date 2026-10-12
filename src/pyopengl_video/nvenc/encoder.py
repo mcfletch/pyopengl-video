@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from OpenGL.GL import GL_RENDERER, GL_TEXTURE_2D, glGetString
 
-from pyopengl_video import inputs
+from pyopengl_video import codecs, inputs
 from pyopengl_video.encoder import (
     DEFAULT_BITS_PER_PIXEL,
     Encoder,
@@ -36,8 +36,8 @@ from pyopengl_video.nvenc import api
 log = logging.getLogger(__name__)
 
 __all__ = ['NVENCEncoder', 'InputHandle', 'DEFAULT_BITS_PER_PIXEL',
-           'SPARE_OUTPUT_BUFFERS', 'current_gl_renderer',
-           'unsupported_device_detail']
+           'SPARE_OUTPUT_BUFFERS', 'configure_codec', 'current_gl_renderer',
+           'open_session', 'session_codecs', 'unsupported_device_detail']
 
 #: How many compressed-output buffers to keep, over and above the frames the
 #: encoder may hold for reordering.
@@ -80,6 +80,121 @@ def unsupported_device_detail() -> str:
             'the encoder')
 
 
+def open_session(library: api.NvEncodeAPI) -> ctypes.c_void_p:
+    """An encoder session against the OpenGL context current on this thread.
+
+    Raises :class:`~pyopengl_video.nvenc.api.NVENCError` where the driver will
+    not take the context, saying which of the two reasons it was.
+    """
+    params = api.NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS()
+    params.version = library.struct_version(1)
+    params.deviceType = api.NV_ENC_DEVICE_TYPE_OPENGL
+    params.device = None                      # the OpenGL device is the current context
+    params.apiVersion = library.api_version
+    session = ctypes.c_void_p()
+    status = library.nvEncOpenEncodeSessionEx(
+        ctypes.byref(params), ctypes.byref(session))
+    if status != api.NV_ENC_SUCCESS:
+        raise api.NVENCError(
+            status, 'nvEncOpenEncodeSessionEx', unsupported_device_detail())
+    return session
+
+
+def session_codecs(library: api.NvEncodeAPI,
+                   session: ctypes.c_void_p) -> dict[str, tuple[int, int]]:
+    """The codecs `session` encodes, each with the largest frame it takes.
+
+    The session lists the codecs of the GPU it was opened on, which differ by
+    generation: every NVENC part has H.264, most have HEVC, and AV1 arrived
+    with the RTX 40 series. A codec this package has no name for is left out.
+    """
+    count = ctypes.c_uint32()
+    library.check(library.nvEncGetEncodeGUIDCount(session, ctypes.byref(count)),
+                  'nvEncGetEncodeGUIDCount', session)
+    offered = (api.GUID * max(count.value, 1))()
+    library.check(
+        library.nvEncGetEncodeGUIDs(session, offered, count.value, ctypes.byref(count)),
+        'nvEncGetEncodeGUIDs', session)
+    listed = list(offered)[:count.value]
+    found = {}
+    for name, guid in api.CODEC_GUIDS.items():
+        if guid in listed:
+            found[name] = (_capability(library, session, guid, api.NV_ENC_CAPS_WIDTH_MAX),
+                           _capability(library, session, guid, api.NV_ENC_CAPS_HEIGHT_MAX))
+    return found
+
+
+def _capability(library: api.NvEncodeAPI, session: ctypes.c_void_p, codec: api.GUID,
+                capability: int) -> int:
+    """One ``NV_ENC_CAPS`` value of `codec` on the session's GPU."""
+    query = api.NV_ENC_CAPS_PARAM()
+    query.version = library.struct_version(1)
+    query.capsToQuery = capability
+    value = ctypes.c_int()
+    library.check(
+        library.nvEncGetEncodeCaps(session, codec, ctypes.byref(query), ctypes.byref(value)),
+        'nvEncGetEncodeCaps', session)
+    return value.value
+
+
+def configure_codec(config: api.NV_ENC_CONFIG, codec: str, *, gop: int,
+                    frame_rate: tuple[int, int]) -> None:
+    """Fill in `codec`'s arm of an encoder configuration.
+
+    Every codec gets a key frame each `gop` pictures, 4:2:0 sampling, its
+    headers repeated before every key frame so that a raw stream decodes from
+    any of them, and a colour description of limited-range BT.709. The driver
+    converts RGB to YUV with a matrix of its own choosing, so the stream has to
+    say which, or a player guesses and the picture comes back with the wrong
+    saturation.
+
+    The rest of the arm is left as the preset set it.
+    """
+    numerator, denominator = frame_rate
+    if codec == 'h264':
+        config.profileGUID = api.NV_ENC_H264_PROFILE_HIGH_GUID
+        h264 = config.encodeCodecConfig.h264Config
+        h264.idrPeriod = gop
+        h264.chromaFormatIDC = 1
+        h264.repeatSPSPPS = 1
+        # A tick is half a frame in H.264, which counts time in fields.
+        _describe_vui(h264.h264VUIParameters, denominator, numerator * 2)
+    elif codec == 'hevc':
+        hevc = config.encodeCodecConfig.hevcConfig
+        hevc.idrPeriod = gop
+        hevc.chromaFormatIDC = 1
+        hevc.repeatSPSPPS = 1
+        _describe_vui(hevc.hevcVUIParameters, denominator, numerator)
+    elif codec == 'av1':
+        av1 = config.encodeCodecConfig.av1Config
+        av1.idrPeriod = gop
+        av1.chromaFormatIDC = 1
+        av1.repeatSeqHdr = 1
+        av1.colorPrimaries = api.NV_ENC_VUI_BT709
+        av1.transferCharacteristics = api.NV_ENC_VUI_BT709
+        av1.matrixCoefficients = api.NV_ENC_VUI_BT709
+        av1.colorRange = 0                        # limited range, 16-235
+    else:
+        raise EncoderError(
+            f'the NVENC backend encodes {", ".join(sorted(api.CODEC_GUIDS))}, '
+            f'not {codec!r}')
+
+
+def _describe_vui(vui: api.NV_ENC_CONFIG_H264_VUI_PARAMETERS, units_in_tick: int,
+                  time_scale: int) -> None:
+    """State limited-range BT.709 and the frame rate in a stream's VUI."""
+    vui.videoSignalTypePresentFlag = 1
+    vui.videoFormat = 5                           # unspecified
+    vui.videoFullRangeFlag = 0                    # limited range, 16-235
+    vui.colourDescriptionPresentFlag = 1
+    vui.colourPrimaries = api.NV_ENC_VUI_BT709
+    vui.transferCharacteristics = api.NV_ENC_VUI_BT709
+    vui.colourMatrix = api.NV_ENC_VUI_BT709
+    vui.timingInfoPresentFlag = 1
+    vui.numUnitInTicks = units_in_tick
+    vui.timeScale = time_scale
+
+
 @dataclass
 class InputHandle(inputs.InputHandle):
     """A texture the encoder has been told about.
@@ -112,10 +227,12 @@ class _Submission:
 
 
 class NVENCEncoder(Encoder):
-    """H.264 from OpenGL textures, on NVIDIA hardware.
+    """H.264, HEVC or AV1 from OpenGL textures, on NVIDIA hardware.
 
-    width/height -- frame size; H.264 reaches 4096 in each direction
-    codec -- ``'h264'``
+    width/height -- frame size; :func:`session_codecs` gives the largest the
+        GPU takes in each codec
+    codec -- ``'h264'``, ``'hevc'`` or ``'av1'``, where the GPU has an encoder
+        for it; one it lacks is refused with the list of those it has
     fps -- frames per second, as a number or a ``(numerator, denominator)`` pair.
         It sets the stream's declared frame rate and the rate control's idea of
         time; it does not pace anything.
@@ -126,7 +243,8 @@ class NVENCEncoder(Encoder):
         ``'lossless'`` or ``'ultra_high_quality'``
     rate_control -- ``'vbr'``, ``'cbr'`` or ``'constqp'``
     gop -- frames between key frames; defaults to two seconds' worth. Every
-        group starts with an IDR, which is where a player can seek to.
+        group starts with an IDR or an AV1 key frame, which is where a player
+        can seek to.
     bframes -- B-pictures between reference pictures. Above zero the encoder
         holds frames back before emitting them and packets come out in decode
         order, which :attr:`reorders_frames` reports.
@@ -146,8 +264,12 @@ class NVENCEncoder(Encoder):
                  preset: str = 'p4', tuning: str = 'high_quality',
                  rate_control: str = 'vbr', gop: int | None = None,
                  bframes: int = 0):
-        if codec != 'h264':
-            raise EncoderError(f'NVENC backend encodes h264, not {codec!r}')
+        codec = codecs.canonical(codec)
+        if codec not in api.CODEC_GUIDS:
+            raise EncoderError(
+                f'the NVENC backend encodes {", ".join(sorted(api.CODEC_GUIDS))}, '
+                f'not {codec!r}')
+        self.codec = codec
         self.size = (int(width), int(height))
         self.frame_rate = self._as_ratio(fps)
         self.bframes = int(bframes)
@@ -162,6 +284,7 @@ class NVENCEncoder(Encoder):
         self._registered: list[InputHandle] = []
         self._pending: deque[_Submission] = deque()
         try:
+            self._require_codec()
             self._initialise(preset, tuning, rate_control)
             self._free_output = [self._create_bitstream_buffer()
                                  for _ in range(self.bframes + SPARE_OUTPUT_BUFFERS)]
@@ -179,18 +302,20 @@ class NVENCEncoder(Encoder):
 
     def _open_session(self) -> ctypes.c_void_p:
         """Open an encoder session against the current OpenGL context."""
-        params = api.NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS()
-        params.version = self.api.struct_version(1)
-        params.deviceType = api.NV_ENC_DEVICE_TYPE_OPENGL
-        params.device = None                      # the OpenGL device is the current context
-        params.apiVersion = self.api.api_version
-        session = ctypes.c_void_p()
-        status = self.api.nvEncOpenEncodeSessionEx(
-            ctypes.byref(params), ctypes.byref(session))
-        if status != api.NV_ENC_SUCCESS:
-            raise api.NVENCError(
-                status, 'nvEncOpenEncodeSessionEx', unsupported_device_detail())
-        return session
+        return open_session(self.api)
+
+    def _require_codec(self) -> None:
+        """Refuse a codec this GPU's encoder does not have, naming those it has."""
+        offered = session_codecs(self.api, self.session)
+        if self.codec not in offered:
+            raise EncoderError(
+                f'the NVIDIA encoder on this GPU does not encode {self.codec}; '
+                f'it offers {", ".join(sorted(offered)) or "nothing this package names"}')
+        most = offered[self.codec]
+        if self.size[0] > most[0] or self.size[1] > most[1]:
+            raise EncoderError(
+                f'{self.size[0]}x{self.size[1]} is larger than the {most[0]}x{most[1]} '
+                f'this GPU encodes in {self.codec}')
 
     def _preset_config(self, preset: str, tuning: str) -> api.NV_ENC_PRESET_CONFIG:
         """The driver's own configuration for `preset` and `tuning`."""
@@ -209,7 +334,7 @@ class NVENCEncoder(Encoder):
         config.presetCfg.version = self.api.struct_version(9, big=True)
         self.api.check(
             self.api.nvEncGetEncodePresetConfigEx(
-                self.session, api.NV_ENC_CODEC_H264_GUID, preset_guid,
+                self.session, api.CODEC_GUIDS[self.codec], preset_guid,
                 tuning_info, ctypes.byref(config)),
             'nvEncGetEncodePresetConfigEx', self.session)
         self._preset_guid = preset_guid
@@ -221,7 +346,6 @@ class NVENCEncoder(Encoder):
         preset_config = self._preset_config(preset, tuning)
         config = preset_config.presetCfg
         config.version = self.api.struct_version(9, big=True)
-        config.profileGUID = api.NV_ENC_H264_PROFILE_HIGH_GUID
         config.gopLength = self.gop
         config.frameIntervalP = self.bframes + 1
 
@@ -236,17 +360,11 @@ class NVENCEncoder(Encoder):
         config.rcParams.maxBitRate = (self.bitrate if rate_control == 'cbr'
                                       else self.bitrate * 3 // 2)
 
-        h264 = config.encodeCodecConfig.h264Config
-        h264.idrPeriod = self.gop
-        h264.chromaFormatIDC = 1                  # 4:2:0
-        # Parameter sets before every key frame, so a raw stream stays decodable
-        # from any key frame. The MP4 muxer keeps its own copy and drops these.
-        h264.repeatSPSPPS = 1
-        self._describe_colour(h264.h264VUIParameters)
+        configure_codec(config, self.codec, gop=self.gop, frame_rate=self.frame_rate)
 
         params = api.NV_ENC_INITIALIZE_PARAMS()
         params.version = self.api.struct_version(7, big=True)
-        params.encodeGUID = api.NV_ENC_CODEC_H264_GUID
+        params.encodeGUID = api.CODEC_GUIDS[self.codec]
         params.presetGUID = self._preset_guid
         params.encodeWidth = params.maxEncodeWidth = params.darWidth = self.size[0]
         params.encodeHeight = params.maxEncodeHeight = params.darHeight = self.size[1]
@@ -269,26 +387,6 @@ class NVENCEncoder(Encoder):
         # The driver copies the configuration during initialisation; holding it
         # keeps the pointer we passed valid for the length of that call.
         self._config = preset_config
-
-    def _describe_colour(self, vui: api.NV_ENC_CONFIG_H264_VUI_PARAMETERS) -> None:
-        """State the stream's colour and timing in its video usability information.
-
-        The hardware converts RGB to YUV with a matrix of its own choosing, so
-        the stream has to say which one, or a player is left guessing and the
-        picture comes back with the wrong saturation. This declares limited-range
-        BT.709 -- primaries, transfer and matrix alike -- and the frame rate.
-        """
-        rate_num, rate_den = self.frame_rate
-        vui.videoSignalTypePresentFlag = 1
-        vui.videoFormat = 5                       # unspecified
-        vui.videoFullRangeFlag = 0                # limited range, 16-235
-        vui.colourDescriptionPresentFlag = 1
-        vui.colourPrimaries = 1                   # BT.709
-        vui.transferCharacteristics = 1           # BT.709
-        vui.colourMatrix = 1                      # BT.709
-        vui.timingInfoPresentFlag = 1
-        vui.numUnitInTicks = rate_den
-        vui.timeScale = rate_num * 2              # ticks are half a frame, per H.264
 
     def _create_bitstream_buffer(self) -> ctypes.c_void_p:
         """One buffer for the driver to write a compressed picture into."""
@@ -380,7 +478,11 @@ class NVENCEncoder(Encoder):
         return self._drain()
 
     def headers(self) -> bytes:
-        """The sequence and picture parameter sets, as an Annex-B fragment."""
+        """The stream's configuration, as a container stores it up front.
+
+        The parameter sets as an Annex-B fragment for H.264 and HEVC, the
+        sequence header OBU for AV1.
+        """
         self._require_open()
         buffer = (ctypes.c_uint8 * 1024)()
         written = ctypes.c_uint32()

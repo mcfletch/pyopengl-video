@@ -15,6 +15,7 @@ from pyopengl_video.backend import context_kind
 from pyopengl_video.encoder import Backend
 from pyopengl_video.linux import dmabuf
 from pyopengl_video.vaapi import api
+from pyopengl_video.vaapi import codecs as vaapi_codecs
 
 
 @pytest.fixture(autouse=True)
@@ -34,14 +35,15 @@ class TestTheRecord:
         assert isinstance(backend, Backend)
         assert backend.name == 'vaapi'
         assert backend.vendor == 'Intel/AMD'
-        assert backend.codecs == frozenset({'h264'})
+        assert backend.codecs == frozenset(vaapi_codecs.ENCODERS)
+        assert 'h264' in backend.codecs
         assert backend.zero_copy is True
 
     def test_it_takes_the_sizes_h264_reaches(self):
         assert vaapi.BACKEND.supports(1920, 1080, 'h264')
         assert vaapi.BACKEND.supports(3840, 2160, 'h264')
         assert not vaapi.BACKEND.supports(8192, 4320, 'h264')
-        assert not vaapi.BACKEND.supports(1920, 1080, 'hevc')
+        assert not vaapi.BACKEND.supports(1920, 1080, 'mpeg2')
 
     def test_importing_the_package_does_not_import_the_encoder(self):
         """Discovery costs one library load, not the whole backend.
@@ -73,8 +75,8 @@ class TestProbe:
 
     def test_a_backend_that_cannot_answer_still_leaves_the_others_findable(
             self, monkeypatch):
-        monkeypatch.setattr(vaapi, '_any_device_encodes',
-                            lambda: (_ for _ in ()).throw(RuntimeError('boom')))
+        monkeypatch.setattr(vaapi, 'capabilities',
+                            lambda _table: (_ for _ in ()).throw(RuntimeError('boom')))
         assert 'vaapi' not in [found.name for found in encoders()]
 
     def test_a_missing_library_is_not_an_error(self, monkeypatch):
@@ -83,19 +85,24 @@ class TestProbe:
 
         monkeypatch.setattr(api.VA, 'instance', staticmethod(refuse))
         monkeypatch.setattr(vaapi, '_context_can_export', lambda: True)
-        assert vaapi._any_device_encodes() is False  # noqa: SLF001 - one step of probe(), tested alone
+        monkeypatch.setattr(vaapi, 'SUPPORTED_PLATFORM', True)
+        assert vaapi.encoder_codecs() == {}
 
     def test_a_machine_with_no_render_node_has_no_encoder(self, monkeypatch):
         monkeypatch.setattr(api, 'render_nodes', list)
         monkeypatch.setattr(vaapi, '_context_can_export', lambda: True)
-        assert vaapi._any_device_encodes() is False  # noqa: SLF001 - one step of probe(), tested alone
+        monkeypatch.setattr(vaapi, 'SUPPORTED_PLATFORM', True)
+        monkeypatch.setattr(api.VA, 'instance', staticmethod(lambda: None))
+        assert vaapi.encoder_codecs() == {}
 
-    def test_a_device_that_will_not_open_is_not_an_encoder(self):
+    def test_a_device_that_will_not_open_is_not_an_encoder(self, monkeypatch):
         class Refuses:
             def __getattr__(self, name):
                 raise OSError('no such device')
 
-        assert vaapi._device_encodes(Refuses(), '/dev/dri/renderD404') is False  # noqa: SLF001 - one step of probe(), tested alone
+        monkeypatch.setattr(api.VA, 'instance', staticmethod(Refuses))
+        assert vaapi_codecs.capabilities(
+            vaapi_codecs.ENCODERS, nodes=['/dev/dri/renderD404']) == {}
 
     def test_the_answer_is_kept_rather_than_asked_again(self, monkeypatch):
         """Opening a driver costs enough that discovery must not repeat it."""
@@ -106,11 +113,11 @@ class TestProbe:
         monkeypatch.setattr(vaapi, '_context_can_export', lambda: True)
         asked = []
 
-        def count():
+        def count(table):  # noqa: ARG001 - the signature of the function replaced
             asked.append(1)
-            return True
+            return {'h264': (4096, 4096)}
 
-        monkeypatch.setattr(vaapi, '_any_device_encodes', count)
+        monkeypatch.setattr(vaapi, 'capabilities', count)
         assert vaapi.probe() and vaapi.probe() and vaapi.probe()
         assert len(asked) == 1
 
@@ -118,8 +125,8 @@ class TestProbe:
         monkeypatch.setattr(vaapi, 'SUPPORTED_PLATFORM', True)
         monkeypatch.setattr(vaapi, '_context_can_export', lambda: True)
         asked = []
-        monkeypatch.setattr(vaapi, '_any_device_encodes',
-                            lambda: asked.append(1) or True)
+        monkeypatch.setattr(vaapi, 'capabilities',
+                            lambda _table: asked.append(1) or {'h264': (4096, 4096)})
         vaapi.probe()
         vaapi.forget_probe()
         vaapi.probe()

@@ -13,11 +13,22 @@ from pathlib import Path
 
 import pytest
 
-from pyopengl_video.vaapi import api
+from pyopengl_video.vaapi import api, av1_api, hevc_api, vp9_api
+
+#: The modules that declare libva structures and constants.
+MODULES = (api, hevc_api, av1_api, vp9_api)
 
 #: Written by ``tools/record_va_abi.py`` from the libva headers.
 RECORDED = Path(__file__).parent / 'va_abi.json'
 ABI = json.loads(RECORDED.read_text())
+
+
+def declared(name):
+    """The binding's declaration of `name`, from whichever module holds it."""
+    for module in MODULES:
+        if hasattr(module, name):
+            return getattr(module, name)
+    raise AssertionError(f'no libva binding module declares {name}')
 
 
 def test_the_recording_is_here():
@@ -28,30 +39,30 @@ def test_the_recording_is_here():
 
 @pytest.mark.parametrize('name', sorted(ABI['sizes']))
 def test_each_structure_is_the_size_the_headers_state(name):
-    assert ctypes.sizeof(getattr(api, name)) == ABI['sizes'][name]
+    assert ctypes.sizeof(declared(name)) == ABI['sizes'][name]
 
 
 @pytest.mark.parametrize('name', sorted(ABI['offsets']))
 def test_every_field_sits_where_the_headers_put_it(name):
-    structure = getattr(api, name)
+    structure = declared(name)
     for field, offset in ABI['offsets'][name].items():
         assert getattr(structure, field).offset == offset, f'{name}.{field}'
 
 
 @pytest.mark.parametrize('name', sorted(ABI['constants']))
 def test_each_constant_has_the_value_the_headers_give_it(name):
-    assert getattr(api, name) == ABI['constants'][name]
+    assert declared(name) == ABI['constants'][name]
 
 
 def test_every_declared_structure_is_recorded():
     """A structure added to the binding and not re-recorded is unchecked."""
-    declared = {
-        name for name, value in vars(api).items()
+    found = {
+        name for module in MODULES for name, value in vars(module).items()
         if isinstance(value, type) and issubclass(value, ctypes.Structure)
         and not name.startswith('_')
     }
-    assert declared <= set(ABI['sizes']), (
-        f'not in tests/va_abi.json: {sorted(declared - set(ABI["sizes"]))}; '
+    assert found <= set(ABI['sizes']), (
+        f'not in tests/va_abi.json: {sorted(found - set(ABI["sizes"]))}; '
         'run tools/record_va_abi.py')
 
 

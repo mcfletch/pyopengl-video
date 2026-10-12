@@ -514,7 +514,8 @@ which is a separate program and not a dependency of ours.
 | W4 | NVENC on the DirectX device type, reusing the shim | next; needs a GL context on the NVIDIA adapter |
 | 2 | PBO readback tier, so every driver with an encoder can record, and the reference the zero-copy paths are compared against | after W4 |
 | 3 | `linux/dmabuf.py` EGL export, VA-API backend with its own H.264 control layer | **landed**, AMD/Linux; Intel/Linux is the same code and untested |
-| 4 | AMF for AMD, HEVC and AV1 where the part has them, audio track | needs hardware |
+| 4a | Every codec the hardware has: HEVC and AV1 on VA-API with control layers of their own, HEVC and AV1 on NVENC, HEVC, AV1 and VP9 on oneVPL; `Backend.capabilities`; `hvc1`, `av01` and `vp09` in `MP4Writer`; `IVFWriter` | **landed** 2026-10-12. VA-API verified on AMD/Linux. NVENC and oneVPL beyond H.264 are checked against the headers and not yet run. |
+| 4b | AMF for AMD, audio track | needs hardware |
 | 5 | Decode into an OpenGL texture -- the reverse of everything above | planned in [GPU-VIDEO-DECODE.md](GPU-VIDEO-DECODE.md) |
 
 Phases W1-W3 make the Windows machine record without an NVIDIA part in the path

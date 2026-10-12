@@ -30,12 +30,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol
 
-from pyopengl_video import inputs, open_decoder
+from pyopengl_video import codecs, inputs, ivf, open_decoder
 from pyopengl_video.annexb import AnnexBReader
 from pyopengl_video.convert import NV12Converter, create_output_texture, generate_mipmaps
 from pyopengl_video.decoder import DecodedFrame, Decoder, Sample
-from pyopengl_video.mp4 import MP4Reader, split_annexb
-from pyopengl_video.vaapi.h264_parse import NAL_SPS, parse_nal, parse_sps
+from pyopengl_video.ivf import IVFReader
+from pyopengl_video.mp4 import MP4Reader
 
 __all__ = ['DEFAULT_AHEAD', 'Movie', 'Player', 'Timeline', 'VideoSource']
 
@@ -58,12 +58,21 @@ OTHER_CONTAINERS = (
 class VideoSource(Protocol):
     """What a container's video track offers playback.
 
-    :class:`~pyopengl_video.mp4.VideoTrack` and
-    :class:`~pyopengl_video.annexb.AnnexBReader` are both one.
+    :class:`~pyopengl_video.mp4.VideoTrack`,
+    :class:`~pyopengl_video.annexb.AnnexBReader` and
+    :class:`~pyopengl_video.ivf.IVFReader` are each one.
+
+    codec -- the stream's codec, by any name
+        :func:`pyopengl_video.codecs.canonical` takes
+    size -- the picture, as (width, height)
     """
 
+    codec: str
     timescale: int
     sync_samples: list[int]
+
+    @property
+    def size(self) -> tuple[int, int]: ...
 
     def __len__(self) -> int: ...
 
@@ -132,28 +141,30 @@ class Timeline:
 class Movie:
     """A movie's video track, indexed for playback. No GL.
 
-    source -- the track: an MP4 :class:`~pyopengl_video.mp4.VideoTrack` or an
-        :class:`~pyopengl_video.annexb.AnnexBReader`
-    size -- the picture size, when the parameter sets do not say it
-    """
+    source -- the track: an MP4 :class:`~pyopengl_video.mp4.VideoTrack`, an
+        :class:`~pyopengl_video.annexb.AnnexBReader` or an
+        :class:`~pyopengl_video.ivf.IVFReader`
+    size -- the picture size, where the source's own is not the one to use
 
-    codec = 'h264'
+    codec -- the stream's codec: ``'h264'``, ``'hevc'``, ``'av1'`` or ``'vp9'``
+    """
 
     def __init__(self, source: VideoSource, *, size: tuple[int, int] | None = None,
                  owner: Any = None) -> None:
         self.source = source
+        self.codec = codecs.canonical(source.codec)
         self.timeline = Timeline(source)
         self.headers = source.parameter_sets()
-        self.size = size or _size_of(self.headers)
+        self.size: tuple[int, int] = size or source.size
         self._owner = owner
 
     @classmethod
     def open(cls, source: str | Path | BinaryIO,
              frame_rate: tuple[int, int] | None = None) -> Movie:
-        """Open an MP4 file or a raw H.264 stream, by its contents.
+        """Open an MP4 file, an IVF file or a raw H.264 or HEVC stream, by its contents.
 
-        Raises ValueError for a file that is neither, naming the container
-        where its first bytes say which it is.
+        Raises ValueError for a file that is none of them, naming the
+        container where its first bytes say which it is.
 
         frame_rate -- for a raw stream that states none, frames per second as
             ``(numerator, denominator)``
@@ -167,14 +178,22 @@ class Movie:
             source.seek(position)
         for opening, named in OTHER_CONTAINERS:
             if head.startswith(opening):
-                raise ValueError(f'{source} is {named}; a Movie reads MP4 files '
-                                 'and raw H.264 streams')
+                raise ValueError(f'{source} is {named}; a Movie reads MP4 and IVF '
+                                 'files and raw H.264 and HEVC streams')
         if head[4:8] in MP4_BOXES:
             reader = MP4Reader(source)
             if reader.video is None:
+                found = sorted({track.codec for track in reader.tracks
+                                if track.handler == 'vide'})
                 reader.close()
-                raise ValueError(f'{source} has no H.264 video track')
+                raise ValueError(
+                    f'{source} has no video track in a codec a Movie plays '
+                    f'({", ".join(sorted(codecs.CODECS))}); its video is '
+                    f'{", ".join(found) or "absent"}')
             return cls(reader.video, owner=reader)
+        if head.startswith(ivf.MAGIC):
+            frames = IVFReader(source)
+            return cls(frames, owner=frames)
         stream = AnnexBReader(source, frame_rate=frame_rate)
         return cls(stream, owner=stream)
 
@@ -221,15 +240,6 @@ class Movie:
 
     def __exit__(self, *exception: Any) -> None:
         self.close()
-
-
-def _size_of(headers: bytes) -> tuple[int, int]:
-    """The visible size the first sequence parameter set in `headers` states."""
-    for unit in split_annexb(headers):
-        found = parse_nal(unit)
-        if found.nal_unit_type == NAL_SPS:
-            return parse_sps(found.rbsp).size
-    raise ValueError('the movie states no sequence parameter set, so its size is unknown')
 
 
 class Converter(Protocol):

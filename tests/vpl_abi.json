@@ -1,0 +1,213 @@
+{
+  "offsets": {
+    "mfxBitstream": {
+      "Data": 40,
+      "DataFlag": 64,
+      "DataLength": 52,
+      "DataOffset": 48,
+      "DecodeTimeStamp": 24,
+      "FrameType": 62,
+      "MaxLength": 56,
+      "PicStruct": 60,
+      "TimeStamp": 32,
+      "header": 0,
+      "reserved2": 66
+    },
+    "mfxEncodeCtrl": {
+      "ExtParam": 40,
+      "FrameType": 32,
+      "Header": 0,
+      "MfxNalUnitType": 26,
+      "NumExtParam": 34,
+      "NumPayload": 36,
+      "Payload": 48,
+      "QP": 30,
+      "SkipFrame": 28,
+      "reserved": 8,
+      "reserved1": 24,
+      "reserved2": 38
+    },
+    "mfxExtAV1BitstreamParam": {
+      "Header": 0,
+      "WriteIVFHeaders": 8,
+      "reserved": 10
+    },
+    "mfxExtBuffer": {
+      "BufferId": 0,
+      "BufferSz": 4
+    },
+    "mfxExtCodingOptionSPSPPS": {
+      "Header": 0,
+      "PPSBufSize": 26,
+      "PPSBuffer": 16,
+      "PPSId": 30,
+      "SPSBufSize": 24,
+      "SPSBuffer": 8,
+      "SPSId": 28
+    },
+    "mfxExtCodingOptionVPS": {
+      "Header": 0,
+      "VPSBufSize": 16,
+      "VPSBuffer": 8,
+      "VPSId": 18,
+      "reserved": 20
+    },
+    "mfxExtVP9Param": {
+      "FrameHeight": 10,
+      "FrameWidth": 8,
+      "Header": 0,
+      "NumTileColumns": 34,
+      "NumTileRows": 32,
+      "QIndexDeltaChromaAC": 28,
+      "QIndexDeltaChromaDC": 30,
+      "QIndexDeltaLumaDC": 26,
+      "WriteIVFHeaders": 12,
+      "reserved": 36,
+      "reserved1": 14
+    },
+    "mfxExtVideoSignalInfo": {
+      "ColourDescriptionPresent": 12,
+      "ColourPrimaries": 14,
+      "Header": 0,
+      "MatrixCoefficients": 18,
+      "TransferCharacteristics": 16,
+      "VideoFormat": 8,
+      "VideoFullRange": 10
+    },
+    "mfxFrameAllocRequest": {
+      "AllocId": 0,
+      "Info": 16,
+      "NumFrameMin": 86,
+      "NumFrameSuggested": 88,
+      "Type": 84,
+      "reserved2": 90,
+      "reserved3": 4
+    },
+    "mfxFrameAllocResponse": {
+      "AllocId": 0,
+      "NumFrameActual": 24,
+      "mids": 16,
+      "reserved": 4,
+      "reserved2": 26
+    },
+    "mfxFrameAllocator": {
+      "Alloc": 24,
+      "Free": 56,
+      "GetHDL": 48,
+      "Lock": 32,
+      "Unlock": 40,
+      "pthis": 16,
+      "reserved": 0
+    },
+    "mfxFrameData": {
+      "A": 72,
+      "Corrupted": 88,
+      "Cr": 64,
+      "DataFlag": 90,
+      "FrameOrder": 40,
+      "Locked": 44,
+      "MemId": 80,
+      "MemType": 28,
+      "NumExtParam": 8,
+      "Pitch": 46,
+      "PitchHigh": 30,
+      "TimeStamp": 32,
+      "UV": 56,
+      "Y": 48,
+      "external": 0,
+      "reserved": 10
+    },
+    "mfxFrameInfo": {
+      "AspectRatioH": 60,
+      "AspectRatioW": 58,
+      "BitDepthChroma": 20,
+      "BitDepthLuma": 18,
+      "ChannelId": 16,
+      "ChromaFormat": 64,
+      "DependencyId": 28,
+      "FourCC": 32,
+      "FrameRateExtD": 52,
+      "FrameRateExtN": 48,
+      "PicStruct": 62,
+      "PriorityId": 26,
+      "QualityId": 30,
+      "Shift": 22,
+      "TemporalId": 24,
+      "reserved": 0,
+      "reserved2": 66,
+      "reserved3": 56
+    },
+    "mfxFrameSurface1": {
+      "Data": 88,
+      "Info": 16,
+      "Version": 8,
+      "interface": 0,
+      "reserved1": 10
+    },
+    "mfxInfoMFX": {
+      "BRCParamMultiplier": 30,
+      "BufferSizeInKB": 124,
+      "CodecId": 100,
+      "CodecLevel": 106,
+      "CodecProfile": 104,
+      "EncodedOrder": 134,
+      "FrameInfo": 32,
+      "GopOptFlag": 116,
+      "GopPicSize": 112,
+      "GopRefDist": 114,
+      "IdrInterval": 118,
+      "InitialDelayInKB": 122,
+      "LowPower": 28,
+      "MaxKbps": 128,
+      "NumRefFrame": 132,
+      "NumSlice": 130,
+      "NumThread": 108,
+      "RateControlMethod": 120,
+      "TargetKbps": 126,
+      "TargetUsage": 110,
+      "reserved": 0
+    },
+    "mfxInfoVPP": {
+      "In": 32,
+      "Out": 100,
+      "reserved": 0
+    },
+    "mfxVersion": {
+      "Major": 2,
+      "Minor": 0
+    },
+    "mfxVideoParam": {
+      "AllocId": 0,
+      "AsyncDepth": 14,
+      "ExtParam": 192,
+      "IOPattern": 186,
+      "NumExtParam": 200,
+      "Protected": 184,
+      "codec": 16,
+      "reserved": 4,
+      "reserved2": 202,
+      "reserved3": 12
+    }
+  },
+  "sizes": {
+    "mfxBitstream": 72,
+    "mfxEncodeCtrl": 56,
+    "mfxExtAV1BitstreamParam": 72,
+    "mfxExtBuffer": 8,
+    "mfxExtCodingOptionSPSPPS": 32,
+    "mfxExtCodingOptionVPS": 32,
+    "mfxExtVP9Param": 256,
+    "mfxExtVideoSignalInfo": 20,
+    "mfxFrameAllocRequest": 92,
+    "mfxFrameAllocResponse": 32,
+    "mfxFrameAllocator": 64,
+    "mfxFrameData": 96,
+    "mfxFrameInfo": 68,
+    "mfxFrameSurface1": 184,
+    "mfxInfoMFX": 136,
+    "mfxInfoVPP": 168,
+    "mfxVersion": 4,
+    "mfxVideoParam": 208
+  },
+  "source": "the oneVPL headers from intel/libvpl (MIT)"
+}

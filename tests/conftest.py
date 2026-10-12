@@ -30,6 +30,7 @@ from OpenGL.GL import (
     GL_TEXTURE_WRAP_S,
     GL_TEXTURE_WRAP_T,
     GL_UNSIGNED_BYTE,
+    GL_UNSIGNED_SHORT,
     glBindFramebuffer,
     glBindTexture,
     glBlitFramebuffer,
@@ -191,41 +192,6 @@ def decode_errors(path):
     return [line for line in found.stderr.splitlines() if line.strip()]
 
 
-def read_plane(texture, format):
-    """A plane texture's bytes, rows packed with no padding."""
-    glPixelStorei(GL_PACK_ALIGNMENT, 1)
-    glBindTexture(GL_TEXTURE_2D, texture)
-    data = glGetTexImage(GL_TEXTURE_2D, 0, format, GL_UNSIGNED_BYTE)
-    glBindTexture(GL_TEXTURE_2D, 0)
-    glPixelStorei(GL_PACK_ALIGNMENT, 4)
-    return np.frombuffer(data, dtype=np.uint8)
-
-
-def nv12_bytes(frame):
-    """The visible picture as packed NV12, first row at the top."""
-    width, height = frame.texture_size
-    x, y, w, h = frame.visible
-    luma = read_plane(frame.planes[0], GL_RED).reshape(height, width)[y:y + h, x:x + w]
-    chroma = read_plane(frame.planes[1], GL_RG).reshape(height // 2, width // 2, 2)[
-        y // 2:(y + h) // 2, x // 2:(x + w) // 2]
-    return luma.tobytes() + chroma.tobytes()
-
-
-def md5s(frames):
-    found = []
-    for frame in frames:
-        found.append(hashlib.md5(nv12_bytes(frame)).hexdigest())
-        frame.release()
-    return found
-
-
-def decode_all(decoder, samples):
-    found = []
-    for sample in samples:
-        found += md5s(decoder.decode(sample))
-    return found + md5s(decoder.flush())
-
-
 def blit(handle, texture, size):
     """Copy a `size` texture into an encoder input, inside its drawing scope."""
     width, height = size
@@ -288,3 +254,68 @@ def upload_texture(gl_context):  # noqa: ARG001 - requested so a GL context is c
     yield make
     if made:
         glDeleteTextures(made)
+
+
+# ------------------------------------------------------------ decoded frames
+
+
+def read_plane(texture, format, kind=GL_UNSIGNED_BYTE):
+    """A plane texture's samples, rows packed with no padding."""
+    glPixelStorei(GL_PACK_ALIGNMENT, 1)
+    glBindTexture(GL_TEXTURE_2D, texture)
+    data = glGetTexImage(GL_TEXTURE_2D, 0, format, kind)
+    glBindTexture(GL_TEXTURE_2D, 0)
+    glPixelStorei(GL_PACK_ALIGNMENT, 4)
+    return np.frombuffer(data, dtype=np.uint16 if kind == GL_UNSIGNED_SHORT else np.uint8)
+
+
+def frame_bytes(frame):
+    """The visible picture as its packed planes, first row at the top.
+
+    NV12 for an ``'nv12'`` frame and little-endian P010 for a ``'p010'`` one,
+    which are the bytes ``ffmpeg`` writes for those pixel formats and so what
+    the fixture tables hold the MD5 of.
+    """
+    kind = GL_UNSIGNED_SHORT if frame.layout == 'p010' else GL_UNSIGNED_BYTE
+    width, height = frame.texture_size
+    x, y, w, h = frame.visible
+    luma = read_plane(frame.planes[0], GL_RED, kind).reshape(height, width)[y:y + h, x:x + w]
+    chroma = read_plane(frame.planes[1], GL_RG, kind).reshape(height // 2, width // 2, 2)[
+        y // 2:(y + h + 1) // 2, x // 2:(x + w + 1) // 2]
+    return luma.astype('<u2' if kind == GL_UNSIGNED_SHORT else np.uint8).tobytes() + chroma.astype(
+        '<u2' if kind == GL_UNSIGNED_SHORT else np.uint8).tobytes()
+
+
+def md5s(frames):
+    """The MD5 of each frame's visible picture; every frame is released."""
+    found = []
+    for frame in frames:
+        found.append(hashlib.md5(frame_bytes(frame)).hexdigest())
+        frame.release()
+    return found
+
+
+def decode_all(decoder, samples):
+    """The MD5 of every picture `samples` decode to, in display order."""
+    found = []
+    for sample in samples:
+        found += md5s(decoder.decode(sample))
+    return found + md5s(decoder.flush())
+
+
+@pytest.fixture
+def vaapi_decodes(vaapi_decoder_available):  # noqa: ARG001 - requested to skip where there is no VA-API decoder
+    """A function that skips the test unless this machine decodes the codec named."""
+    def need(codec):
+        if codec not in vaapi.decoder_codecs():
+            pytest.skip(f'no VA-API {codec} decoder on this machine')
+    return need
+
+
+@pytest.fixture
+def vaapi_encodes(vaapi_available):  # noqa: ARG001 - requested to skip where there is no VA-API encoder
+    """A function that skips the test unless this machine encodes the codec named."""
+    def need(codec):
+        if codec not in vaapi.encoder_codecs():
+            pytest.skip(f'no VA-API {codec} encoder on this machine')
+    return need

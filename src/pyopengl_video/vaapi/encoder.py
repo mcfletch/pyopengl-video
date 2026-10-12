@@ -1,4 +1,4 @@
-"""The VA-API encoder: an OpenGL texture in, an H.264 elementary stream out.
+"""The VA-API encoder: an OpenGL texture in, a compressed elementary stream out.
 
 The frame never leaves the GPU. A texture is exported as a DMA-BUF and imported
 as a VA surface, the driver's video processing block converts it from RGB to
@@ -6,9 +6,10 @@ NV12, and the video engine codes that. What crosses the bus is the compressed
 result.
 
 libva leaves the codec decisions to the caller, so this encoder is paired with
-:mod:`pyopengl_video.vaapi.h264`, which decides what each picture is and writes
-the parameter sets the driver puts in the stream. Everything here is the
-plumbing between the two.
+a control layer (:mod:`pyopengl_video.vaapi.control`), one for each codec in
+:data:`pyopengl_video.vaapi.codecs.ENCODERS`, which decides what each picture
+is and writes the headers the driver puts in the stream. Everything here is the
+plumbing around it, the same for every codec.
 
 **Pictures are pipelined by one.** :meth:`VAAPIEncoder.encode` submits the
 picture it is given and returns the packet from the picture before it, so the
@@ -47,20 +48,16 @@ from pyopengl_video.encoder import (
     frame_rate_ratio,
 )
 from pyopengl_video.linux import dmabuf
-from pyopengl_video.mp4 import split_annexb
 from pyopengl_video.vaapi import api
-from pyopengl_video.vaapi.device import Device
-from pyopengl_video.vaapi.h264 import (
-    COLOUR_PRIMARIES_BT709,
-    MATRIX_BT709,
-    SLICE_TYPE_I,
-    SLICE_TYPE_P,
-    TRANSFER_BT709,
-    GroupOfPictures,
-    ParameterSets,
-    Picture,
-    annexb,
+from pyopengl_video.vaapi.codecs import ENCODERS, support_for
+from pyopengl_video.vaapi.control import (
+    Buffer,
+    CodedPicture,
+    EncodeControl,
+    EncodeSettings,
 )
+from pyopengl_video.vaapi.device import Device
+from pyopengl_video.vaapi.h264 import COLOUR_PRIMARIES_BT709, MATRIX_BT709, TRANSFER_BT709
 
 log = logging.getLogger(__name__)
 
@@ -78,26 +75,6 @@ RATE_CONTROL_MODES = {
     'vbr': api.VA_RC_VBR,
     'cqp': api.VA_RC_CQP,
 }
-
-#: The packed headers this backend supplies, and so the only ones it asks the
-#: driver to expect. Asking for one is a promise to write it every picture that
-#: needs it, and the driver writes none of its own once asked.
-#:
-#: The slice header is in the list because a libva encoder need not write one:
-#: Mesa's writes the coded macroblocks and nothing in front of them, so without
-#: this every picture reaches the stream with no NAL header on it and no player
-#: finds a picture at all. The sequence header carries both parameter sets,
-#: which is how a driver taking one header per picture is given both.
-PACKED_HEADERS_WRITTEN = (api.VA_ENC_PACKED_HEADER_SEQUENCE
-                          | api.VA_ENC_PACKED_HEADER_SLICE)
-
-#: What fraction of the ceiling a variable-bitrate stream aims at.
-VBR_TARGET_PERCENTAGE = 70
-
-#: How much video the hypothetical reference decoder's buffer holds, as a
-#: multiple of one second's bits.
-HRD_BUFFER_SECONDS = 2
-
 
 def as_encoder_error(method: Callable[..., Any]) -> Callable[..., Any]:
     """Let a method raise only :class:`EncoderError`, keeping the cause.
@@ -126,12 +103,18 @@ def as_encoder_error(method: Callable[..., Any]) -> Callable[..., Any]:
     return translating
 
 
-def colour_pipeline(surface: int) -> api.VAProcPipelineParameterBuffer:
+def colour_pipeline(surface: int, size: tuple[int, int] | None = None,
+                    ) -> api.VAProcPipelineParameterBuffer:
     """The video processing pass that turns a full-range RGB surface into NV12.
 
-    A renderer's colours are full range, and the stream this backend produces
-    declares limited-range BT.709 -- so the conversion has to say the same
-    thing. The two are set in different places and nothing but a picture coming
+    size -- the picture, as (width, height). The pass writes that rectangle
+        at the top left of its target and nothing else, so a target padded
+        out to a codec's block size holds the picture unscaled. Without it
+        the picture is scaled to fill the target.
+
+    A renderer's colours are full range, and the stream every control layer
+    here produces declares limited-range BT.709 -- so the conversion has to say
+    the same thing. The two are set in different places and nothing but a picture coming
     out grey and washed notices when they part, which is why this is one
     function and :func:`tests.test_vaapi_encode` reads it back from a real
     surface.
@@ -145,6 +128,8 @@ def colour_pipeline(surface: int) -> api.VAProcPipelineParameterBuffer:
     pipeline.output_color_properties.colour_primaries = COLOUR_PRIMARIES_BT709
     pipeline.output_color_properties.transfer_characteristics = TRANSFER_BT709
     pipeline.output_color_properties.matrix_coefficients = MATRIX_BT709
+    if size is not None:
+        pipeline.output_region = ctypes.pointer(api.VARectangle(0, 0, *size))
     return pipeline
 
 
@@ -208,18 +193,19 @@ class _Drawing:
 class _Submission:
     """One picture handed to the encoder and not yet read back."""
 
+    picture: CodedPicture
     coded_buffer: int
     source: int
     timestamp: int
     duration: int
-    keyframe: bool
 
 
 class VAAPIEncoder(Encoder):
-    """H.264 encoding on Intel and AMD hardware, fed from an OpenGL texture.
+    """Encoding on Intel and AMD hardware, fed from an OpenGL texture.
 
     width/height -- the picture size, both even
-    codec -- ``'h264'``; nothing else is produced here
+    codec -- any codec in :data:`pyopengl_video.vaapi.codecs.ENCODERS` that the
+        device offers; :func:`pyopengl_video.encoders` lists them for this machine
     fps -- frame rate, as a number or an exact ``(numerator, denominator)``
     bitrate -- bits per second; the default is derived from the frame size and
         rate
@@ -227,10 +213,13 @@ class VAAPIEncoder(Encoder):
     rate_control -- ``'cbr'``, ``'vbr'`` or ``'cqp'``; a mode the driver does
         not offer is refused by name
     qp -- the quantiser, which is what ``'cqp'`` codes at and what the other
-        modes start from
+        modes start from. It is on H.264's scale of 0 to 51 for every codec,
+        so one setting gives a similar picture in each.
     bframes -- must be zero: pictures are coded in display order here
     device -- the DRM render node to open, such as ``/dev/dri/renderD128``;
-        the default is the first that has an H.264 encoder
+        the default is the first that has an encoder for the codec
+
+    The picture is coded as 8-bit 4:2:0, limited-range BT.709.
     """
 
     allocates_inputs = False
@@ -248,9 +237,11 @@ class VAAPIEncoder(Encoder):
                 f'the VA-API encoder has no setting named '
                 f'{", ".join(sorted(unknown))}; it takes fps, bitrate, gop, '
                 'rate_control, qp, bframes and device')
-        if codec != 'h264':
+        support = support_for(ENCODERS, codec)
+        if support is None:
             raise EncoderError(
-                f'the VA-API backend encodes h264, not {codec!r}')
+                f'the VA-API backend encodes {", ".join(sorted(ENCODERS))}, '
+                f'not {codec!r}')
         if bframes:
             raise EncoderError(
                 'the VA-API backend codes pictures in display order, so '
@@ -261,7 +252,8 @@ class VAAPIEncoder(Encoder):
                 f'{rate_control!r} is not a rate control mode here; '
                 f'choose one of {sorted(RATE_CONTROL_MODES)}')
 
-        self.codec = codec
+        self.codec = support.codec
+        self._support = support
         self.size = (int(width), int(height))
         self.frame_rate = frame_rate_ratio(fps)
         self.bitrate = int(bitrate) if bitrate else default_bitrate(
@@ -286,7 +278,7 @@ class VAAPIEncoder(Encoder):
         self._slot = 0
         self._recon_slot = 0
         self._coded_slot = 0
-        self._coded_sets: dict[int, bytes] = {}
+        self._conversion_kept = False
         self._closed = False
 
         try:
@@ -297,7 +289,7 @@ class VAAPIEncoder(Encoder):
 
     def __repr__(self) -> str:
         width, height = self.size
-        return (f'<{type(self).__name__} {width}x{height} h264 '
+        return (f'<{type(self).__name__} {width}x{height} {self.codec} '
                 f'{self.rate_control_name} {self.bitrate} bit/s '
                 f'on {self.device}>')
 
@@ -307,12 +299,8 @@ class VAAPIEncoder(Encoder):
         """Open the device, negotiate what it can do, and build the contexts."""
         self._open_display()
         self._negotiate()
-        self._build_parameter_sets()
         self._create_encode_context()
         self._create_vpp_context()
-        self.structure = GroupOfPictures(
-            gop=self.gop, max_num_ref_frames=self.max_num_ref_frames,
-            log2_max_frame_num=self.sets.log2_max_frame_num)
 
     @property
     def display(self) -> Any:
@@ -320,15 +308,18 @@ class VAAPIEncoder(Encoder):
         return None if self._device is None else self._device.display
 
     def _open_display(self) -> None:
-        """Open the first DRM render node with an H.264 encoder."""
+        """Open the first DRM render node with an encoder for the codec."""
+        support = self._support
         nodes = [self.device] if self.device else api.render_nodes()
-        self._device = Device.first(nodes, _encodes_h264, 'an H.264 encoder')
+        self._device = Device.first(nodes, support.objection,
+                                    f'{support.title} encoding')
+        self._control_class: type[EncodeControl] = support.load()
         self.device = self._device.node
         self.vendor = self._device.vendor
         self.version = self._device.version
 
     def _attributes(self, *types: int) -> dict[int, int]:
-        """What the H.264 encode entrypoint says about each attribute.
+        """What the codec's encode entrypoint says about each attribute.
 
         An attribute the driver will not answer comes back as
         ``VA_ATTRIB_NOT_SUPPORTED`` rather than as an error, so it is dropped
@@ -339,22 +330,23 @@ class VAAPIEncoder(Encoder):
             attributes[index].type = kind
         self.api.check(
             self.api.vaGetConfigAttributes(
-                self.display, api.VAProfileH264High, api.VAEntrypointEncSlice,
+                self.display, self._control_class.profile, api.VAEntrypointEncSlice,
                 attributes, len(types)),
-            'vaGetConfigAttributes', 'H264High/EncSlice')
+            'vaGetConfigAttributes', f'{self._control_class.title}/EncSlice')
         return {entry.type: entry.value for entry in attributes
                 if entry.value != api.VA_ATTRIB_NOT_SUPPORTED}
 
     def _negotiate(self) -> None:
         """Settle what this driver will actually do, and refuse what it will not."""
+        layer = self._control_class
         stated = self._attributes(
             api.VAConfigAttribRTFormat, api.VAConfigAttribRateControl,
-            api.VAConfigAttribEncPackedHeaders, api.VAConfigAttribEncMaxRefFrames)
+            *layer.attributes)
 
         formats = stated.get(api.VAConfigAttribRTFormat, 0)
         if not formats & api.VA_RT_FORMAT_YUV420:
             raise EncoderError(
-                f'{self.device} encodes H.264 but not from 4:2:0 surfaces '
+                f'{self.device} encodes {layer.title} but not from 4:2:0 surfaces '
                 f'(it offers format bits {formats:#x}), which is the only '
                 'sampling this backend produces')
 
@@ -365,34 +357,20 @@ class VAAPIEncoder(Encoder):
                              if modes & bit)
             raise EncoderError(
                 f'{self.device} does not offer {self.rate_control_name} rate '
-                f'control; it offers {offered or ["none this backend knows"]}')
+                f'control for {layer.title}; it offers '
+                f'{offered or ["none this backend knows"]}')
         self.rate_control = wanted
 
-        # Only the headers this backend actually writes are asked for. The
-        # attribute states everything the driver *can* take, slice headers
-        # included, and requesting one is a promise to supply it: a driver told
-        # to expect packed slice headers stops writing its own, and every
-        # picture then comes out as slice payload with no NAL header on it.
-        self.packed_headers = stated.get(
-            api.VAConfigAttribEncPackedHeaders, 0) & PACKED_HEADERS_WRITTEN
-
-        # The low half is the size of reference list zero. AMD parts state one,
-        # which is exactly what a stream of I and P pictures needs; asking for
-        # more is refused by the driver rather than quietly reduced.
-        reference_frames = stated.get(api.VAConfigAttribEncMaxRefFrames, 1)
-        self.max_num_ref_frames = max(1, reference_frames & 0xFFFF)
-        log.debug('%s: %s, reference frames %d, packed headers %#x',
-                  self.device, self.vendor, self.max_num_ref_frames,
-                  self.packed_headers)
-
-    def _build_parameter_sets(self) -> None:
-        """Build the sequence and picture parameter sets this stream carries."""
-        width, height = self.size
-        self.sets = ParameterSets(
-            width=width, height=height, frame_rate=self.frame_rate,
-            max_num_ref_frames=self.max_num_ref_frames, init_qp=self.qp,
-            bitrate=self.bitrate, transform_8x8=True)
+        self.control = layer(
+            EncodeSettings(size=self.size, frame_rate=self.frame_rate,
+                           bitrate=self.bitrate, gop=self.gop, qp=self.qp,
+                           rate_control=wanted),
+            stated)
+        self.packed_headers = self.control.packed_headers
         self.input_slots = PIPELINE_DEPTH + 1
+        log.debug('%s: %s, %s, references %d, packed headers %#x',
+                  self.device, self.vendor, layer.title, self.control.references,
+                  self.packed_headers)
 
     def _create_encode_context(self) -> None:
         """Create the encode config, its surfaces and the context over them."""
@@ -408,11 +386,11 @@ class VAAPIEncoder(Encoder):
         array = (api.VAConfigAttrib * len(attributes))(*attributes)
         self.api.check(
             self.api.vaCreateConfig(
-                self.display, api.VAProfileH264High, api.VAEntrypointEncSlice,
+                self.display, self.control.profile, api.VAEntrypointEncSlice,
                 array, len(attributes), ctypes.byref(self._config)),
-            'vaCreateConfig', 'H264High/EncSlice')
+            'vaCreateConfig', f'{self.control.title}/EncSlice')
 
-        coded_width, coded_height = self.sets.coded_size
+        coded_width, coded_height = self.control.coded_size
         # One source per picture in flight, and enough reconstructions that the
         # picture being coded never lands on one still being referenced.
         self._sources = self._create_surfaces(
@@ -420,7 +398,7 @@ class VAAPIEncoder(Encoder):
             PIPELINE_DEPTH + 1)
         self._reconstructions = self._create_surfaces(
             api.VA_RT_FORMAT_YUV420, coded_width, coded_height,
-            self.max_num_ref_frames + 1 + PIPELINE_DEPTH)
+            self.control.references + 1 + PIPELINE_DEPTH)
 
         targets = self._sources + self._reconstructions
         surfaces = (api.VASurfaceID * len(targets))(*targets)
@@ -448,7 +426,7 @@ class VAAPIEncoder(Encoder):
         intra picture at a very low quantiser is the worst case and stays well
         inside it.
         """
-        width, height = self.sets.coded_size
+        width, height = self.control.coded_size
         return max(width * height * 3 // 2, 1 << 16)
 
     def _create_surfaces(self, format: int, width: int, height: int,
@@ -468,7 +446,7 @@ class VAAPIEncoder(Encoder):
                                     api.VAEntrypointVideoProc, None, 0,
                                     ctypes.byref(self._vpp_config)),
             'vaCreateConfig', 'VideoProc')
-        coded_width, coded_height = self.sets.coded_size
+        coded_width, coded_height = self.control.coded_size
         array = (api.VASurfaceID * len(self._sources))(*self._sources)
         self.api.check(
             self.api.vaCreateContext(
@@ -567,7 +545,9 @@ class VAAPIEncoder(Encoder):
         source = self._sources[self._slot]
         self._slot = (self._slot + 1) % len(self._sources)
         self._convert(handle, source)
-        picture = self.structure.next_picture(force_idr=force_idr)
+        if not self._conversion_kept:
+            self._keep_conversion(handle, source)
+        picture = self.control.next_picture(force_key=force_idr)
         self._submit(picture, source, timestamp, duration)
         # Submitted first, then read: the picture whose packet comes back has
         # had this call's conversion and coding queued in front of it, so the
@@ -597,12 +577,29 @@ class VAAPIEncoder(Encoder):
 
     def _convert(self, handle: InputHandle, source: int) -> None:
         """Convert the handle's RGB surface into `source`."""
+        # The driver follows the pipeline's pointer to its output rectangle
+        # when the picture is submitted, so the pipeline is held until then.
+        pipeline = colour_pipeline(handle.surface, self.size)
         buffer = self._buffer(self._vpp_context,
-                              api.VAProcPipelineParameterBufferType,
-                              colour_pipeline(handle.surface))
+                              api.VAProcPipelineParameterBufferType, pipeline)
         self._picture(self._vpp_context, source, [buffer], 'colour conversion')
 
-    def _submit(self, picture: Picture, source: int, timestamp: int,
+    def _keep_conversion(self, handle: InputHandle, source: int) -> None:
+        """Convert the first picture a second time, before anything is coded.
+
+        Mesa takes a conversion followed at once by its encode as one the
+        encoder's own converter can do in its place. It then codes from the
+        RGB surface, and from the seventeenth picture it skips the conversion
+        asked for here, whose ``vaEndPicture`` fails on a device that also has
+        a video processing engine. Two conversions with no encode between
+        them tell Mesa the pattern does not hold, and it leaves every
+        conversion of the session to this pass. The pictures coded are then
+        the ones :func:`colour_pipeline` describes, on every driver.
+        """
+        self._convert(handle, source)
+        self._conversion_kept = True
+
+    def _submit(self, picture: CodedPicture, source: int, timestamp: int,
                 duration: int) -> None:
         """Hand one picture to the encoder, with everything it has to be told."""
         coded = self._coded_buffers[self._coded_slot]
@@ -610,32 +607,12 @@ class VAAPIEncoder(Encoder):
         reconstruction = self._reconstructions[self._recon_slot]
         self._recon_slot = (self._recon_slot + 1) % len(self._reconstructions)
 
-        buffers: list[int] = []
-        if picture.idr:
-            buffers.append(self._sequence_buffer())
-            buffers.extend(self._rate_control_buffers())
-            buffers.extend(self._parameter_set_buffers())
-        buffers.append(self._picture_buffer(picture, coded, reconstruction))
-        buffers.extend(self._slice_header_buffers(picture))
-        buffers.append(self._slice_buffer(picture))
-
-        self._picture(self._context, source, buffers,
-                      f'picture {picture.frame_num}')
-        self._remember(picture, coded, source, reconstruction, timestamp,
-                       duration)
-
-    def _remember(self, picture: Picture, coded: int, source: int,
-                  reconstruction: int, timestamp: int, duration: int) -> None:
-        """Record a submitted picture, and what it reconstructed into."""
-        self._references = [(picture.frame_num, reconstruction, picture.poc)] + [
-            entry for entry in getattr(self, '_references', [])
-            if entry[0] in picture.references
-        ][:self.max_num_ref_frames - 1]
-        if picture.idr:
-            self._references = [(picture.frame_num, reconstruction, picture.poc)]
+        described = self.control.buffers(picture, coded, reconstruction)
+        self._picture(self._context, source, self._buffers(self._context, described),
+                      picture.name)
         self._pending.append(_Submission(
-            coded_buffer=coded, source=source, timestamp=int(timestamp),
-            duration=int(duration), keyframe=picture.idr))
+            picture=picture, coded_buffer=coded, source=source,
+            timestamp=int(timestamp), duration=int(duration)))
 
     def _picture(self, context: Any, target: int, buffers: list[int],
                  what: str) -> None:
@@ -648,181 +625,17 @@ class VAAPIEncoder(Encoder):
         assert self._device is not None
         return self._device.buffer(context, kind, payload)
 
-    def _sequence_buffer(self) -> int:
-        """The sequence parameters, which say what the whole stream is."""
-        sets = self.sets
-        parameters = api.VAEncSequenceParameterBufferH264()
-        parameters.seq_parameter_set_id = 0
-        parameters.level_idc = sets.level_idc
-        parameters.intra_period = self.gop
-        parameters.intra_idr_period = self.gop
-        parameters.ip_period = 1
-        parameters.bits_per_second = self.bitrate
-        parameters.max_num_ref_frames = self.max_num_ref_frames
-        parameters.picture_width_in_mbs = sets.width_in_mbs
-        parameters.picture_height_in_mbs = sets.height_in_mbs
-        bits = parameters.seq_fields.bits
-        bits.chroma_format_idc = 1
-        bits.frame_mbs_only_flag = 1
-        bits.direct_8x8_inference_flag = 1
-        bits.log2_max_frame_num_minus4 = sets.log2_max_frame_num - 4
-        bits.pic_order_cnt_type = 0
-        bits.log2_max_pic_order_cnt_lsb_minus4 = sets.log2_max_poc_lsb - 4
-
-        coded_width, coded_height = sets.coded_size
-        right = (coded_width - sets.width) // 2
-        bottom = (coded_height - sets.height) // 2
-        parameters.frame_cropping_flag = 1 if (right or bottom) else 0
-        parameters.frame_crop_right_offset = right
-        parameters.frame_crop_bottom_offset = bottom
-
-        parameters.vui_parameters_present_flag = 1
-        vui = parameters.vui_fields.bits
-        vui.aspect_ratio_info_present_flag = 1
-        vui.timing_info_present_flag = 1
-        vui.bitstream_restriction_flag = 1
-        vui.motion_vectors_over_pic_boundaries_flag = 1
-        vui.log2_max_mv_length_horizontal = 15
-        vui.log2_max_mv_length_vertical = 15
-        vui.fixed_frame_rate_flag = 1
-        parameters.aspect_ratio_idc = 1
-        parameters.num_units_in_tick = self.frame_rate[1]
-        parameters.time_scale = self.frame_rate[0] * 2
-        return self._buffer(self._context, api.VAEncSequenceParameterBufferType,
-                            parameters)
-
-    def _rate_control_buffers(self) -> list[int]:
-        """Bitrate, frame rate and buffering, as miscellaneous parameters."""
-        control = api.VAEncMiscParameterRateControl()
-        control.bits_per_second = self.bitrate
-        control.target_percentage = (
-            100 if self.rate_control == api.VA_RC_CBR else VBR_TARGET_PERCENTAGE)
-        control.window_size = 1000
-        control.initial_qp = self.qp
-        control.min_qp = 0
-        control.max_qp = 51
-        rate = api.VAEncMiscParameterFrameRate()
-        # The numerator goes in the low half and the denominator above it; a
-        # denominator of zero means the numerator is whole frames a second.
-        rate.framerate = (self.frame_rate[0]
-                          | (self.frame_rate[1] << 16 if self.frame_rate[1] > 1
-                             else 0))
-        hrd = api.VAEncMiscParameterHRD()
-        hrd.buffer_size = self.bitrate * HRD_BUFFER_SECONDS
-        hrd.initial_buffer_fullness = hrd.buffer_size // 2
-        return [
-            self._buffer(self._context, api.VAEncMiscParameterBufferType,
-                         api.misc_parameter(kind, payload))
-            for kind, payload in (
-                (api.VAEncMiscParameterTypeRateControl, control),
-                (api.VAEncMiscParameterTypeFrameRate, rate),
-                (api.VAEncMiscParameterTypeHRD, hrd),
-            )
-        ]
-
-    def _packed_header(self, kind: int, data: bytes, bits: int) -> list[int]:
-        """One packed header: the parameters describing it, then its bytes.
-
-        The two go together and in that order; a driver reads the description
-        and takes the next data buffer as what it described.
-        """
-        parameters = api.VAEncPackedHeaderParameterBuffer()
-        parameters.type = kind
-        parameters.bit_length = bits
-        # The bytes already carry the escapes that keep a start code out of
-        # them, so the driver must not insert its own.
-        parameters.has_emulation_bytes = 1
-        payload = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
-        return [
-            self._buffer(self._context,
-                         api.VAEncPackedHeaderParameterBufferType, parameters),
-            self._buffer(self._context, api.VAEncPackedHeaderDataBufferType,
-                         payload),
-        ]
-
-    def _parameter_set_buffers(self) -> list[int]:
-        """Both parameter sets, as the one sequence header a driver takes."""
-        if not self.packed_headers & api.VA_ENC_PACKED_HEADER_SEQUENCE:
-            return []
-        data, bits = self.sets.packed_parameter_sets()
-        return self._packed_header(api.VAEncPackedHeaderSequence, data, bits)
-
-    def _slice_header_buffers(self, picture: Picture) -> list[int]:
-        """The NAL header and slice header for one picture."""
-        if not self.packed_headers & api.VA_ENC_PACKED_HEADER_SLICE:
-            return []
-        data, bits = self.sets.packed_slice_header(picture)
-        return self._packed_header(api.VAEncPackedHeaderSlice, data, bits)
-
-    def _picture_buffer(self, picture: Picture, coded: int,
-                        reconstruction: int) -> int:
-        """What the driver is told about the picture it is about to code."""
-        parameters = api.VAEncPictureParameterBufferH264()
-        parameters.CurrPic.picture_id = reconstruction
-        parameters.CurrPic.frame_idx = picture.frame_num
-        parameters.CurrPic.flags = 0
-        parameters.CurrPic.TopFieldOrderCnt = picture.poc
-        parameters.CurrPic.BottomFieldOrderCnt = picture.poc
-        for index in range(16):
-            parameters.ReferenceFrames[index] = api.VAPictureH264.unused()
-        for index, entry in enumerate(self._reference_pictures(picture)):
-            parameters.ReferenceFrames[index] = entry
-        parameters.coded_buf = coded
-        parameters.pic_parameter_set_id = 0
-        parameters.seq_parameter_set_id = 0
-        parameters.last_picture = 0
-        parameters.frame_num = picture.frame_num
-        parameters.pic_init_qp = self.qp
-        parameters.num_ref_idx_l0_active_minus1 = 0
-        parameters.num_ref_idx_l1_active_minus1 = 0
-        bits = parameters.pic_fields.bits
-        bits.idr_pic_flag = 1 if picture.idr else 0
-        bits.reference_pic_flag = 1 if picture.reference else 0
-        bits.entropy_coding_mode_flag = 1
-        bits.transform_8x8_mode_flag = 1
-        bits.deblocking_filter_control_present_flag = 1
-        return self._buffer(self._context, api.VAEncPictureParameterBufferType,
-                            parameters)
-
-    def _reference_pictures(self, picture: Picture) -> list[api.VAPictureH264]:
-        """The decoded picture buffer as the driver is given it."""
-        by_frame_num = {frame_num: (surface, poc)
-                        for frame_num, surface, poc in getattr(
-                            self, '_references', [])}
-        entries = []
-        for frame_num in picture.references:
-            found = by_frame_num.get(frame_num)
-            if found is None:
-                continue
-            surface, poc = found
-            entries.append(api.VAPictureH264(
-                picture_id=surface, frame_idx=frame_num,
-                flags=api.VA_PICTURE_H264_SHORT_TERM_REFERENCE,
-                TopFieldOrderCnt=poc, BottomFieldOrderCnt=poc))
-        return entries
-
-    def _slice_buffer(self, picture: Picture) -> int:
-        """The one slice each picture is coded as, and its reference list."""
-        sets = self.sets
-        parameters = api.VAEncSliceParameterBufferH264()
-        parameters.macroblock_address = 0
-        parameters.num_macroblocks = sets.width_in_mbs * sets.height_in_mbs
-        parameters.slice_type = SLICE_TYPE_I if picture.intra else SLICE_TYPE_P
-        parameters.pic_parameter_set_id = 0
-        parameters.idr_pic_id = picture.idr_pic_id
-        parameters.pic_order_cnt_lsb = picture.poc % (1 << sets.log2_max_poc_lsb)
-        parameters.num_ref_idx_active_override_flag = 1
-        parameters.num_ref_idx_l0_active_minus1 = 0
-        parameters.num_ref_idx_l1_active_minus1 = 0
-        for index in range(32):
-            parameters.RefPicList0[index] = api.VAPictureH264.unused()
-            parameters.RefPicList1[index] = api.VAPictureH264.unused()
-        for index, entry in enumerate(self._reference_pictures(picture)):
-            parameters.RefPicList0[index] = entry
-        parameters.slice_qp_delta = 0
-        parameters.disable_deblocking_filter_idc = 0
-        return self._buffer(self._context, api.VAEncSliceParameterBufferType,
-                            parameters)
+    def _buffers(self, context: Any, described: list[Buffer]) -> list[int]:
+        """Create a VA buffer for each of `described`, or none if one fails."""
+        made: list[int] = []
+        try:
+            for kind, payload in described:
+                made.append(self._buffer(context, kind, payload))
+        except BaseException:
+            for buffer in made:
+                self.api.vaDestroyBuffer(self.display, buffer)
+            raise
+        return made
 
     # ---------------------------------------------------------------- reading
 
@@ -849,11 +662,10 @@ class VAAPIEncoder(Encoder):
             self.api.check(
                 self.api.vaUnmapBuffer(self.display, submission.coded_buffer),
                 'vaUnmapBuffer', 'reading a coded picture')
-        if submission.keyframe:
-            self._remember_parameter_sets(data)
-        return Packet(data=data, timestamp=submission.timestamp,
-                      duration=submission.duration,
-                      keyframe=submission.keyframe)
+        picture = submission.picture
+        return Packet(data=self.control.coded(picture, data),
+                      timestamp=submission.timestamp,
+                      duration=submission.duration, keyframe=picture.keyframe)
 
     def _collect(self, pointer: ctypes.c_void_p) -> bytes:
         """Follow a coded buffer's segments and join what they hold.
@@ -873,19 +685,6 @@ class VAAPIEncoder(Encoder):
             address = ctypes.cast(segment.next, ctypes.c_void_p).value
         return b''.join(segments)
 
-    def _remember_parameter_sets(self, data: bytes) -> None:
-        """Keep the parameter sets a coded picture turned out to carry.
-
-        A driver may amend what it was handed -- a capability the hardware does
-        not have is one the picture parameter set must not claim -- so the sets
-        in the stream are the ones that describe it, and those are what
-        :meth:`headers` reports.
-        """
-        for unit in split_annexb(data):
-            kind = unit[0] & 0x1F
-            if kind in (7, 8):
-                self._coded_sets[kind] = unit
-
     @as_encoder_error
     def flush(self) -> list[Packet]:
         """Read back every picture still inside the encoder."""
@@ -893,15 +692,13 @@ class VAAPIEncoder(Encoder):
         return self._drain(keep=0)
 
     def headers(self) -> bytes:
-        """The parameter sets, as an Annex-B fragment.
+        """The stream's configuration, as a container stores it up front.
 
-        Before the first picture is coded these are the sets this backend
-        built. Afterwards they are the ones the stream carries, which is what a
-        container has to describe the stream with.
+        Parameter sets as an Annex-B fragment for H.264 and HEVC, the sequence
+        header OBU for AV1. Once a key picture has been coded these are the
+        ones the stream carries.
         """
-        if len(self._coded_sets) == 2:
-            return annexb(self._coded_sets[7], self._coded_sets[8])
-        return self.sets.headers()
+        return self.control.headers()
 
     # ----------------------------------------------------------------- closing
 
@@ -952,10 +749,3 @@ class VAAPIEncoder(Encoder):
     def _check_open(self) -> None:
         if self._closed:
             raise EncoderError('this encoder has been closed')
-
-
-def _encodes_h264(device: Device) -> str:
-    """'' when a device offers H.264 High slice encoding, or why it does not."""
-    if api.VAEntrypointEncSlice in device.entrypoints(api.VAProfileH264High):
-        return ''
-    return 'no H.264 encode entrypoint (VAEntrypointEncSlice)'

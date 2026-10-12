@@ -88,15 +88,18 @@ class Colour:
         chosen = MATRIX_BT709 if height >= HIGH_DEFINITION_ROWS else MATRIX_BT601
         return dataclasses.replace(self, matrix=chosen)
 
-    def yuv_to_rgb(self) -> tuple[tuple[float, float, float, float], ...]:
+    def yuv_to_rgb(self, depth: int = 8) -> tuple[tuple[float, float, float, float], ...]:
         """The 3x4 affine transform from normalised ``(Y, Cb, Cr, 1)`` to RGB.
 
-        The inputs are what an 8-bit texture reads as: code value / 255. The
-        result is non-linear R'G'B' from 0 to 1. A matrix still unspecified is
-        taken as BT.601.
+        depth -- bits a sample. The inputs are code values over the largest
+            one: code / 255 at 8 bits, which is what an 8-bit texture reads
+            as, and code / 1023 at 10.
+
+        The result is non-linear R'G'B' from 0 to 1. A matrix still
+        unspecified is taken as BT.601.
         """
-        luma_scale, luma_offset, chroma_scale = self._range()
-        centre = 128 / 255 * chroma_scale
+        luma_scale, luma_offset, chroma_scale = self._range(depth)
+        centre = (1 << (depth - 1)) / ((1 << depth) - 1) * chroma_scale
         if self.matrix == MATRIX_IDENTITY:
             # GBR: green is coded as luma, blue as Cb and red as Cr, each with
             # the luma range.
@@ -117,11 +120,17 @@ class Colour:
                          luma_offset - (cb + cr) * centre))
         return tuple(rows)
 
-    def _range(self) -> tuple[float, float, float]:
-        """Luma scale, luma offset and chroma scale for code values / 255."""
+    def _range(self, depth: int = 8) -> tuple[float, float, float]:
+        """Luma scale, luma offset and chroma scale for normalised code values.
+
+        Limited range at `depth` bits is the 8-bit range times
+        ``2 ** (depth - 8)``: luma from 16 to 235 and chroma from 16 to 240 at
+        8 bits, 64 to 940 and 64 to 960 at 10.
+        """
         if self.full_range:
             return 1.0, 0.0, 1.0
-        return 255 / 219, -16 / 219, 255 / 224
+        largest = ((1 << depth) - 1) / (1 << (depth - 8))
+        return largest / 219, -16 / 219, largest / 224
 
     def chroma_offset(self) -> tuple[float, float]:
         """Where chroma samples sit, in chroma texels from a plain half-size map.

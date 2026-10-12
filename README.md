@@ -7,8 +7,9 @@ OpenGL textures, with the frame never leaving the GPU.
 
 The renderer has already put the frame in GPU memory, and the GPU has a video
 encoder on the same die. `pyopengl-video` hands one to the other: a texture goes
-in, an H.264 stream comes out, and nothing crosses the bus but the compressed
-result.
+in, a compressed stream comes out, and nothing crosses the bus but the
+compressed result. The codec is any the GPU's encoder has: H.264, HEVC, AV1 or
+VP9.
 
 ```python
 from pyopengl_video import open_encoder
@@ -41,9 +42,10 @@ texture = player.frame_at(seconds)       # right way up, sRGB
 
 `examples/play_movie.py` plays a file in a window.
 [docs/playback.md](docs/playback.md) covers the player, the decoders and what
-they decode. Decoding works under Linux on AMD through VA-API and on NVIDIA
-through NVDEC. Intel on Linux and NVIDIA on Windows run the same code,
-untested. Intel and AMD on Windows are [planned](plans/GPU-VIDEO-DECODE.md).
+they decode. H.264, HEVC, AV1 and VP9 decode on AMD under Linux through VA-API,
+at 8 and 10 bits, and H.264 on NVIDIA through NVDEC. Intel on Linux and NVIDIA
+on Windows run the same code, untested. Intel and AMD on Windows are
+[planned](plans/GPU-VIDEO-DECODE.md).
 
 ## What it needs
 
@@ -51,14 +53,19 @@ Python 3.10 or newer, PyOpenGL, and a GPU whose encoder it knows about. Nothing
 else: the encoder is the one in the graphics driver, loaded by name, and the MP4
 muxer is part of this package.
 
-| Backend | Hardware | Platform | Codec | Frame handed over as | State |
+| Backend | Hardware | Platform | Codecs | Frame handed over as | State |
 | --- | --- | --- | --- | --- | --- |
-| `nvenc` | NVIDIA, Kepler and later | Linux | H.264 | an OpenGL texture, in place | working |
-| `vaapi` | AMD, VCN | Linux | H.264 | a DMA-BUF exported from a texture | working |
-| `vpl` | Intel, Gen9 and later | Windows | H.264 | a Direct3D 11 surface OpenGL draws into | working |
-| `vaapi` | Intel, Gen9 and later | Linux | H.264 | the same DMA-BUF | the same code, untested |
-| `nvenc` | NVIDIA | Windows | H.264 | the same Direct3D 11 surface | [next](plans/WINDOWS-SUPPORT.md) |
-| `amf` | AMD | Windows | H.264 | the same Direct3D 11 surface | [planned](plans/WINDOWS-SUPPORT.md) |
+| `nvenc` | NVIDIA, Kepler and later | Linux | H.264, HEVC, AV1 | an OpenGL texture, in place | H.264 working; HEVC and AV1 written from the header and not yet run |
+| `vaapi` | AMD, VCN | Linux | H.264, HEVC, AV1 | a DMA-BUF exported from a texture | working |
+| `vpl` | Intel, Gen9 and later | Windows | H.264, HEVC, AV1, VP9 | a Direct3D 11 surface OpenGL draws into | H.264 working; the others written from the headers and not yet run |
+| `vaapi` | Intel, Gen9 and later | Linux | H.264, HEVC, AV1 | the same DMA-BUF | the same code, untested |
+| `nvenc` | NVIDIA | Windows | | the same Direct3D 11 surface | [next](plans/WINDOWS-SUPPORT.md) |
+| `amf` | AMD | Windows | | the same Direct3D 11 surface | [planned](plans/WINDOWS-SUPPORT.md) |
+
+The codecs column is what each backend drives. Which of them a machine gets
+depends on its GPU: `encoders()` and `decoders()` ask the hardware and list
+only the codecs it has, and `open_encoder(width, height, codec='av1')` takes
+the first backend whose hardware encodes it.
 
 The frame reaches the encoder by whatever handle the platform has for one.
 NVIDIA takes an OpenGL texture by name, but only on Linux; Intel and AMD on
@@ -91,8 +98,12 @@ Ask what a machine can do:
 from pyopengl_video import encoders
 
 for backend in encoders():
-    print(backend.name, backend.vendor, sorted(backend.codecs), backend.max_size)
+    print(backend.name, backend.vendor,
+          {codec: backend.largest(codec) for codec in sorted(backend.codecs)})
 ```
+
+On an AMD Radeon 8060S that prints
+`vaapi Intel/AMD {'av1': (8192, 4352), 'h264': (4096, 4096), 'hevc': (8192, 4352)}`.
 
 ## Two things to know before recording your own renderer
 
@@ -115,8 +126,9 @@ time means, and a recording of fixed-step frames stays smooth however long each
 frame took to render.
 
 The hardware converts RGB to YUV, and the stream says which way: limited-range
-BT.709 primaries, transfer and matrix, written into the H.264 video usability
-information along with the frame rate.
+BT.709 primaries, transfer and matrix, written into the stream's own colour
+description (the video usability information of H.264 and HEVC, the sequence
+header of AV1) along with the frame rate.
 
 With `bframes` above zero the encoder holds pictures back and `encode()` returns
 an empty list until it lets several go at once. Packets then arrive in decode
@@ -147,9 +159,10 @@ pytest
 
 Tests that need an encoder, a decoder or a GL context skip themselves without
 one, so the suite runs anywhere. The hardware tests use a hidden GLFW window and
-synthetic frames. The decoder's tests also decode the x264 streams under
-`tests/data/decode/`. Each picture must match the checksum `ffmpeg`'s software
-decoder recorded for it. `tools/make_decode_fixtures.py` writes the streams.
+synthetic frames. The decoders' tests also decode the streams under
+`tests/data/decode/`, written by x264, x265, libaom, SVT-AV1 and libvpx. Each
+picture must match the checksum `ffmpeg`'s software decoder recorded for it.
+`tools/make_decode_fixtures.py` writes the streams.
 
 The vendor bindings are hand-written ctypes over large C ABIs, and a layout
 mistake there corrupts a structure rather than raising anything. So each is

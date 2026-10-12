@@ -29,6 +29,7 @@ from ctypes import (
     POINTER,
     Structure,
     Union,
+    c_int16,
     c_int32,
     c_int64,
     c_uint8,
@@ -65,6 +66,9 @@ def fourcc_name(code: int) -> str:
 # --------------------------------------------------------------- constants
 
 MFX_CODEC_AVC = fourcc('AVC ')
+MFX_CODEC_HEVC = fourcc('HEVC')
+MFX_CODEC_VP9 = fourcc('VP9 ')
+MFX_CODEC_AV1 = fourcc('AV1 ')
 
 #: RGB4 is BGRA in memory and RGB4's opposite, BGR4, is RGBA. The comments in
 #: the header name the byte that comes first, and these are what a Direct3D
@@ -94,6 +98,12 @@ MFX_RATECONTROL_CQP = 3
 MFX_PROFILE_AVC_BASELINE = 66
 MFX_PROFILE_AVC_MAIN = 77
 MFX_PROFILE_AVC_HIGH = 100
+MFX_PROFILE_HEVC_MAIN = 1
+MFX_PROFILE_VP9_0 = 1
+MFX_PROFILE_AV1_MAIN = 1
+
+#: A tri-state option switched off; zero leaves it to the runtime.
+MFX_CODINGOPTION_OFF = 0x20
 
 MFX_FRAMETYPE_I = 0x0001
 MFX_FRAMETYPE_P = 0x0002
@@ -106,6 +116,9 @@ MFX_HANDLE_VA_DISPLAY = 4
 
 MFX_EXTBUFF_CODING_OPTION_SPSPPS = fourcc('COSP')
 MFX_EXTBUFF_VIDEO_SIGNAL_INFO = fourcc('VSIN')
+MFX_EXTBUFF_CODING_OPTION_VPS = fourcc('COVP')
+MFX_EXTBUFF_VP9_PARAM = fourcc('9PAR')
+MFX_EXTBUFF_AV1_BITSTREAM_PARAM = fourcc('A1BS')
 
 MFX_TIMESTAMP_UNKNOWN = 0xFFFFFFFFFFFFFFFF
 
@@ -343,6 +356,40 @@ class mfxExtCodingOptionSPSPPS(Structure):
     ]
 
 
+class mfxExtCodingOptionVPS(Structure):
+    """Where the encoder writes HEVC's video parameter set. pack(8)."""
+
+    _pack_ = 8
+    _fields_ = [
+        ('Header', mfxExtBuffer), ('VPSBuffer', POINTER(u8)), ('VPSBufSize', u16),
+        ('VPSId', u16), ('reserved', u16 * 6),
+    ]
+
+
+class mfxExtVP9Param(Structure):
+    """VP9's own settings. pack(4).
+
+    ``WriteIVFHeaders`` is what matters here: left alone, the runtime wraps
+    the stream in IVF headers, and a packet is then not a frame.
+    """
+
+    _pack_ = 4
+    _fields_ = [
+        ('Header', mfxExtBuffer), ('FrameWidth', u16), ('FrameHeight', u16),
+        ('WriteIVFHeaders', u16), ('reserved1', c_int16 * 6),
+        ('QIndexDeltaLumaDC', c_int16), ('QIndexDeltaChromaAC', c_int16),
+        ('QIndexDeltaChromaDC', c_int16), ('NumTileRows', u16), ('NumTileColumns', u16),
+        ('reserved', u16 * 110),
+    ]
+
+
+class mfxExtAV1BitstreamParam(Structure):
+    """Whether an AV1 stream is wrapped in IVF headers. pack(4)."""
+
+    _pack_ = 4
+    _fields_ = [('Header', mfxExtBuffer), ('WriteIVFHeaders', u16), ('reserved', u16 * 31)]
+
+
 class mfxExtVideoSignalInfo(Structure):
     """What the stream says its colour is. pack(4).
 
@@ -424,6 +471,9 @@ EXPECTED_SIZES = {
     'mfxBitstream': 72,
     'mfxExtBuffer': 8,
     'mfxExtCodingOptionSPSPPS': 32,
+    'mfxExtCodingOptionVPS': 32,
+    'mfxExtVP9Param': 256,
+    'mfxExtAV1BitstreamParam': 72,
     'mfxExtVideoSignalInfo': 20,
     'mfxEncodeCtrl': 56,
     'mfxFrameAllocRequest': 92,

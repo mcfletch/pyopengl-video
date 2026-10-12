@@ -1,10 +1,12 @@
-"""Writing an H.264 elementary stream into an MP4 file, and reading one back.
+"""Writing an encoder's elementary stream into an MP4 file, and reading one back.
 
-An encoder hands out Annex-B fragments -- NAL units separated by start codes --
-and that is a fine thing to write to a ``.h264`` file and pipe somewhere, but it
-is not what anything plays. MP4 stores the same units length-prefixed, keeps the
-parameter sets in the sample description rather than in the stream, and carries
-the timing in tables beside the data.
+An H.264 or HEVC encoder hands out Annex-B fragments -- NAL units separated by
+start codes -- and that is a fine thing to write to a ``.h264`` file and pipe
+somewhere, but it is not what anything plays. MP4 stores the same units
+length-prefixed, keeps the parameter sets in the sample description rather than
+in the stream, and carries the timing in tables beside the data. An AV1 stream
+is stored as its OBUs less the temporal delimiters, with the sequence header in
+the sample description, and a VP9 stream frame by frame.
 
 :class:`MP4Writer` does that conversion as the packets arrive. The compressed
 data goes straight into ``mdat`` as it comes, so a long recording costs no more
@@ -24,7 +26,9 @@ every decoder here takes::
     with MP4Reader('movie.mp4') as movie:
         first = movie.video.sample(0, parameter_sets=True)
 
-The box structure is ISO/IEC 14496-12 and the ``avcC`` record ISO/IEC 14496-15.
+The box structure is ISO/IEC 14496-12. The ``avcC`` and ``hvcC`` records are
+ISO/IEC 14496-15, ``av1C`` the AV1 Codec ISO Media File Format Binding and
+``vpcC`` the VP Codec ISO Media File Format Binding.
 """
 from __future__ import annotations
 
@@ -35,8 +39,10 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, BinaryIO
 
+from pyopengl_video import codecs, obu
 from pyopengl_video.decoder import Sample
 from pyopengl_video.encoder import Encoder, Packet
+from pyopengl_video.vaapi import av1_parse, hevc_parse
 
 #: NAL unit types that belong in the sample description rather than in a sample.
 NAL_SPS = 7
@@ -48,6 +54,21 @@ NAL_AUD = 9
 #: How many bytes prefix each NAL unit in a sample. Four is what ``avcC``
 #: advertises below, and what every player expects.
 LENGTH_PREFIX = 4
+
+START_CODE = b'\x00\x00\x00\x01'
+
+#: Where the NAL unit arrays begin in an ``hvcC`` record, and the byte before
+#: them whose low two bits are the length prefix's size less one.
+HVCC_ARRAYS = 22
+HVCC_LENGTH_SIZE = 21
+
+#: The NAL unit types an ``hvcC`` array may hold that a decoder is configured with.
+HEVC_VPS = 32
+HEVC_SPS = 33
+HEVC_PPS = 34
+
+#: Where the configuration OBUs begin in an ``av1C`` record.
+AV1C_OBUS = 4
 
 #: The unity matrix every video track carries, in 16.16 and 2.30 fixed point.
 UNITY_MATRIX = (0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000)
@@ -88,17 +109,267 @@ def full_box(kind: str, version: int, flags: int, *payloads: bytes) -> bytes:
     return box(kind, struct.pack('>I', (version << 24) | flags), *payloads)
 
 
+# ------------------------------------------------------ sample descriptions
+
+
+def visual_sample_entry(code: str, width: int, height: int, *children: bytes) -> bytes:
+    """A VisualSampleEntry of four-character `code` (ISO/IEC 14496-12, 12.1.3)."""
+    return box(
+        code,
+        bytes(6), struct.pack('>H', 1),                    # reserved, data reference
+        bytes(16),                                         # pre-defined, reserved
+        struct.pack('>HH', width, height),
+        struct.pack('>II', 0x00480000, 0x00480000),        # 72 dpi each way
+        struct.pack('>I', 0),                              # reserved
+        struct.pack('>H', 1),                              # frames per sample
+        bytes(32),                                         # compressor name
+        struct.pack('>Hh', 0x0018, -1),                    # depth, pre-defined
+        *children,
+    )
+
+
+class SampleDescription:
+    """What an MP4 track says its samples are, for one codec.
+
+    headers -- the stream's configuration as its encoder states it, which
+        stands until the stream itself carries one
+
+    The stream is the authority. An encoder states its configuration before it
+    has coded anything and a driver may amend it on the way out, since a
+    capability the hardware does not have is one a parameter set must not
+    claim. What the samples were coded against is what the sample description
+    has to hold: a decoder set up from another one looks for syntax that is
+    not in the data, and reports a corrupt picture. The first configuration a
+    recording carries is kept, since the description covers every sample.
+    """
+
+    #: the codec's name
+    codec = ''
+    #: the sample entry's four-character code, and the brand ``ftyp`` lists
+    code = ''
+
+    def __init__(self, headers: bytes = b'') -> None:
+        self.configure(headers)
+
+    def configure(self, headers: bytes) -> None:
+        """Take the configuration an encoder advertises."""
+
+    def store(self, data: bytes) -> bytes:
+        """One packet as the sample MP4 stores, noting any configuration in it."""
+        return data
+
+    def missing(self) -> str:
+        """What the description still lacks, in words, or '' when it is whole."""
+        return ''
+
+    def entry(self, width: int, height: int) -> bytes:
+        """The sample entry box."""
+        raise NotImplementedError
+
+
+class _NalDescription(SampleDescription):
+    """A codec of NAL units: Annex-B in, length-prefixed out."""
+
+    #: NAL unit types kept in the sample description, in the order it lists them
+    sets: tuple[int, ...] = ()
+    #: an access unit delimiter says where a picture starts, which the sample
+    #: table already says
+    delimiter = -1
+
+    def __init__(self, headers: bytes = b'') -> None:
+        self.units: dict[int, bytes] = {}
+        self._from_stream: set[int] = set()
+        super().__init__(headers)
+
+    @staticmethod
+    def kind(unit: bytes) -> int:
+        """The NAL unit type of `unit`."""
+        raise NotImplementedError
+
+    def configure(self, headers: bytes) -> None:
+        for unit in split_annexb(headers):
+            if self.kind(unit) in self.sets:
+                self.units.setdefault(self.kind(unit), unit)
+
+    def store(self, data: bytes) -> bytes:
+        sample = bytearray()
+        for unit in split_annexb(data):
+            kind = self.kind(unit)
+            if kind in self.sets:
+                if kind not in self._from_stream:
+                    self.units[kind] = unit
+                    self._from_stream.add(kind)
+            elif kind != self.delimiter:
+                sample += struct.pack('>I', len(unit)) + unit
+        return bytes(sample)
+
+    def missing(self) -> str:
+        return '' if all(kind in self.units for kind in self.sets) else 'parameter sets'
+
+
+class AVCDescription(_NalDescription):
+    """H.264 as ``avc1`` with an ``avcC`` record (ISO/IEC 14496-15, 5.3.3)."""
+
+    codec = codecs.H264
+    code = 'avc1'
+    sets = (NAL_SPS, NAL_PPS)
+    delimiter = NAL_AUD
+
+    @staticmethod
+    def kind(unit: bytes) -> int:
+        return unit[0] & 0x1F
+
+    def entry(self, width: int, height: int) -> bytes:
+        sps, pps = self.units[NAL_SPS], self.units[NAL_PPS]
+        record = box(
+            'avcC',
+            bytes([1, sps[1], sps[2], sps[3], 0xfc | (LENGTH_PREFIX - 1), 0xe0 | 1]),
+            struct.pack('>H', len(sps)), sps,
+            bytes([1]), struct.pack('>H', len(pps)), pps,
+        )
+        return visual_sample_entry(self.code, width, height, record)
+
+
+class HEVCDescription(_NalDescription):
+    """HEVC as ``hvc1`` with an ``hvcC`` record (ISO/IEC 14496-15, 8.3.3)."""
+
+    codec = codecs.HEVC
+    code = 'hvc1'
+    sets = (HEVC_VPS, HEVC_SPS, HEVC_PPS)
+    delimiter = hevc_parse.NAL_AUD
+
+    @staticmethod
+    def kind(unit: bytes) -> int:
+        return (unit[0] >> 1) & 0x3F
+
+    def entry(self, width: int, height: int) -> bytes:
+        unit = hevc_parse.parse_nal(self.units[HEVC_SPS])
+        sps = hevc_parse.parse_sps(unit.rbsp)
+        # The general profile, tier and level are the twelve bytes after the
+        # set's first, in the order the record wants them.
+        general = unit.rbsp[1:13]
+        record = box(
+            'hvcC',
+            bytes([1]), general,
+            struct.pack('>H', 0xF000),                     # min_spatial_segmentation_idc
+            bytes([0xFC,                                   # parallelismType: unknown
+                   0xFC | sps.chroma_format_idc,
+                   0xF8 | sps.bit_depth_luma_minus8,
+                   0xF8 | sps.bit_depth_chroma_minus8]),
+            struct.pack('>H', 0),                          # avgFrameRate: unspecified
+            bytes([(sps.sps_max_sub_layers_minus1 + 1) << 3
+                   | sps.sps_temporal_id_nesting_flag << 2 | (LENGTH_PREFIX - 1),
+                   len(self.sets)]),
+            *(bytes([0x80 | kind]) + struct.pack('>HH', 1, len(self.units[kind]))
+              + self.units[kind] for kind in self.sets),
+        )
+        return visual_sample_entry(self.code, width, height, record)
+
+
+class AV1Description(SampleDescription):
+    """AV1 as ``av01`` with an ``av1C`` record (AV1 Codec ISO Media File Format Binding).
+
+    A sample is its temporal unit less the temporal delimiters, and the
+    record carries the sequence header.
+    """
+
+    codec = codecs.AV1
+    code = 'av01'
+
+    def __init__(self, headers: bytes = b'') -> None:
+        self.sequence_header = b''
+        self._from_stream = False
+        super().__init__(headers)
+
+    def configure(self, headers: bytes) -> None:
+        self.sequence_header = obu.sequence_header(headers)
+
+    def store(self, data: bytes) -> bytes:
+        if not self._from_stream:
+            found = obu.sequence_header(data)
+            if found:
+                self.sequence_header = found
+                self._from_stream = True
+        return obu.without(data, obu.TEMPORAL_DELIMITER, obu.PADDING)
+
+    def missing(self) -> str:
+        return '' if self.sequence_header else 'sequence header'
+
+    def entry(self, width: int, height: int) -> bytes:
+        unit = next(obu.split(self.sequence_header))
+        sequence = av1_parse.parse_sequence_header(unit.payload)
+        point = sequence.operating_points[0]
+        colour = sequence.color_config
+        record = box(
+            'av1C',
+            bytes([0x81,                                   # marker, version 1
+                   sequence.seq_profile << 5 | point.seq_level_idx,
+                   point.seq_tier << 7 | (colour.bit_depth > 8) << 6
+                   | (colour.bit_depth == 12) << 5 | colour.mono_chrome << 4
+                   | colour.subsampling_x << 3 | colour.subsampling_y << 2
+                   | colour.chroma_sample_position,
+                   0]),                                    # no initial presentation delay
+            self.sequence_header,
+        )
+        return visual_sample_entry(self.code, width, height, record)
+
+
+#: VP9 levels by the largest luma picture each allows, as ten times the level
+#: (VP9 levels definition); the record states the lowest that holds the picture.
+VP9_LEVELS = ((36864, 10), (73728, 11), (122880, 20), (245760, 21), (552960, 30),
+              (983040, 31), (2228224, 40), (8912896, 50), (35651584, 60))
+
+
+class VP9Description(SampleDescription):
+    """VP9 as ``vp09`` with a ``vpcC`` record (VP Codec ISO Media File Format Binding).
+
+    The record describes what the encoders here produce: profile 0, 8 bits,
+    4:2:0 with co-located chroma, limited-range BT.709.
+    """
+
+    codec = codecs.VP9
+    code = 'vp09'
+
+    def entry(self, width: int, height: int) -> bytes:
+        level = next((level for most, level in VP9_LEVELS if width * height <= most),
+                     VP9_LEVELS[-1][1])
+        record = full_box(
+            'vpcC', 1, 0,
+            bytes([0, level,
+                   8 << 4 | 1 << 1 | 0,                    # depth, 4:2:0 co-located, limited
+                   1, 1, 1]),                              # BT.709 primaries, transfer, matrix
+            struct.pack('>H', 0),                          # no initialisation data
+        )
+        return visual_sample_entry(self.code, width, height, record)
+
+
+#: The sample description for each codec the writer stores.
+DESCRIPTIONS: dict[str, type[SampleDescription]] = {
+    description.codec: description
+    for description in (AVCDescription, HEVCDescription, AV1Description, VP9Description)
+}
+
+
 class MP4Writer:
     """Collects packets from an encoder into a playable MP4 file.
 
     path -- where to write
-    encoder -- take the frame size, timescale and parameter sets from this
-        encoder; give the keyword arguments instead when the packets come from
-        somewhere else
+    encoder -- take the codec, frame size, timescale and configuration from
+        this encoder; give the keyword arguments instead when the packets come
+        from somewhere else
     width/height -- frame size in pixels
     timescale -- units of a second that packet timestamps are counted in
-    parameter_sets -- ``(sps, pps)`` as raw NAL units. When omitted, they are
-        taken from the first packets that carry them.
+    codec -- ``'h264'``, ``'hevc'``, ``'av1'`` or ``'vp9'``; H.264 when neither
+        this nor an encoder says
+    parameter_sets -- for H.264, ``(sps, pps)`` as raw NAL units
+    headers -- for any codec, the stream's configuration as an encoder's
+        :meth:`~pyopengl_video.encoder.Encoder.headers` gives it: parameter
+        sets as Annex-B, or a sequence header OBU. When neither this nor
+        `parameter_sets` is given, the configuration is taken from the first
+        packets that carry one.
+
+    description -- the track's :class:`SampleDescription`, which holds the
+        configuration the file will state
     """
 
     #: Units of a second the movie header counts in. The track keeps the
@@ -107,23 +378,29 @@ class MP4Writer:
 
     def __init__(self, path: str | Path, encoder: Encoder | None = None, *,
                  width: int | None = None, height: int | None = None,
-                 timescale: int | None = None,
-                 parameter_sets: tuple[bytes, bytes] | None = None):
+                 timescale: int | None = None, codec: str | None = None,
+                 parameter_sets: tuple[bytes, bytes] | None = None,
+                 headers: bytes | None = None):
         if encoder is not None:
             width, height = encoder.size
             timescale = encoder.timescale
-            if parameter_sets is None:
-                parameter_sets = self._parameter_sets(encoder.headers())
+            codec = codec or encoder.codec
+            if parameter_sets is None and headers is None:
+                headers = encoder.headers()
         if width is None or height is None or timescale is None:
             raise ValueError('give an encoder, or width, height and timescale')
+        self.codec = codecs.canonical(codec or codecs.H264)
+        if self.codec not in DESCRIPTIONS:
+            raise ValueError(f'an MP4Writer stores {", ".join(sorted(DESCRIPTIONS))}, '
+                             f'not {codec!r}')
+        if parameter_sets is not None:
+            headers = b''.join(START_CODE + unit for unit in parameter_sets if unit)
         self.path = Path(path)
         self.size = (int(width), int(height))
         self.timescale = int(timescale)
-        self.sps, self.pps = parameter_sets or (b'', b'')
         # What is here now was advertised rather than observed, and stands only
         # until the stream says otherwise.
-        self._sps_from_stream = False
-        self._pps_from_stream = False
+        self.description = DESCRIPTIONS[self.codec](headers or b'')
 
         self._sizes: list[int] = []
         self._durations: list[int] = []
@@ -133,7 +410,7 @@ class MP4Writer:
 
         self._file = self.path.open('wb')  # noqa: OGC121 a recording written as it is captured, the way a camera writes one
         header = box('ftyp', b'isom', struct.pack('>I', 512),
-                     b'isom', b'iso2', b'avc1', b'mp41')
+                     b'isom', b'iso2', self.description.code.encode('ascii'), b'mp41')
         self._file.write(header)
         # A 64-bit `mdat`, so a long recording is not cut short at four
         # gigabytes. The length is patched in once it is known.
@@ -153,15 +430,7 @@ class MP4Writer:
     def _write_packet(self, packet: Packet) -> None:
         if self._closed:
             raise ValueError('the movie is closed')
-        sample = bytearray()
-        for unit in split_annexb(packet.data):
-            kind = unit[0] & 0x1f
-            if kind in (NAL_SPS, NAL_PPS):
-                self._remember_parameter_set(kind, unit)
-                continue
-            if kind == NAL_AUD:
-                continue
-            sample += struct.pack('>I', len(unit)) + unit
+        sample = self.description.store(packet.data)
         if not sample:
             return
         self._file.write(sample)
@@ -170,34 +439,6 @@ class MP4Writer:
         self._sizes.append(len(sample))
         self._durations.append(int(packet.duration))
         self._timestamps.append(int(packet.timestamp))
-
-    def _remember_parameter_set(self, kind: int, unit: bytes) -> None:
-        """Keep the parameter sets the stream carries, for the sample description.
-
-        The stream is the authority. An encoder states its parameter sets before
-        it has coded anything and a driver may amend them on the way out -- a
-        capability the hardware does not have is one the picture parameter set
-        must not claim -- so what the samples were coded against is what the
-        sample description has to hold. A decoder set up from the other ones
-        looks for syntax that is not in the data, and reports a corrupt picture
-        rather than a mismatch.
-
-        The first of each is kept per recording, since the sample description
-        describes every sample and a stream whose parameter sets changed
-        part-way would need a second one.
-        """
-        if kind == NAL_SPS and not self._sps_from_stream:
-            self.sps = unit
-            self._sps_from_stream = True
-        elif kind == NAL_PPS and not self._pps_from_stream:
-            self.pps = unit
-            self._pps_from_stream = True
-
-    @staticmethod
-    def _parameter_sets(headers: bytes) -> tuple[bytes, bytes]:
-        """Pick the SPS and PPS out of an encoder's Annex-B headers."""
-        found = {unit[0] & 0x1f: unit for unit in split_annexb(headers)}
-        return found.get(NAL_SPS, b''), found.get(NAL_PPS, b'')
 
     # ------------------------------------------------------------- closing
 
@@ -209,10 +450,11 @@ class MP4Writer:
         try:
             if not self._sizes:
                 raise ValueError(f'{self.path} has no samples in it')
-            if not self.sps or not self.pps:
+            missing = self.description.missing()
+            if missing:
                 raise ValueError(
-                    f'{self.path} has no parameter sets: give parameter_sets, or '
-                    'let the encoder repeat them in the stream')
+                    f'{self.path} has no {missing}: give headers, or let the '
+                    'encoder repeat them in the stream')
             end = self._file.tell()
             self._file.seek(self._mdat_position + 8)
             self._file.write(struct.pack('>Q', end - self._mdat_position))
@@ -330,27 +572,8 @@ class MP4Writer:
         return box('stbl', *tables)
 
     def _stsd(self) -> bytes:
-        width, height = self.size
-        avcc = box(
-            'avcC',
-            bytes([1, self.sps[1], self.sps[2], self.sps[3],
-                   0xfc | (LENGTH_PREFIX - 1), 0xe0 | 1]),
-            struct.pack('>H', len(self.sps)), self.sps,
-            bytes([1]), struct.pack('>H', len(self.pps)), self.pps,
-        )
-        avc1 = box(
-            'avc1',
-            bytes(6), struct.pack('>H', 1),                    # reserved, data reference
-            bytes(16),                                         # pre-defined, reserved
-            struct.pack('>HH', width, height),
-            struct.pack('>II', 0x00480000, 0x00480000),        # 72 dpi each way
-            struct.pack('>I', 0),                              # reserved
-            struct.pack('>H', 1),                              # frames per sample
-            bytes(32),                                         # compressor name
-            struct.pack('>Hh', 0x0018, -1),                    # depth, pre-defined
-            avcc,
-        )
-        return full_box('stsd', 0, 0, struct.pack('>I', 1), avc1)
+        return full_box('stsd', 0, 0, struct.pack('>I', 1),
+                        self.description.entry(*self.size))
 
     def _stts(self, durations: list[int]) -> bytes:
         runs = self._runs(durations)
@@ -612,26 +835,52 @@ class Track:
 
 
 class VideoTrack(Track):
-    """An H.264 video track (``avc1`` or ``avc3``).
+    """A video track in a codec this package decodes.
+
+    H.264 (``avc1``, ``avc3``), HEVC (``hvc1``, ``hev1``), AV1 (``av01``) or
+    VP9 (``vp09``). :func:`pyopengl_video.codecs.canonical` turns
+    :attr:`~Track.codec` into the name a decoder is opened by.
 
     width/height -- the picture size the sample entry states
-    sps/pps -- the parameter sets ``avcC`` carries, as NAL units
+    vps/sps/pps -- the parameter sets ``avcC`` or ``hvcC`` carries, as NAL
+        units; ``vps`` is empty for H.264, and all three for AV1 and VP9
+    configuration -- the configuration OBUs ``av1C`` carries; empty otherwise
     length_size -- bytes in the length prefix of each NAL unit in a sample
     """
 
     width = 0
     height = 0
     length_size = LENGTH_PREFIX
+    configuration = b''
+    vps: list[bytes]
     sps: list[bytes]
     pps: list[bytes]
+
+    @property
+    def size(self) -> tuple[int, int]:
+        """The picture size the sample entry states, as (width, height)."""
+        return self.width, self.height
 
     def describe(self, entry: bytes) -> None:
         """Take the picture size and the decoder configuration from the sample entry."""
         self.width, self.height = struct.unpack_from('>HH', entry, 24)
-        self.sps, self.pps = [], []
-        config = _children(entry[78:]).get('avcC')
-        if config is None:
-            return
+        self.vps, self.sps, self.pps = [], [], []
+        self._kind = codecs.of_sample_entry(self.codec)
+        children = _children(entry[78:])
+        if 'avcC' in children:
+            self._read_avcc(children['avcC'])
+        elif 'hvcC' in children:
+            self._read_hvcc(children['hvcC'])
+        elif 'av1C' in children:
+            self.configuration = bytes(children['av1C'][AV1C_OBUS:])
+
+    @property
+    def _nal_units(self) -> bool:
+        """Whether a sample is length-prefixed NAL units, as H.264 and HEVC are."""
+        return self._kind in (codecs.H264, codecs.HEVC)
+
+    def _read_avcc(self, config: bytes) -> None:
+        """The SPS and PPS of an AVCDecoderConfigurationRecord."""
         self.length_size = (config[4] & 3) + 1
         position = 6
         for _ in range(config[5] & 0x1F):
@@ -643,27 +892,56 @@ class VideoTrack(Track):
             self.pps.append(config[position + 3:position + 3 + length])
             position += 2 + length
 
+    def _read_hvcc(self, config: bytes) -> None:
+        """The VPS, SPS and PPS arrays of an HEVCDecoderConfigurationRecord."""
+        if len(config) <= HVCC_ARRAYS:
+            raise MP4Error(f'an hvcC record of {len(config)} bytes ends before its arrays')
+        self.length_size = (config[HVCC_LENGTH_SIZE] & 3) + 1
+        kinds = {HEVC_VPS: self.vps, HEVC_SPS: self.sps, HEVC_PPS: self.pps}
+        position = HVCC_ARRAYS + 1
+        for _ in range(config[HVCC_ARRAYS]):
+            kind = config[position] & 0x3F
+            count = struct.unpack_from('>H', config, position + 1)[0]
+            position += 3
+            for _ in range(count):
+                length = struct.unpack_from('>H', config, position)[0]
+                unit = config[position + 2:position + 2 + length]
+                position += 2 + length
+                if kind in kinds:
+                    kinds[kind].append(unit)
+
     def parameter_sets(self) -> bytes:
-        """The sample entry's SPS and PPS, as an Annex-B fragment."""
-        return b''.join(b'\x00\x00\x00\x01' + unit for unit in self.sps + self.pps)
+        """The sample entry's configuration, as a decoder's ``headers``.
+
+        The parameter sets as an Annex-B fragment for H.264 and HEVC, the
+        configuration OBUs for AV1, and nothing for VP9.
+        """
+        if self._nal_units:
+            return b''.join(START_CODE + unit for unit in self.vps + self.sps + self.pps)
+        return self.configuration
 
     def sample(self, index: int, parameter_sets: bool = False) -> Sample:
-        """Sample `index` as Annex-B, the form every decoder here takes.
+        """Sample `index` in the form every decoder here takes.
 
-        parameter_sets -- put the sample entry's SPS and PPS in front, which a
-            decoder needs before the first sample it sees and after a seek
+        Annex-B for H.264 and HEVC; the temporal unit's OBUs for AV1 and the
+        frame or superframe for VP9, each as stored.
+
+        parameter_sets -- put the sample entry's configuration in front, which
+            a decoder needs before the first sample it sees and after a seek
         """
         found = super().sample(index)
         raw = found.data
+        prefix = self.parameter_sets() if parameter_sets else b''
+        if not self._nal_units:
+            return dataclasses.replace(found, data=prefix + raw) if prefix else found
         units = []
         position = 0
         size = self.length_size
         while position + size <= len(raw):
             length = int.from_bytes(raw[position:position + size], 'big')
             position += size
-            units.append(b'\x00\x00\x00\x01' + raw[position:position + length])
+            units.append(START_CODE + raw[position:position + length])
             position += length
-        prefix = self.parameter_sets() if parameter_sets else b''
         return dataclasses.replace(found, data=prefix + b''.join(units))
 
 
@@ -739,8 +1017,8 @@ class MP4Reader:
     when it is asked for. The reader needs no GL, so it can be opened on any
     thread. Fragmented MP4 (``moof``) is not read.
 
-    The box structure is ISO/IEC 14496-12 and the ``avcC`` record ISO/IEC
-    14496-15.
+    A video track in H.264, HEVC, AV1 or VP9 is a :class:`VideoTrack`; one in
+    another codec is listed in :attr:`tracks` as a plain :class:`Track`.
     """
 
     def __init__(self, source: str | Path | BinaryIO) -> None:
@@ -764,7 +1042,7 @@ class MP4Reader:
 
     @property
     def video(self) -> VideoTrack | None:
-        """The first video track, or None."""
+        """The first video track in a codec this package decodes, or None."""
         return next((track for track in self.tracks if isinstance(track, VideoTrack)), None)
 
     @property
@@ -865,7 +1143,7 @@ class MP4Reader:
         kind, entry = next(iter_boxes(entries, 4))
         edit_offset = self._edit_offset(trak.get('edts'), timescale, movie_timescale)
         cls: type[Track] = Track
-        if handler == 'vide' and kind in ('avc1', 'avc3'):
+        if handler == 'vide' and codecs.of_sample_entry(kind):
             cls = VideoTrack
         elif handler == 'soun':
             cls = AudioTrack

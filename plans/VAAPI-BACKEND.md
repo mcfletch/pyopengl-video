@@ -77,8 +77,33 @@ form into the `DMABufError` the caller is owed.
   display order, so nothing reorders and a container needs no composition
   offsets; adding them means picture order counts for a reordered GOP and a
   second reference list, and is the natural next piece of `h264.py`.
-- **HEVC and AV1.** Both are advertised by this part's `EncSlice`. Each needs
-  its own parameter sets and slice headers, which is most of what `h264.py` is.
+- **HEVC and AV1 beyond I and P.** Both codecs landed 2026-10-12 as control
+  layers of their own (`hevc.py` with `hevc_encode.py`, `av1.py` with
+  `av1_encode.py`) behind the `EncodeControl` interface in `control.py`, with
+  `VAAPIEncoder` as the shell all three share. Each codes a key picture and
+  predicted pictures in display order, 8-bit 4:2:0, as H.264 does. Main 10 is
+  advertised by this part and not produced: the input is a `GL_RGBA8` texture.
+
+What radeonsi does with the newer codecs, found on Mesa 25.2.8:
+
+- It reads the packed HEVC parameter sets and slice headers and writes its
+  own from them. Without a packed slice header it emits no parameter sets. A
+  packed slice header with no packed parameter sets hangs its parser inside
+  `vaRenderPicture`, so the layer never sends one alone.
+- It rounds an HEVC picture to 64 by 16 and keeps the conformance window it is
+  given. Under CBR it appends filler NAL units to cheap pictures.
+- It reads the packed AV1 sequence and frame headers for the values it has no
+  parameter for, writes its own headers, and writes no temporal delimiter; the
+  layer adds one. Its smallest AV1 frame is 128x128, and it pads a frame to
+  its own blocks: 1920x1080 is coded as 1920x1082 with a render size of
+  1920x1080. AV1 has no cropping, so the padding is in the picture.
+- A colour conversion followed at once by its encode is taken over by the
+  encoder's own converter, and from the seventeenth picture the conversion's
+  `vaEndPicture` fails. Two conversions before the first encode keep every
+  conversion in the video processing pass (`_keep_conversion`).
+- The conversion writes only the picture's rectangle of a padded surface
+  (`output_region`), so a size that is not whole blocks is cropped and not
+  scaled.
 
 One backend serves both vendors. `libva` is the encoder interface on Linux for
 Intel parts through the `iHD` media driver and for AMD parts through Mesa's

@@ -1,9 +1,11 @@
 """The conversion pass: NV12 planes into an RGBA texture, the right way up.
 
-Every hardware decoder here produces NV12: a full-size luma plane and a
-half-size plane of interleaved Cb and Cr. :class:`NV12Converter` samples the two
-as ``GL_R8`` and ``GL_RG8`` textures and draws one triangle into the output
-texture's framebuffer, applying in one pass:
+Every hardware decoder here produces two planes: full-size luma, and half-size
+interleaved Cb and Cr. An 8-bit stream gives NV12, read as ``GL_R8`` and
+``GL_RG8`` textures; a 10-bit stream gives P010, read as ``GL_R16`` and
+``GL_RG16`` with each sample in the high bits of its channel.
+:class:`NV12Converter` samples the two planes of either and draws one triangle
+into the output texture's framebuffer, applying in one pass:
 
 - the stream's matrix and range (:meth:`~pyopengl_video.colour.Colour.yuv_to_rgb`)
 - the visible rectangle, since a decoder's surface is padded past the picture
@@ -91,7 +93,27 @@ from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecodedFrame, DecoderError
 from pyopengl_video.glstate import preserved_state
 
-__all__ = ['NV12Converter', 'create_output_texture', 'generate_mipmaps']
+__all__ = ['LAYOUT_DEPTHS', 'NV12Converter', 'create_output_texture',
+           'generate_mipmaps']
+
+#: Bits a sample for each two-plane layout a decoded frame may have.
+LAYOUT_DEPTHS = {'nv12': 8, 'p010': 10}
+
+#: Bits a channel of the textures a layout of more than 8 bits is read from.
+WIDE_CHANNEL_BITS = 16
+
+
+def sample_scale(depth: int) -> float:
+    """What a texture read is multiplied by to give code value over the largest.
+
+    An 8-bit texture reads as code / 255 already. A wider sample sits in the
+    high bits of a 16-bit channel, so the texture reads as
+    ``code * 2 ** (16 - depth) / 65535``.
+    """
+    if depth == 8:
+        return 1.0
+    shifted = ((1 << depth) - 1) << (WIDE_CHANNEL_BITS - depth)
+    return ((1 << WIDE_CHANNEL_BITS) - 1) / shifted
 
 VERTEX_SHADER = '''#version 330 core
 // One triangle covering the viewport, from the vertex index alone.
@@ -177,7 +199,7 @@ def _program() -> int:
 
 
 class NV12Converter:
-    """Draws NV12 planes into RGBA textures.
+    """Draws NV12 or P010 planes into RGBA textures.
 
     Built and used on the thread whose OpenGL context is current. It owns a
     program, an empty vertex array and one framebuffer per output texture it
@@ -194,25 +216,29 @@ class NV12Converter:
                                        'chroma_offset', 'yuv_to_rgb')}
 
     def convert(self, frame: DecodedFrame, target: int) -> None:
-        """Draw a decoded ``'nv12'`` frame into `target`, which is frame-sized."""
-        if frame.layout != 'nv12':
+        """Draw a decoded ``'nv12'`` or ``'p010'`` frame into `target`, which is frame-sized."""
+        if frame.layout not in LAYOUT_DEPTHS:
             raise DecoderError(f'a {frame.layout} frame needs no conversion')
         if frame.released:
             raise DecoderError('this frame has been released; its surface may '
                                'already hold another picture')
         luma, chroma = frame.planes
         self.draw(luma, chroma, visible=frame.visible, colour=frame.colour,
-                  target=target)
+                  target=target, depth=LAYOUT_DEPTHS[frame.layout])
 
     def draw(self, luma: int, chroma: int, *, visible: tuple[int, int, int, int],
-             colour: Colour, target: int, size: tuple[int, int] | None = None) -> None:
+             colour: Colour, target: int, size: tuple[int, int] | None = None,
+             depth: int = 8) -> None:
         """Draw the `visible` part of two planes into `target`.
 
-        luma/chroma -- ``GL_R8`` and ``GL_RG8`` textures, first row at the top
+        luma/chroma -- ``GL_R8`` and ``GL_RG8`` textures, first row at the
+            top; ``GL_R16`` and ``GL_RG16`` for a `depth` above 8, the samples
+            in the high bits
         visible -- ``(x, y, width, height)`` of the picture in the luma texture
         colour -- the stream's colour description
         target -- an RGBA texture, usually from :func:`create_output_texture`
         size -- the target's size; the visible size by default
+        depth -- bits a sample
         """
         width, height = size or visible[2:]
         framebuffer = self._framebuffer(target)
@@ -234,7 +260,10 @@ class NV12Converter:
             glUniform1i(uniforms['chroma'], 1)
             glUniform4f(uniforms['visible'], *(float(value) for value in visible))
             glUniform2f(uniforms['chroma_offset'], *colour.chroma_offset())
-            rows = [*colour.yuv_to_rgb(), (0.0, 0.0, 0.0, 1.0)]
+            scale = sample_scale(depth)
+            rows = [*((y * scale, cb * scale, cr * scale, offset)
+                      for y, cb, cr, offset in colour.yuv_to_rgb(depth)),
+                    (0.0, 0.0, 0.0, 1.0)]
             matrix = (ctypes.c_float * 16)(*(value for row in rows for value in row))
             glUniformMatrix4fv(uniforms['yuv_to_rgb'], 1, GL_TRUE, matrix)
             glDrawArrays(GL_TRIANGLES, 0, 3)

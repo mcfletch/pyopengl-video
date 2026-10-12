@@ -8,10 +8,10 @@ import pytest
 
 from pyopengl_video.decoder import DecoderError
 from pyopengl_video.vaapi import api
-from pyopengl_video.vaapi.decoder import (
+from pyopengl_video.vaapi.decoder import SurfaceOrder
+from pyopengl_video.vaapi.h264_decode import (
     ZIGZAG_4X4,
     ZIGZAG_8X8,
-    SurfaceOrder,
     iq_matrix,
     picture_parameters,
     profile_for,

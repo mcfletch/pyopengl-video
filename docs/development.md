@@ -54,8 +54,11 @@ src/pyopengl_video/
     encoder.py      the Encoder interface, Packet, and the encoder registry
     decoder.py      the Decoder interface, Sample, DecodedFrame, the decoder registry
     inputs.py       InputHandle: the texture an encoder reads, and its framebuffer
-    mp4.py          Annex-B into an MP4 file, and MP4Reader back out of one
-    annexb.py       AnnexBReader: access units of a raw .h264 stream
+    codecs.py       the codec names, and the spellings that reach them
+    mp4.py          packets into an MP4 file, and MP4Reader back out of one
+    annexb.py       AnnexBReader: access units of a raw .h264 or .h265 stream
+    ivf.py          IVFReader and IVFWriter, for AV1 and VP9
+    obu.py          splitting an AV1 temporal unit into its OBUs
     colour.py       Colour: H.273 code points and the YUV to RGB transform
     convert.py      NV12Converter: two planes into an RGBA texture
     glstate.py      preserved_state(), which every pass draws inside
@@ -69,23 +72,30 @@ src/pyopengl_video/
     vpl/            Intel's oneVPL, over the Windows interop
     vaapi/api.py    ctypes over libva: display, config, context, surfaces, buffers
     vaapi/device.py a libva display on a render node, shared by both directions
-    vaapi/h264.py   the control layer libva leaves to the caller: bits, parameter sets
-    vaapi/h264_parse.py the decoder's parser: NAL units, SPS, PPS, slice headers
-    vaapi/h264_dpb.py   picture order, reference marking and lists, output order
-    vaapi/encoder.py    the encoder: export, import, convert, code
-    vaapi/decoder.py    the decoder: parameter buffers, surfaces imported as textures
+    vaapi/hevc_api.py, av1_api.py, vp9_api.py   each codec's libva structures
+    vaapi/codecs.py     the codecs with a control layer, and which a device offers
+    vaapi/control.py    what a control layer is: DecodeControl, EncodeControl
+    vaapi/encoder.py    the encoder shell: export, import, convert, submit
+    vaapi/decoder.py    the decoder shell: surfaces imported as textures, lending
+    vaapi/bits.py       MSB-first bit reader and writer, for AV1 and VP9
+    vaapi/h264.py       H.264 header writer, and the RBSP bit reader and writer
+    vaapi/h264_parse.py, h264_dpb.py    H.264 syntax and picture management
+    vaapi/h264_decode.py, h264_encode.py    H.264's two control layers
+    vaapi/hevc.py, hevc_parse.py, hevc_dpb.py, hevc_decode.py, hevc_encode.py
+    vaapi/av1.py, av1_parse.py, av1_decode.py, av1_encode.py
+    vaapi/vp9_parse.py, vp9_tables.py, vp9_decode.py
 tests/
     nvenc_abi.json  sizes and offsets recorded from NVIDIA's header
     nvdec_abi.json  the same for NVDEC and CUDA, in the Linux and Windows layouts
     vpl_abi.json    the same, from the oneVPL headers
     va_abi.json     the same, from the libva headers, plus their constant values
-    data/decode/    x264 streams and the checksums of their decoded pictures
+    data/decode/    streams in each codec and the checksums of their decoded pictures
 tools/
     record_nvenc_abi.py    regenerates those files from real headers
     record_nvdec_abi.py
     record_vpl_abi.py
     record_va_abi.py
-    make_decode_fixtures.py  rewrites tests/data/decode/ with ffmpeg and libx264
+    make_decode_fixtures.py  rewrites tests/data/decode/ with ffmpeg, one codec or all
 ```
 
 ## How the NVENC binding works
@@ -173,11 +183,19 @@ backend can append to it.
 
 ```python
 BACKEND = Backend(
-    name='vaapi', vendor='Intel/AMD', codecs=frozenset({'h264'}),
-    max_size=(4096, 4096), zero_copy=True,
-    probe=probe, factory=_build, explain=explain,
+    name='vaapi', vendor='Intel/AMD', codecs=frozenset(ENCODERS),
+    max_size=(8192, 8192), sizes={'h264': (4096, 4096)}, zero_copy=True,
+    probe=probe, factory=_build, explain=explain, capabilities=encoder_codecs,
 )
 ```
+
+`codecs` is everything the backend drives. **`capabilities` says which of them
+this machine's hardware has**: it returns each codec with the largest frame the
+hardware takes, and discovery narrows the record to that, so `encoders()` and
+`decoders()` report the machine and not the software. It is called after
+`probe` has passed and must not raise. A backend that cannot ask without
+building an encoder leaves it out, and refuses the codec by name when it is
+built.
 
 `probe()` must be **cheap and quiet**: discovery calls it, so it loads a library
 and checks the platform, and it returns False rather than raising when the
@@ -295,18 +313,55 @@ recording and requires it to be silent; where it is not, the test skips. It is
 not a dependency and the suite does not need it. It earned its keep on the first
 run, on a container whose sample description did not match its samples.
 
+## Adding a codec to the VA-API backend
+
+libva is a slice-level interface. The driver reconstructs or codes blocks, and
+the caller parses or writes the headers, orders the pictures and keeps the
+references. That part is the codec's *control layer*, and
+`vaapi/control.py` states what one is:
+
+- `DecodeControl` parses each sample, tells its `DecodeSession` the `Format`
+  its sequence needs (profile, coded size, surfaces held, bit depth), acquires
+  a surface for each picture, submits the picture's parameter buffers, and
+  gives the pictures to `output()` in display order. `held()` names the
+  surfaces still referenced or waiting to be shown.
+- `EncodeControl` decides what each picture is, returns the parameter buffers
+  that code it, and turns the bytes the driver wrote into a packet.
+
+The shells, `VAAPIDecoder` and `VAAPIEncoder`, hold the device, the surfaces,
+the OpenGL textures and the calls, and are the same for every codec. A layer
+holds no driver, so its rules are tested with a stand-in session
+(`tests/test_vaapi_decode_session.py`, and each codec's own no-driver tests).
+
+A codec is switched on by one `Support` entry in `DECODERS` or `ENCODERS` in
+`vaapi/codecs.py`, naming the libva profiles that carry it and the layer's
+class. Discovery, `open_decoder`, `open_encoder` and the players follow from
+that entry. The codec's libva structures go in `vaapi/<codec>_api.py`, where
+`tools/record_va_abi.py` finds them: it measures every public structure and
+every `VA*` constant in the binding modules.
+
 ## Testing a decoder
 
-H.264 decoding is exact, so every correct decoder produces the same bytes.
-`tests/test_vaapi_decode.py` and `tests/test_nvdec_decode.py` decode each
-stream under `tests/data/decode/` and read the NV12 planes back from the
-textures. Each picture's MD5 must equal
-the one `ffmpeg`'s software decoder recorded. The streams come from `libx264`
-and use what our encoders do not write: B-frame pyramids, weighted prediction,
-several slices a picture, scaling matrices, CAVLC and open groups of pictures.
-One interlaced stream is recorded apart from those, for the NVDEC backends.
-`python tools/make_decode_fixtures.py` rewrites the streams and checksums. The
+Decoding these codecs is exact, so every correct decoder produces the same
+bytes. The hardware tests (`tests/test_vaapi_decode.py`,
+`test_nvdec_decode.py`, `test_hevc_decode.py`, `test_av1_decode.py`,
+`test_vp9_decode.py`) decode each
+stream under `tests/data/decode/` and read the planes back from the textures:
+NV12 from an 8-bit stream, P010 from a 10-bit one. Each picture's MD5 must
+equal the one `ffmpeg`'s software decoder recorded. The streams come from
+x264, x265, libaom, SVT-AV1 and libvpx, and use what our encoders do not
+write: B-frame pyramids, weighted prediction, several slices or tiles a
+picture, scaling matrices, hidden frames, film grain and open groups of
+pictures. One interlaced H.264 stream is recorded apart from those, under
+`interlaced` in its table, for the NVDEC backends.
+`python tools/make_decode_fixtures.py` rewrites every stream and
+checksum, and `python tools/make_decode_fixtures.py hevc av1` those codecs
+alone. Each codec has its own table, `tests/data/decode/<codec>.json`. The
 suite needs neither `ffmpeg` nor the tool.
+
+A parser is checked against `ffmpeg -bsf:v trace_headers`, which prints every
+header field of a stream as a reference parser reads it. The values are
+copied into the parser's test as constants.
 
 These tests need no driver:
 

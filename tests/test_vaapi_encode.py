@@ -25,11 +25,11 @@ from pyopengl_video.mp4 import MP4Writer, split_annexb
 from pyopengl_video.vaapi import api, h264
 from pyopengl_video.vaapi import encoder as encoder_module
 from pyopengl_video.vaapi.encoder import (
-    PACKED_HEADERS_WRITTEN,
     PIPELINE_DEPTH,
     VAAPIEncoder,
     colour_pipeline,
 )
+from pyopengl_video.vaapi.h264_encode import PACKED_HEADERS_WRITTEN
 from tests.conftest import blit, decode_errors, gradient_frame
 
 SIZE = (320, 240)
@@ -101,8 +101,10 @@ class TestWhatTheSessionNegotiated:
         assert encoder.vendor, 'the driver names itself'
 
     def test_it_asks_for_no_more_references_than_the_driver_offers(self, encoder):
-        assert encoder.max_num_ref_frames >= 1
-        assert encoder.sets.max_num_ref_frames == encoder.max_num_ref_frames
+        layer = encoder.control
+        assert layer.max_num_ref_frames >= 1
+        assert layer.sets.max_num_ref_frames == layer.max_num_ref_frames
+        assert layer.references == layer.max_num_ref_frames
 
     def test_it_asks_only_for_the_packed_headers_it_writes(self, encoder):
         assert encoder.packed_headers & ~PACKED_HEADERS_WRITTEN == 0
@@ -444,9 +446,9 @@ class TestSettings:
         with pytest.raises(EncoderError, match='rate control'):
             VAAPIEncoder(*SIZE, rate_control='magic')
 
-    def test_another_codec_is_refused(self):
+    def test_a_codec_with_no_control_layer_is_refused(self):
         with pytest.raises(EncoderError, match='h264'):
-            VAAPIEncoder(*SIZE, codec='hevc')
+            VAAPIEncoder(*SIZE, codec='mpeg2')
 
     def test_b_frames_are_refused_because_nothing_reorders(self):
         with pytest.raises(EncoderError, match='display order'):
@@ -461,6 +463,27 @@ class TestSettings:
             packets = encode_sequence(made, handles, frames=6)
             assert len(packets) == 6
             assert all(len(packet) > 0 for packet in packets)
+        finally:
+            for handle in handles:
+                handle.close()
+            made.close()
+
+    @pytest.mark.parametrize('size', [(208, 144), (256, 144)])
+    def test_a_recording_runs_past_the_sixteen_pictures_mesa_converts_for(self, size):
+        """The colour conversion stays this encoder's for the whole recording.
+
+        Mesa takes a conversion followed at once by its encode as one the
+        encoder's own converter can do, and from the seventeenth picture it
+        skips the conversion it was asked for. On a device with a video
+        processing engine the skipped conversion then fails. It does so for a
+        texture the driver left uncompressed whose size is the coded size,
+        which these sizes are on the device this was found on.
+        """
+        made = VAAPIEncoder(*size, fps=30, gop=5, rate_control='cqp')
+        handles = [made.new_input() for _ in range(made.input_slots)]
+        try:
+            packets = encode_sequence(made, handles, frames=24)
+            assert len(packets) == 24
         finally:
             for handle in handles:
                 handle.close()
