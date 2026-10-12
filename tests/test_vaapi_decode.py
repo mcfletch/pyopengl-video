@@ -5,23 +5,18 @@ of the GPU with the bytes ffmpeg's software decoder produced, read back from
 the textures the decoder hands out. Our own encoder's streams are decoded too,
 which is the round trip the encode plan asked for.
 """
-import hashlib
 import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 from OpenGL.GL import (
-    GL_PACK_ALIGNMENT,
-    GL_RED,
-    GL_RG,
     GL_RGBA,
     GL_TEXTURE_2D,
     GL_UNSIGNED_BYTE,
     glBindTexture,
     glDeleteTextures,
     glGetTexImage,
-    glPixelStorei,
 )
 
 from pyopengl_video import DecoderError, decoders, open_decoder
@@ -32,46 +27,11 @@ from pyopengl_video.mp4 import MP4Reader
 from pyopengl_video.vaapi.decoder import VAAPIDecoder
 from pyopengl_video.vaapi.encoder import VAAPIEncoder
 from pyopengl_video.vaapi.h264 import BitWriter, annexb, nal_unit
-from tests.conftest import blit, gradient_frame
+from tests.conftest import blit, decode_all, gradient_frame, md5s
 from tests.h264_syntax import sps_bytes, write_pps_head
 
 DATA = Path(__file__).parent / 'data' / 'decode'
 FIXTURES = json.loads((DATA / 'fixtures.json').read_text())['streams']
-
-
-def read_plane(texture, format):
-    """A plane texture's bytes, rows packed with no padding."""
-    glPixelStorei(GL_PACK_ALIGNMENT, 1)
-    glBindTexture(GL_TEXTURE_2D, texture)
-    data = glGetTexImage(GL_TEXTURE_2D, 0, format, GL_UNSIGNED_BYTE)
-    glBindTexture(GL_TEXTURE_2D, 0)
-    glPixelStorei(GL_PACK_ALIGNMENT, 4)
-    return np.frombuffer(data, dtype=np.uint8)
-
-
-def nv12_bytes(frame):
-    """The visible picture as packed NV12, first row at the top."""
-    width, height = frame.texture_size
-    x, y, w, h = frame.visible
-    luma = read_plane(frame.planes[0], GL_RED).reshape(height, width)[y:y + h, x:x + w]
-    chroma = read_plane(frame.planes[1], GL_RG).reshape(height // 2, width // 2, 2)[
-        y // 2:(y + h) // 2, x // 2:(x + w) // 2]
-    return luma.tobytes() + chroma.tobytes()
-
-
-def md5s(frames):
-    found = []
-    for frame in frames:
-        found.append(hashlib.md5(nv12_bytes(frame)).hexdigest())
-        frame.release()
-    return found
-
-
-def decode_all(decoder, samples):
-    found = []
-    for sample in samples:
-        found += md5s(decoder.decode(sample))
-    return found + md5s(decoder.flush())
 
 
 @pytest.fixture

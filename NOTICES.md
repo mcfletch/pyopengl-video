@@ -32,6 +32,27 @@ structure layouts, enumerations and interface GUIDs are taken from
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
+## NVIDIA NVDEC and the CUDA driver API
+
+The ctypes declarations in `pyopengl_video/nvdec/api.py` describe the ABI of
+`libnvcuvid.so.1` and `libcuda.so.1` (`nvcuvid.dll` and `nvcuda.dll`), both
+part of the NVIDIA display driver. The structure layouts, the enumerations and
+the exported symbol names are taken from `dynlink_cuviddec.h`,
+`dynlink_nvcuvid.h`, `dynlink_cuda.h` and `dynlink_loader.h` as published in
+[nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers), header version
+13.1, and are recorded by machine in `tests/nvdec_abi.json` rather than
+vendored. The four headers carry the MIT notice quoted above for
+`nvEncodeAPI.h`: `dynlink_cuviddec.h` and `dynlink_nvcuvid.h` under
+"Copyright (c) 2010-2026 NVIDIA Corporation", and `dynlink_cuda.h` and
+`dynlink_loader.h` under "Copyright (c) 2016".
+
+The order of the calls and what each callback is for are as those headers
+document them. That chroma follows luma by the decoder's target height in
+rows, and that the parser reuses a picture once its display callback has
+returned, were established by decoding: every picture of the streams under
+`tests/data/decode/` comes out with the bytes `ffmpeg`'s software decoder
+recorded. No decoder's source was consulted, FFmpeg's `cuviddec.c` included.
+
 ## Intel oneVPL
 
 The ctypes declarations in `pyopengl_video/vpl/api.py` describe the ABI of
@@ -121,7 +142,8 @@ descriptors of ISO/IEC 14496-1. `pyopengl_video/colour.py` uses the code points
 and coefficients of Rec. ITU-T H.273.
 
 `tools/make_decode_fixtures.py` runs `ffmpeg` with `libx264` on `ffmpeg`'s
-test pattern to write the streams under `tests/data/decode/`. It also records
+test pattern to write the streams under `tests/data/decode/`, the interlaced
+one included. It also records
 the checksum of each picture `ffmpeg` decodes. The streams and checksums are
 test data. `ffmpeg` and `x264` run as programs, and no part of either is in
 this package.

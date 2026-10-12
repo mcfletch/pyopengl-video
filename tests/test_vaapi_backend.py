@@ -11,6 +11,7 @@ from OpenGL import platform as gl_platform
 
 from pyopengl_video import encoder as encoder_module
 from pyopengl_video import encoders, vaapi
+from pyopengl_video.backend import context_kind
 from pyopengl_video.encoder import Backend
 from pyopengl_video.linux import dmabuf
 from pyopengl_video.vaapi import api
@@ -157,11 +158,11 @@ class TestAContextOfAnotherBinding:
     """A GLX or WGL context current makes the backend unavailable, for encoding and decoding."""
 
     def test_its_kind_is_other(self, glx_context):  # noqa: ARG002 - the fixture is the context
-        assert vaapi._context_kind() == 'other'  # noqa: SLF001 - the helper the probes share, tested alone
+        assert context_kind() == 'other'
 
     def test_no_context_at_all_is_none(self, glx_context, monkeypatch):
         monkeypatch.setattr(glx_context, 'GetCurrentContext', lambda *_args, **_named: None)
-        assert vaapi._context_kind() is None  # noqa: SLF001 - the helper the probes share, tested alone
+        assert context_kind() is None
 
     def test_the_encoder_cannot_record_from_it(self, glx_context):  # noqa: ARG002 - the fixture is the context
         assert vaapi._context_can_export() is False  # noqa: SLF001 - one step of probe(), tested alone

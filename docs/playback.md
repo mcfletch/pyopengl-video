@@ -1,9 +1,10 @@
 # Playing video into OpenGL textures
 
 `pyopengl-video` decodes H.264 on the GPU's video decoder and hands each
-picture to OpenGL as textures. The frame never passes through host memory. A
-conversion pass turns the decoded YUV into an RGBA texture, the right way up
-for OpenGL. Any PyOpenGL program can play a movie; no scenegraph is needed.
+picture to OpenGL as textures. Where the GPU that decodes is the one that
+draws, the frame never passes through host memory. A conversion pass turns
+the decoded YUV into an RGBA texture, the right way up for OpenGL. Any
+PyOpenGL program can play a movie; no scenegraph is needed.
 
 ```python
 from pyopengl_video.playback import Movie
@@ -27,10 +28,14 @@ MP4 and raw H.264 readers are part of this package.
 
 | Backend | Hardware | Platform | Codec | Picture handed over as | State |
 | --- | --- | --- | --- | --- | --- |
+| `nvdec` | NVIDIA | Linux | H.264 | CUDA memory copied on the GPU into two textures | working |
+| `nvdec` | NVIDIA | Windows | H.264 | the same | the same code, untested |
 | `vaapi` | AMD, VCN | Linux | H.264 | two DMA-BUF planes imported as textures | working |
 | `vaapi` | Intel, Gen9 and later | Linux | H.264 | the same | the same code, untested |
-| `nvdec` | NVIDIA | Linux, Windows | H.264 | CUDA memory copied into textures | [planned](../plans/GPU-VIDEO-DECODE.md) |
+| `nvdec-copy` | NVIDIA | Linux, Windows | H.264 | CUDA memory copied through host memory into two textures | working on Linux |
 | `vpl` | Intel | Windows | H.264 | a Direct3D 11 texture | [planned](../plans/GPU-VIDEO-DECODE.md) |
+
+The table is in the order `movie.player()` prefers the backends in.
 
 **The `vaapi` backend needs an EGL context.** Each decode surface reaches
 OpenGL through `EGL_EXT_image_dma_buf_import`. Ask GLFW for one before the
@@ -40,10 +45,26 @@ window is created:
 glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)
 ```
 
-From a GLX or WGL context the backend reports itself unavailable, and
-`movie.player()` raises `DecoderUnavailable` saying the context is not an EGL
-context. It also needs the VA-API driver for the GPU: `mesa-va-drivers` for
+From a GLX or WGL context the backend reports itself unavailable. Where no
+other backend serves the context either, `movie.player()` raises
+`DecoderUnavailable` saying the context is not an EGL context. It also needs the VA-API driver for the GPU: `mesa-va-drivers` for
 AMD, `intel-media-va-driver` for Intel.
+
+**The `nvdec` backend needs the OpenGL context to render on the NVIDIA GPU.**
+NVDEC decodes into CUDA memory, and CUDA copies each picture into a pair of
+textures it has registered, which it can do only for a context on its own GPU.
+An EGL context and a GLX context both serve; a WGL context goes through the
+same call and has not been run. It uses two libraries from the
+NVIDIA driver, `libcuda.so.1` and `libnvcuvid.so.1` (`nvcuda.dll` and
+`nvcuvid.dll` on Windows); the CUDA toolkit is not needed. Debian and Ubuntu
+package the second apart from the driver, as `libnvidia-decode-<version>`.
+
+Where another GPU draws the window, as on a laptop whose integrated GPU does,
+`nvdec` reports itself unavailable and says so, and `nvdec-copy` is the
+backend that works: it decodes on the NVIDIA GPU and copies each picture
+through host memory, about 3 MB a frame at 1080p. `decoders()` lists it last,
+so a backend that keeps the picture on the GPU is chosen first where there is
+one, and `backend.zero_copy` and `decoder.zero_copy` say which was chosen.
 
 `decoders()` lists what this machine can decode:
 
@@ -75,6 +96,11 @@ A raw stream has no timestamps. Its pictures are timed in display order, at
 the frame rate its sequence parameter set states. A stream that states none
 plays at 25 frames a second, and `Movie.open(path, frame_rate=(30, 1))` sets
 another rate.
+
+The `options` of `player()` go to the decoder. Every backend takes
+`output_slots`, the frames a caller may hold unreleased at once, 4 by default.
+The NVDEC backends also take `deinterlace` for an interlaced stream:
+`'adaptive'` (the default), `'bob'` or `'weave'`.
 
 `player.frame_at(seconds)` returns the texture showing the movie at that time.
 That is the last frame shown at or before the time. Before the start it is the
@@ -162,11 +188,13 @@ with MP4Reader('movie.mp4') as movie:
   returns the rest at the end of a stream. `reset()` drops what is held,
   before decoding from a key frame.
 - A `DecodedFrame` is lent by the decoder. Its `planes` are the decoder's
-  surfaces: a `GL_R8` luma texture and a `GL_RG8` chroma texture, Cb in red
+  textures: a `GL_R8` luma texture and a `GL_RG8` chroma texture, Cb in red
   and Cr in green. The picture sits at `visible`, first row at the top, inside
   textures of `texture_size`. Release every frame: a decoder with all its
-  surfaces lent raises `DecoderError` naming the frames held. A caller may
-  hold `output_slots` frames at once, 4 by default.
+  textures lent raises `DecoderError` naming the frames held. A caller may
+  hold `output_slots` frames at once, 4 by default. On VA-API the textures
+  are the decode surfaces themselves; on NVDEC each frame is a copy of the
+  picture in textures of its own.
 - `NV12Converter.convert(frame, target)` draws a frame into an RGBA texture of
   the frame's size. One pass applies colour, crop and the vertical flip. It
   restores every piece of GL state it changes, so it can run inside a
@@ -178,20 +206,34 @@ the [plan](../plans/GPU-VIDEO-DECODE.md).
 
 ## What is decoded
 
-- H.264 Constrained Baseline, Main and High profiles, 8-bit 4:2:0, progressive
-  frames. Several slices a picture, CAVLC and CABAC, B-frames and B-frame
-  pyramids, weighted prediction, long-term references and scaling matrices are
-  all decoded.
-- Refused, with an error naming the feature: interlaced coding (field pictures
-  and MBAFF), the High 10, 4:2:2 and 4:4:4 profiles, and slice groups.
-- Sizes from 64x64 to 4096x4096 on AMD VCN, as the driver reports them. A
-  larger picture is refused by its size. A smaller one decodes into a
-  minimum-size surface, and only its visible part is converted.
+- H.264 Constrained Baseline, Main and High profiles, 8-bit 4:2:0. Several
+  slices a picture, CAVLC and CABAC, B-frames and B-frame pyramids, weighted
+  prediction, long-term references and scaling matrices are all decoded.
+- Refused, with an error naming the feature: the High 10, 4:2:2 and 4:4:4
+  profiles on every backend.
+
+| | `vaapi` | `nvdec`, `nvdec-copy` |
+| --- | --- | --- |
+| Interlaced streams (field pictures, MBAFF) | refused by name | decoded, one frame a sample, deinterlaced as `deinterlace` says |
+| Slice groups | refused by name | passed to the hardware, not tested |
+| Sizes | 64x64 to 4096x4096 on AMD VCN, as the driver reports them | 48x16 to 4096x4096 on an RTX 3060 Ti, as the driver reports them |
+| A picture under the smallest size | decodes into a minimum-size surface, and only its visible part is converted | refused by its size |
+| A picture over the largest size | refused by its size | refused by its size |
+| When a stream is refused | at the first picture that uses the sequence | at the first picture that uses the sequence |
+
+`deinterlace='weave'` gives the two fields interleaved as they were coded,
+which is exact and shows combing where the picture moves. `'bob'` scales one
+field to the frame's height. `'adaptive'` chooses between the two for each part
+of the picture by its motion. A progressive stream is not deinterlaced,
+whichever is named.
 
 ## Errors
 
-A decoder raises `DecoderError`, with libva's, the DMA-BUF shim's or the
-parser's error as its cause. `DecoderUnavailable` means no backend here
+A decoder raises `DecoderError`. On VA-API it carries libva's, the DMA-BUF
+shim's or the parser's error as its cause. On NVDEC a failed driver call is a
+`CUDAError`, a `DecoderError` with the driver's `status`, its `name` (such as
+`CUDA_ERROR_INVALID_VALUE`) and the `call` that returned it.
+`DecoderUnavailable` means no backend here
 decodes the stream. Its message includes each unavailable backend's reason.
 `EncoderError` and `DecoderError` share the base `VideoError`, so one
 `except VideoError` covers recording and playback.
@@ -207,6 +249,21 @@ Decoding on a worker thread is phase D7 of the
 
 Each decode surface is imported into OpenGL once, when the decoder opens, so
 decoding creates no GL objects.
+
+The same stream takes 1.4 ms a frame on NVDEC, or 700 frames a second, and
+2.8 ms through `nvdec-copy`, measured on an RTX 3060 Ti with driver 580.
+Nearly all of the 1.4 ms is the hardware decoding the picture; the copy into
+the textures is 0.1 ms of it. An NVDEC decoder makes a pair of output textures
+the first time none is free. The stream above played forward makes four
+pairs, and decoding creates none after that.
+
+The first NVDEC decoder in a process initialises CUDA, about 170 ms in all:
+65 ms the first time `decoders()` is asked and 100 ms when the decoder opens.
+The CUDA context then stays for the life of the process, so each later
+decoder opens in about 1 ms. A stream's first picture takes about 30 ms more,
+which is the driver creating its hardware decoder. Closing a decoder returns
+in about 1 ms: the driver's own teardown takes up to 240 ms, and runs on a
+thread of its own so the thread that draws does not wait for it.
 
 ## Threading
 

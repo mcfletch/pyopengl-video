@@ -33,7 +33,6 @@ from OpenGL.GL import (
     glFenceSync,
 )
 
-from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecodedFrame, Decoder, DecoderError, Sample
 from pyopengl_video.linux import dmabuf
 from pyopengl_video.mp4 import split_annexb
@@ -52,6 +51,7 @@ from pyopengl_video.vaapi.h264_parse import (
     PictureParameterSet,
     SequenceParameterSet,
     SliceHeader,
+    colour_of,
     parse_nal,
     parse_pps,
     parse_slice_header,
@@ -280,17 +280,6 @@ def slice_parameters(header: SliceHeader, list0: Sequence[Frame | None],
                     chroma_weights[index][component] = weight
                     chroma_offsets[index][component] = offset
     return parameters
-
-
-def colour_of(sps: SequenceParameterSet) -> Colour:
-    """A sequence's colour description, the matrix chosen where it states none."""
-    vui = sps.vui
-    if vui is None:
-        return Colour().resolved(sps.size[1])
-    return Colour(matrix=vui.matrix_coefficients, full_range=bool(vui.video_full_range_flag),
-                  primaries=vui.colour_primaries, transfer=vui.transfer_characteristics,
-                  chroma_location=vui.chroma_sample_loc_type_top_field,
-                  ).resolved(sps.size[1])
 
 
 # ------------------------------------------------------------- surfaces

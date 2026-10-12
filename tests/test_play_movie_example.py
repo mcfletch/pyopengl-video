@@ -93,7 +93,7 @@ class TestPng:
         assert png_size(target) == (1, 2)
 
 
-@pytest.mark.usefixtures('vaapi_decoder_available')
+@pytest.mark.usefixtures('decoder_available')
 def test_the_example_draws_a_frame_of_a_movie(tmp_path):
     target = tmp_path / 'frame.png'
     finished = subprocess.run(

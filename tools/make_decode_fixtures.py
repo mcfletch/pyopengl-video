@@ -4,7 +4,8 @@ Our own encoders write a narrow slice of H.264: one slice a picture, P frames
 only, one reference. A decoder meets everything else a conforming encoder may
 produce, so the suite carries streams from x264 that use B-frame pyramids,
 weighted prediction, several slices a picture, scaling matrices, CAVLC and
-open groups of pictures.
+open groups of pictures. One interlaced stream is kept apart from those, for
+the decoders that take interlaced video.
 
 ``ffmpeg`` with ``libx264`` writes them, and ``ffmpeg``'s software decoder
 records the MD5 of each decoded picture as NV12, in display order. H.264
@@ -48,6 +49,16 @@ STREAMS: dict[str, tuple[int, int, int, str, list[str]]] = {
         96, 54, 30,
         'bframes=2:ref=3:open-gop=1:keyint=10:min-keyint=10:scenecut=0',
         ['-profile:v', 'high']),
+}
+
+#: Interlaced streams, recorded apart from the rest: a decoder that takes
+#: progressive frames only refuses them. x264 codes these as field macroblock
+#: pairs (MBAFF), and the checksums are of the two fields woven into a frame.
+INTERLACED_STREAMS: dict[str, tuple[int, int, int, str, list[str]]] = {
+    'interlaced_mbaff': (
+        64, 48, 12,
+        'tff=1:bframes=1:keyint=6:min-keyint=6:scenecut=0',
+        ['-profile:v', 'high', '-flags', '+ildct+ilme']),
 }
 
 #: The stream that is also written as MP4, with a short audio track, so the
@@ -97,22 +108,22 @@ def main() -> int:
         print('ffmpeg is needed to write the fixtures')
         return 2
     DESTINATION.mkdir(parents=True, exist_ok=True)
-    table = {}
-    for name, (width, height, frames, parameters, extra) in STREAMS.items():
-        path = encode(name, width, height, frames, parameters, extra)
-        table[name] = {
-            'size': [width, height],
-            'x264': parameters,
-            'md5': decoded_md5s(path, width, height),
-        }
-        print(f'{path.name}: {path.stat().st_size} bytes, '
-              f'{len(table[name]["md5"])} pictures')
+    tables: dict[str, dict] = {'streams': {}, 'interlaced': {}}
+    for group, streams in (('streams', STREAMS), ('interlaced', INTERLACED_STREAMS)):
+        for name, (width, height, frames, parameters, extra) in streams.items():
+            path = encode(name, width, height, frames, parameters, extra)
+            tables[group][name] = {
+                'size': [width, height],
+                'x264': parameters,
+                'md5': decoded_md5s(path, width, height),
+            }
+            print(f'{path.name}: {path.stat().st_size} bytes, '
+                  f'{len(tables[group][name]["md5"])} pictures')
     version = run(['ffmpeg', '-version']).decode().splitlines()[0]
     destination = DESTINATION / 'fixtures.json'
     # Renamed over the recorded table once written, so the suite never reads half of one.
     partial = destination.with_name(destination.name + '.partial')
-    partial.write_text(json.dumps({'written_by': version, 'streams': table},
-                                  indent=2) + '\n')
+    partial.write_text(json.dumps({'written_by': version, **tables}, indent=2) + '\n')
     partial.replace(destination)
     return 0
 

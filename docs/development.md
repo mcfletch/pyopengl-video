@@ -64,6 +64,8 @@ src/pyopengl_video/
     windows/        the Direct3D interop shim every Windows backend uses
     nvenc/api.py    ctypes over NvEncodeAPI: structures, GUIDs, function table
     nvenc/encoder.py    the encoder: register, map, encode, lock, unmap
+    nvdec/api.py    ctypes over NVDEC and the CUDA driver API it decodes into
+    nvdec/decoder.py    the decoder: parser callbacks, the copy into textures
     vpl/            Intel's oneVPL, over the Windows interop
     vaapi/api.py    ctypes over libva: display, config, context, surfaces, buffers
     vaapi/device.py a libva display on a render node, shared by both directions
@@ -74,11 +76,13 @@ src/pyopengl_video/
     vaapi/decoder.py    the decoder: parameter buffers, surfaces imported as textures
 tests/
     nvenc_abi.json  sizes and offsets recorded from NVIDIA's header
+    nvdec_abi.json  the same for NVDEC and CUDA, in the Linux and Windows layouts
     vpl_abi.json    the same, from the oneVPL headers
     va_abi.json     the same, from the libva headers, plus their constant values
     data/decode/    x264 streams and the checksums of their decoded pictures
 tools/
     record_nvenc_abi.py    regenerates those files from real headers
+    record_nvdec_abi.py
     record_vpl_abi.py
     record_va_abi.py
     make_decode_fixtures.py  rewrites tests/data/decode/ with ffmpeg and libx264
@@ -136,6 +140,18 @@ The header is NVIDIA's, distributed under the MIT licence in
 [nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers). It is not
 vendored here: only the facts it states about layout are, which is what
 `NOTICES.md` records.
+
+The NVDEC and CUDA headers come from the same repository, and
+`tools/record_nvdec_abi.py` takes the directory holding them:
+
+```bash
+python tools/record_nvdec_abi.py path/to/nv-codec-headers/include/ffnvcodec
+```
+
+Two of those structures are made of `unsigned long`, which is eight bytes on
+Linux and four on Windows. The tool records both layouts from one compiler,
+and `tests/test_nvdec_abi.py` checks the one the running interpreter uses, so
+the Windows layout is held on Windows without a compiler there.
 
 The libva and oneVPL headers are treated the same way, and are MIT too.
 `tools/record_va_abi.py` does the same for libva and **also records the value of
@@ -282,11 +298,13 @@ run, on a container whose sample description did not match its samples.
 ## Testing a decoder
 
 H.264 decoding is exact, so every correct decoder produces the same bytes.
-`tests/test_vaapi_decode.py` decodes each stream under `tests/data/decode/` and
-reads the NV12 planes back from the textures. Each picture's MD5 must equal
+`tests/test_vaapi_decode.py` and `tests/test_nvdec_decode.py` decode each
+stream under `tests/data/decode/` and read the NV12 planes back from the
+textures. Each picture's MD5 must equal
 the one `ffmpeg`'s software decoder recorded. The streams come from `libx264`
 and use what our encoders do not write: B-frame pyramids, weighted prediction,
 several slices a picture, scaling matrices, CAVLC and open groups of pictures.
+One interlaced stream is recorded apart from those, for the NVDEC backends.
 `python tools/make_decode_fixtures.py` rewrites the streams and checksums. The
 suite needs neither `ffmpeg` nor the tool.
 
@@ -310,6 +328,47 @@ A new decoder backend uses the parser only if its driver wants parsed syntax.
 NVDEC and oneVPL parse the stream themselves. Every backend shares the
 `Decoder` interface, the `DecodedFrame` lending rule and the conversion pass.
 Its hardware test is the same checksum comparison.
+
+## How the NVDEC backend works
+
+NVDEC has no OpenGL device type, so it is not the mirror of NVENC. A decoded
+picture is in CUDA device memory, and the CUDA driver API (`libcuda.so.1`,
+which every NVIDIA driver installs) moves it into textures.
+
+`cuvidCreateVideoParser` is given three callbacks, and `cuvidParseVideoData`
+calls them before it returns:
+
+- the sequence callback, at the first picture of a sequence. The decoder asks
+  `cuvidGetDecoderCaps` whether the hardware takes the stream, creates the
+  hardware decoder at the coded size, and answers with the number of decode
+  surfaces the parser may cycle through.
+- the decode callback, for each picture in decoding order. Its parameters go
+  to `cuvidDecodePicture` unread.
+- the display callback, for each picture in display order, with the timestamp
+  of the sample it came from.
+
+The parser reuses a picture as soon as the display callback returns, so the
+copy out happens inside it: `cuvidMapVideoFrame64` gives the address and pitch
+of an NV12 picture, and each plane is copied by `cuMemcpy2D` into a texture.
+Chroma starts one coded height of rows below luma. The `nvdec` backend's
+textures are registered with `cuGraphicsGLRegisterImage` and mapped around the
+copy, which stays on the GPU; `nvdec-copy` copies to host memory and uploads
+with `glTexSubImage2D`.
+
+An exception cannot cross the C frames between a callback and the caller of
+`cuvidParseVideoData`. Each callback keeps the exception and returns 0, and
+the decoder raises it once the parser has returned.
+
+A seek destroys the parser and makes a new one, which holds no references.
+The new parser reports the sequence again, and a sequence equal to the one
+in use keeps its hardware decoder and its textures.
+
+What the decoder decides without a driver is in plain objects, tested in
+`tests/test_nvdec.py` on any machine: `Sequence` (what a stream needs and what
+refuses it), `Presentation` (durations, and the leading pictures dropped after
+a seek), `Outputs` (the texture pairs lent and returned) and `plane_copies`.
+`tests/test_nvdec_decode.py` is the checksum comparison on the hardware, for
+both ways of copying.
 
 ## Style and licensing
 

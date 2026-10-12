@@ -2,7 +2,8 @@
 
 **Status:** D1, D2 and D3 landed 2026-10-09: H.264 plays into OpenGL textures
 on AMD under Linux, through `pyopengl_video.playback`, with no scenegraph.
-Every picture of the x264 test streams decodes bit-exact against `ffmpeg`'s
+D5 landed 2026-10-12 on NVIDIA under Linux (see *What landed in D5*). On both,
+every picture of the x264 test streams decodes bit-exact against `ffmpeg`'s
 software decoder. D4 (OpenGLContext) is next. Audio is deferred (see *Audio*).
 **Scope:** `pyopengl-video`, with OpenGLContext's `MovieTexture` as the first
 consumer.
@@ -85,8 +86,31 @@ NAL unit splitting scanned every byte in Python, and a surface was reused as
 soon as it came back, so its fence was still unsignalled; the least recently
 returned surface is now reused first.
 
-The NVIDIA and Windows rows below are from documentation and headers, and stay
-marked unverified until they have run.
+Measured 2026-10-12 on the NVIDIA machine: GeForce RTX 3060 Ti, driver
+580.178.04, GLFW contexts through EGL (Wayland) and GLX (X11), GL 4.6.
+
+| Fact | Result |
+| --- | --- |
+| `cuGLGetDevices` for the current context | one device under EGL and under GLX; none for a Mesa llvmpipe context, where `nvdec-copy` still decodes |
+| `cuvidGetDecoderCaps`, H.264 8-bit 4:2:0 | supported, 48x16 to 4096x4096, 65536 macroblocks, NV12 output |
+| When the sequence callback fires | at the first picture; parameter sets alone do not trigger it |
+| `min_num_decode_surfaces` | 4 or 5 for the test streams; 5 for 1080p High with three B-frames and 3 for 1080p with none |
+| Colour description of a stream that states none | matrix, primaries and transfer all 2 (unspecified); chroma siting is not reported at all |
+| Picture index reuse | a displayed picture's index is handed to the next decode in the same `cuvidParseVideoData` call, so the copy has to happen inside the display callback |
+| Chroma plane of a mapped picture | `pitch * ulTargetHeight` bytes after luma |
+| `cuGraphicsGLRegisterImage` of `GL_R8` and `GL_RG8` textures | both succeed, write-discard |
+| Display order with `ulMaxDisplayDelay` 0, 2 and 4 | correct in all three; the delay changes only when a picture is handed over |
+| A key frame that is not an IDR, in a new parser | decoding starts there |
+| 4:4:4, 10-bit and 32x32 streams | the sequence callback still fires; each is refused there by name |
+| An interlaced (MBAFF) stream | decodes; woven output is bit-exact against `ffmpeg` |
+| 1080p60 High with three B-frames, decode and convert on the GL thread | 1.42 ms a frame, about 700 frames a second; 1.0 ms of it is `cuvidMapVideoFrame` waiting for the decode, the copy into the textures 0.1 ms |
+| The same through host memory (`nvdec-copy`) | 2.8 ms a frame |
+| 1080p60 P-only stream paced at one frame a call | 2.7 ms a call with `ulMaxDisplayDelay` 0, 1.1 ms with 2 |
+| `cuDevicePrimaryCtxRetain`, first use | 100 ms; destroying the context again takes 300 ms |
+| `cuvidCreateDecoder` / `cuvidDestroyDecoder` | 14 ms / 36 ms, and 240 ms for the last decoder open in the process |
+
+The Windows rows below are from documentation and headers, and stay marked
+unverified until they have run.
 
 ## Per-platform mechanisms
 
@@ -105,9 +129,9 @@ interop moves it into a texture. The CUDA it needs is the driver API,
 toolkit and runtime are not needed.
 
 1. `cuInit`, then `cuGLGetDevices` to find the CUDA device the current GL
-   context runs on, and `cuCtxCreate` on it. This is the analogue of the LUID
-   match on Windows: decode on the GPU that renders, or report the pairing as a
-   copy.
+   context runs on, and that device's primary context. This is the analogue of
+   the LUID match on Windows: decode on the GPU that renders, or report the
+   pairing as a copy.
 2. `cuvidCreateVideoParser` with sequence, decode and display callbacks.
    NVIDIA's parser reads the bitstream itself, so this backend needs no H.264
    control layer.
@@ -124,10 +148,45 @@ toolkit and runtime are not needed.
 That is one copy per frame, GPU memory to GPU memory, about 3 MB at 1080p.
 The same calls exist on Windows, so this backend needs no Direct3D.
 
+As built, with the reasons:
+
+- The CUDA context is the device's primary context
+  (`cuDevicePrimaryCtxRetain`), not one made with `cuCtxCreate`. It is the
+  context PyTorch and CuPy use, so a program that has one of them shares it,
+  and the driver counts its users. It is retained once and kept for the life
+  of the process, because making it costs 100 ms and destroying it 300 ms.
+- The pairing that is a copy is a backend of its own, `nvdec-copy`, registered
+  after every backend that keeps the picture on the GPU. A laptop whose
+  integrated GPU draws the window then gets VA-API where that works and NVDEC
+  through host memory where it does not, and `decoders()` shows which.
+- The decoder is created at the coded size with no cropping or scaling, and
+  the visible rectangle goes to the conversion pass, as on VA-API. The
+  hardware scaler is never in the path, which is what keeps the output exact.
+- Output textures are separate from the decode surfaces, so a frame the caller
+  holds is its own copy. A pair is made when none is free, up to the decode
+  surface count plus `output_slots`: the most one flush can hand over on top
+  of what the caller holds.
+- `ulMaxDisplayDelay` is 2. With 0, a P-only stream waits for each decode
+  inside the display callback.
+- A seek destroys the parser and creates another. A new parser holds no
+  references, and one that reports the sequence already in use keeps the
+  hardware decoder and the textures.
+- After a seek the parser decodes the leading pictures of an open group with
+  references it never had. They are dropped by timestamp: a picture shown
+  before the first sample fed is one of them.
+- `cuvidDestroyDecoder` runs on a thread of its own (36 to 240 ms).
+- Colour comes from this package's reading of the sequence parameter set, as
+  on VA-API, since the parser does not report chroma siting. The parser's own
+  description is the fallback for a set this package does not read.
+- Interlaced streams decode, with `deinterlace='adaptive'`, `'bob'` or
+  `'weave'`. The hardware does the work, so nothing was built to get it.
+
 ABI facts come from `dynlink_cuviddec.h`, `dynlink_nvcuvid.h` and
 `dynlink_cuda.h` in nv-codec-headers (MIT), the repository `nvEncodeAPI.h`
 already comes from. `tools/record_nvdec_abi.py` records sizes and offsets the
-way `tools/record_nvenc_abi.py` does.
+way `tools/record_nvenc_abi.py` does, in both the Linux and the Windows
+layout: `tcu_ulong` is `unsigned long`, eight bytes on one and four on the
+other.
 
 ### AMD and Intel on Linux: VA-API VLD
 
@@ -464,15 +523,15 @@ context and holds the frame time.
 | D2 | `Decoder`, `DecodedFrame`, the registry and `VideoError`; the NV12 conversion pass; `Movie` and the player | landed |
 | D3 | VA-API H.264 decode with its control layer: POC, DPB, reference lists | landed on AMD; Intel/Linux is the same code, untested |
 | D4 | OpenGLContext: `MovieTexture` on the player, the PyAV extra removed, docs | D3 |
-| D5 | NVDEC with CUDA-GL interop, Linux and Windows | an NVIDIA machine |
+| D5 | NVDEC with CUDA-GL interop, Linux and Windows | landed on Linux; Windows is the same code, untested |
 | D6 | oneVPL decode with VPP into the interop texture | Intel/Windows, the laptop |
 | D7 | Decoding ahead on a worker thread, after D3 to D5 are measured | D5 |
 | D8 | HEVC and AV1 on VA-API (control layers of their own); AMF decode; fragmented MP4 and WebM | hardware per row |
 
 D1 and D2 go first because every backend needs them and neither needs a
 particular GPU. D3 is on this machine, so the first movie plays here, and D4
-makes `MovieTexture` shippable on AMD and Intel Linux before the other vendors
-land. NVIDIA owners keep an untextured shape until D5.
+makes `MovieTexture` shippable on AMD, Intel and NVIDIA under Linux before the
+Windows backends land.
 
 ## What landed, and where
 
@@ -492,6 +551,26 @@ land. NVIDIA owners keep an untextured shape until D5.
 Not yet done from the sections above: the ITU-T H.264.1 conformance streams
 (the fetch tool and its terms check), the cross-vendor test (an NVENC stream on
 VA-API), four 1080p movies in one context, and P010 for 10-bit streams.
+
+## What landed in D5
+
+- `nvdec/api.py`: the CUDA driver API and NVDEC bindings, `Cuda` and `Cuvid`;
+  `nvdec/decoder.py`: `NVDECDecoder`, with `Sequence`, `Presentation`,
+  `Outputs` and `plane_copies` holding what it decides without a driver, and
+  the two transfers, `Interop` and `Upload`; `nvdec/__init__.py`: the `nvdec`
+  and `nvdec-copy` backend records and their probes.
+- `backend.py` gained `context_kind()`, which the VA-API probes had privately;
+  `vaapi/h264_parse.py` gained `colour_of()`, which the VA-API decoder had.
+- `tools/record_nvdec_abi.py` and `tests/nvdec_abi.json`;
+  `tests/test_nvdec_abi.py`, `tests/test_nvdec.py` (no hardware) and
+  `tests/test_nvdec_decode.py` (the checksum comparison, the NVENC round trip
+  and a recording played back through `Movie`).
+- `tests/data/decode/interlaced_mbaff.h264`, with its checksums under
+  `interlaced` in `fixtures.json`.
+
+Not run: Windows (`nvcuda.dll`, `nvcuvid.dll`), a WGL context, and a machine
+with two GPUs where the NVIDIA one does not draw; the last was stood in for
+by a llvmpipe context on this machine. Slice groups were not tried.
 
 ## A software floor: OpenH264
 
@@ -589,7 +668,8 @@ OxideAV, measured the same way.
 - Interlaced streams (field pictures, MBAFF, PAFF). The first VA-API control
   layer refuses them with an error that names the stream's structure. Games
   ship progressive video, and a recording from this package is always
-  progressive.
+  progressive. NVDEC decodes and deinterlaces them, so the two backends differ
+  here until VA-API does too.
 - AAC: OxideAV wrapped for Python (see *Audio*), or FDK AAC loaded by name
   where the user installed it, or AAC left silent until one of those lands.
   Either licence is read in full before this is decided.

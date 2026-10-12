@@ -22,13 +22,14 @@ from collections.abc import Mapping
 from math import gcd
 from typing import Any
 
+from pyopengl_video.colour import Colour
 from pyopengl_video.vaapi.h264 import BitReader, StreamError, rbsp_of
 
 __all__ = [
     'DEFAULT_4X4_INTER', 'DEFAULT_4X4_INTRA', 'DEFAULT_8X8_INTER',
     'DEFAULT_8X8_INTRA', 'FLAT_4X4', 'FLAT_8X8', 'MemoryManagementOperation',
     'NalUnit', 'PictureParameterSet', 'PredWeightTable', 'SequenceParameterSet',
-    'SliceHeader', 'StreamError', 'VideoUsability', 'parse_nal', 'parse_pps',
+    'SliceHeader', 'StreamError', 'VideoUsability', 'colour_of', 'parse_nal', 'parse_pps',
     'parse_slice_header', 'parse_sps', 'scaling_matrices', 'starts_new_picture',
 ]
 
@@ -499,6 +500,17 @@ def parse_sps(rbsp: bytes) -> SequenceParameterSet:
         direct_8x8_inference_flag=direct_8x8,
         frame_crop=crop, vui=vui,
     )
+
+
+def colour_of(sps: SequenceParameterSet) -> Colour:
+    """A sequence's colour description, the matrix chosen where it states none."""
+    vui = sps.vui
+    if vui is None:
+        return Colour().resolved(sps.size[1])
+    return Colour(matrix=vui.matrix_coefficients, full_range=bool(vui.video_full_range_flag),
+                  primaries=vui.colour_primaries, transfer=vui.transfer_characteristics,
+                  chroma_location=vui.chroma_sample_loc_type_top_field,
+                  ).resolved(sps.size[1])
 
 
 def _ceil_log2(value: int) -> int:

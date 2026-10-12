@@ -4,6 +4,7 @@ The context is a hidden GLFW window: encoding reads a texture and never presents
 anything, so there is nothing to show, and an unmapped window keeps a test run
 from flashing over whatever the person running it is doing.
 """
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -17,7 +18,10 @@ from OpenGL.GL import (
     GL_DRAW_FRAMEBUFFER,
     GL_LINEAR,
     GL_NEAREST,
+    GL_PACK_ALIGNMENT,
     GL_READ_FRAMEBUFFER,
+    GL_RED,
+    GL_RG,
     GL_RGBA,
     GL_RGBA8,
     GL_TEXTURE_2D,
@@ -34,12 +38,14 @@ from OpenGL.GL import (
     glFramebufferTexture2D,
     glGenFramebuffers,
     glGenTextures,
+    glGetTexImage,
+    glPixelStorei,
     glTexImage2D,
     glTexParameteri,
     glTexSubImage2D,
 )
 
-from pyopengl_video import nvenc, vaapi, vpl
+from pyopengl_video import decoders, nvdec, nvenc, vaapi, vpl
 from pyopengl_video.linux import dmabuf
 from pyopengl_video.windows import interop
 
@@ -118,6 +124,26 @@ def vaapi_decoder_available(gl_context):  # noqa: ARG001 - requested so a GL con
 
 
 @pytest.fixture
+def nvdec_available(gl_context):  # noqa: ARG001 - requested so a GL context is current first
+    """Skip unless NVDEC here can decode into this OpenGL context's textures."""
+    nvdec.forget_probe()
+    if not nvdec.probe():
+        pytest.skip('no NVDEC decoder writes this OpenGL context\'s textures: '
+                    + (nvdec.explain() or 'there is no NVIDIA driver here'))
+    return True
+
+
+@pytest.fixture
+def decoder_available(gl_context):  # noqa: ARG001 - requested so a GL context is current first
+    """Skip unless some backend here decodes H.264 into this OpenGL context."""
+    vaapi.forget_probe()
+    nvdec.forget_probe()
+    if not decoders():
+        pytest.skip('no hardware H.264 decoder reaches this OpenGL context')
+    return True
+
+
+@pytest.fixture
 def nvenc_available(gl_context):  # noqa: ARG001 - requested so a GL context is current first
     """Skip unless this machine has an NVIDIA encoder to talk to."""
     if not nvenc.probe():
@@ -163,6 +189,41 @@ def decode_errors(path):
         ['ffmpeg', '-v', 'error', '-i', str(path), '-f', 'null', '-'],
         capture_output=True, text=True)
     return [line for line in found.stderr.splitlines() if line.strip()]
+
+
+def read_plane(texture, format):
+    """A plane texture's bytes, rows packed with no padding."""
+    glPixelStorei(GL_PACK_ALIGNMENT, 1)
+    glBindTexture(GL_TEXTURE_2D, texture)
+    data = glGetTexImage(GL_TEXTURE_2D, 0, format, GL_UNSIGNED_BYTE)
+    glBindTexture(GL_TEXTURE_2D, 0)
+    glPixelStorei(GL_PACK_ALIGNMENT, 4)
+    return np.frombuffer(data, dtype=np.uint8)
+
+
+def nv12_bytes(frame):
+    """The visible picture as packed NV12, first row at the top."""
+    width, height = frame.texture_size
+    x, y, w, h = frame.visible
+    luma = read_plane(frame.planes[0], GL_RED).reshape(height, width)[y:y + h, x:x + w]
+    chroma = read_plane(frame.planes[1], GL_RG).reshape(height // 2, width // 2, 2)[
+        y // 2:(y + h) // 2, x // 2:(x + w) // 2]
+    return luma.tobytes() + chroma.tobytes()
+
+
+def md5s(frames):
+    found = []
+    for frame in frames:
+        found.append(hashlib.md5(nv12_bytes(frame)).hexdigest())
+        frame.release()
+    return found
+
+
+def decode_all(decoder, samples):
+    found = []
+    for sample in samples:
+        found += md5s(decoder.decode(sample))
+    return found + md5s(decoder.flush())
 
 
 def blit(handle, texture, size):

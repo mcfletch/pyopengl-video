@@ -13,7 +13,7 @@ requires-python = ">=3.10"
 authors = [
     { name = "Mike C. Fletcher", email = "mcfletch@vrplumber.com" }
 ]
-keywords = ["OpenGL", "video", "H.264", "NVENC", "VA-API", "encoding", "decoding", "capture", "recording", "playback"]
+keywords = ["OpenGL", "video", "H.264", "NVENC", "NVDEC", "VA-API", "encoding", "decoding", "capture", "recording", "playback"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

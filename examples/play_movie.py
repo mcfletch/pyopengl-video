@@ -187,8 +187,9 @@ def main(argv=None):
     glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
     glfw.window_hint(glfw.SRGB_CAPABLE, glfw.TRUE)
     if sys.platform.startswith('linux'):
-        # The decoder hands its surfaces to OpenGL as DMA-BUFs, which an EGL
-        # context imports; GLFW makes a GLX context by default on X11.
+        # The VA-API decoder hands its surfaces to OpenGL as DMA-BUFs, which
+        # an EGL context imports; GLFW makes a GLX context by default on X11.
+        # NVDEC plays into either kind.
         glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)
     if options.screenshot:
         glfw.window_hint(glfw.VISIBLE, glfw.FALSE)

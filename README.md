@@ -41,9 +41,9 @@ texture = player.frame_at(seconds)       # right way up, sRGB
 
 `examples/play_movie.py` plays a file in a window.
 [docs/playback.md](docs/playback.md) covers the player, the decoders and what
-they decode. Decoding works on AMD under Linux through VA-API. Intel on Linux
-runs the same code, untested. NVIDIA and Windows are
-[planned](plans/GPU-VIDEO-DECODE.md).
+they decode. Decoding works under Linux on AMD through VA-API and on NVIDIA
+through NVDEC. Intel on Linux and NVIDIA on Windows run the same code,
+untested. Intel and AMD on Windows are [planned](plans/GPU-VIDEO-DECODE.md).
 
 ## What it needs
 
@@ -154,8 +154,9 @@ decoder recorded for it. `tools/make_decode_fixtures.py` writes the streams.
 The vendor bindings are hand-written ctypes over large C ABIs, and a layout
 mistake there corrupts a structure rather than raising anything. So each is
 checked against the sizes and offsets its header states —
-`tests/test_nvenc_abi.py` and `tests/test_vpl_abi.py` — and both run with no
-compiler, no driver and no GPU. oneVPL packs each structure to 4 or 8 bytes,
+`tests/test_nvenc_abi.py`, `tests/test_nvdec_abi.py`, `tests/test_va_abi.py`
+and `tests/test_vpl_abi.py` — and all of them run with no compiler, no driver
+and no GPU. oneVPL packs each structure to 4 or 8 bytes,
 which changes the layout and which a runtime reports only as an invalid
 parameter, so those checks earn their keep.
 

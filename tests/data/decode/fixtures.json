@@ -147,5 +147,28 @@
         "c48a22d788a025e4a6d91f9ea84c5d96"
       ]
     }
+  },
+  "interlaced": {
+    "interlaced_mbaff": {
+      "size": [
+        64,
+        48
+      ],
+      "x264": "tff=1:bframes=1:keyint=6:min-keyint=6:scenecut=0",
+      "md5": [
+        "6d0e6e18a99e4523d0f57981ce084db1",
+        "6d0e6e18a99e4523d0f57981ce084db1",
+        "6d0e6e18a99e4523d0f57981ce084db1",
+        "5aadf3cfc127d7fb3c81ef7c800c0e27",
+        "67b4ad5610f4ad7540f330bc34422120",
+        "67b4ad5610f4ad7540f330bc34422120",
+        "ef747fbe3c588d14f5f3b6fdce2f43ca",
+        "0cbff267f1aad3b30440246560432623",
+        "ada1d00a445410f89539f30d7618bfe0",
+        "ada1d00a445410f89539f30d7618bfe0",
+        "ada1d00a445410f89539f30d7618bfe0",
+        "9435211f6639f65f3ec0bf3fe32e71b6"
+      ]
+    }
   }
 }

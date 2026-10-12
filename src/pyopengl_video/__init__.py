@@ -44,6 +44,8 @@ from pyopengl_video.encoder import (
     Packet,
     available_backends,
 )
+from pyopengl_video.nvdec import COPY_DECODER_BACKEND as NVDEC_COPY_DECODER_BACKEND
+from pyopengl_video.nvdec import DECODER_BACKEND as NVDEC_DECODER_BACKEND
 from pyopengl_video.nvenc import BACKEND as NVENC_BACKEND
 from pyopengl_video.vaapi import BACKEND as VAAPI_BACKEND
 from pyopengl_video.vaapi import DECODER_BACKEND as VAAPI_DECODER_BACKEND
@@ -143,10 +145,13 @@ def _register_builtin_backends() -> None:
 
     Importing a backend must not require its hardware: each module exposes a
     cheap probe, and the driver library is only opened when an encoder is built.
-    The order is the order :func:`open_encoder` prefers them in.
+    The order is the order :func:`open_encoder` and :func:`open_decoder` prefer
+    them in: the decoders that keep the picture on the GPU come before the one
+    that copies it through host memory.
     """
     _encoder.BACKENDS.extend([NVENC_BACKEND, VPL_BACKEND, VAAPI_BACKEND])
-    _decoder.BACKENDS.extend([VAAPI_DECODER_BACKEND])
+    _decoder.BACKENDS.extend([NVDEC_DECODER_BACKEND, VAAPI_DECODER_BACKEND,
+                              NVDEC_COPY_DECODER_BACKEND])
 
 
 _register_builtin_backends()
