@@ -37,7 +37,7 @@ from pyopengl_video.vaapi.av1_parse import (
     same_sequence,
     warp_valid,
 )
-from pyopengl_video.vaapi.control import Buffer, DecodeControl, DecodeSession, Format
+from pyopengl_video.vaapi.control import Buffer, Checked, DecodeControl, DecodeSession, Format
 
 __all__ = ['AV1Decoding', 'colour_of', 'format_for', 'picture_parameters',
            'tile_parameters']
@@ -129,7 +129,7 @@ def picture_parameters(sequence: SequenceHeader, header: FrameHeader,
         applies grain
     """
     color = sequence.color_config
-    parameters = av1_api.VADecPictureParameterBufferAV1()
+    parameters = Checked(av1_api.VADecPictureParameterBufferAV1())
     parameters.profile = sequence.seq_profile
     parameters.order_hint_bits_minus_1 = max(sequence.order_hint_bits - 1, 0)
     parameters.bit_depth_idx = (color.bit_depth - 8) >> 1
@@ -270,18 +270,18 @@ def picture_parameters(sequence: SequenceHeader, header: FrameHeader,
         for index, value in enumerate(header.gm_params[ref]):
             warp.wmmat[index] = value
         warp.invalid = int(not warp_valid(header.gm_params[ref]))
-    return parameters
+    return parameters.target  # type: ignore[no-any-return]  # the structure Checked wraps
 
 
 def tile_parameters(tile: Tile) -> av1_api.VASliceParameterBufferAV1:
     """The slice parameter buffer naming one tile's bytes in the data buffer after it."""
-    parameters = av1_api.VASliceParameterBufferAV1()
+    parameters = Checked(av1_api.VASliceParameterBufferAV1())
     parameters.slice_data_size = tile.size
     parameters.slice_data_offset = tile.offset
     parameters.slice_data_flag = api.VA_SLICE_DATA_FLAG_ALL
     parameters.tile_row = tile.row
     parameters.tile_column = tile.column
-    return parameters
+    return parameters.target  # type: ignore[no-any-return]  # the structure Checked wraps
 
 
 # ------------------------------------------------------------ the layer

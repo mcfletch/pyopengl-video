@@ -16,7 +16,7 @@ from pyopengl_video.bounds import FIELD_16
 from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecoderError, Sample
 from pyopengl_video.vaapi import api, vp9_api
-from pyopengl_video.vaapi.control import Buffer, DecodeControl, DecodeSession, Format
+from pyopengl_video.vaapi.control import Buffer, Checked, DecodeControl, DecodeSession, Format
 from pyopengl_video.vaapi.h264 import StreamError
 from pyopengl_video.vaapi.vp9_parse import (
     INTRA_FRAME,
@@ -93,7 +93,7 @@ def picture_parameters(header: FrameHeader, slots: Sequence[int | None],
     :class:`~pyopengl_video.decoder.DecoderError`.
     """
     _check_size(header)
-    parameters = vp9_api.VADecPictureParameterBufferVP9()
+    parameters = Checked(vp9_api.VADecPictureParameterBufferVP9())
     parameters.frame_width, parameters.frame_height = header.size
     for index, surface in enumerate(slots):
         parameters.reference_frames[index] = (
@@ -133,7 +133,7 @@ def picture_parameters(header: FrameHeader, slots: Sequence[int | None],
     parameters.segment_pred_probs[:] = segmentation.pred_probs
     parameters.profile = header.profile
     parameters.bit_depth = colour.bit_depth
-    return parameters
+    return parameters.target  # type: ignore[no-any-return]  # the structure Checked wraps
 
 
 def _clip(value: int, most: int) -> int:
@@ -196,7 +196,7 @@ def slice_parameters(header: FrameHeader, size: int) -> vp9_api.VASliceParameter
 
     With segmentation off, the first segment alone is filled and the rest are zero.
     """
-    parameters = vp9_api.VASliceParameterBufferVP9()
+    parameters = Checked(vp9_api.VASliceParameterBufferVP9())
     parameters.slice_data_size = size
     parameters.slice_data_offset = 0
     parameters.slice_data_flag = api.VA_SLICE_DATA_FLAG_ALL
@@ -215,7 +215,7 @@ def slice_parameters(header: FrameHeader, size: int) -> vp9_api.VASliceParameter
         (target.luma_ac_quant_scale, target.luma_dc_quant_scale,
          target.chroma_ac_quant_scale, target.chroma_dc_quant_scale) = quantiser_scales(
              header, segment)
-    return parameters
+    return parameters.target  # type: ignore[no-any-return]  # the structure Checked wraps
 
 
 # ------------------------------------------------------------ the layer

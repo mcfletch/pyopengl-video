@@ -84,7 +84,7 @@ src/pyopengl_video/
     vaapi/device.py a libva display on a render node, shared by both directions
     vaapi/hevc_api.py, av1_api.py, vp9_api.py   each codec's libva structures
     vaapi/codecs.py     the codecs with a control layer, and which a device offers
-    vaapi/control.py    what a control layer is: DecodeControl, EncodeControl
+    vaapi/control.py    what a control layer is: DecodeControl, EncodeControl; stores read back
     vaapi/encoder.py    the encoder shell: export, import, convert, submit
     vaapi/decoder.py    the decoder shell: surfaces imported as textures, lending
     vaapi/bits.py       MSB-first bit reader and writer, for AV1 and VP9

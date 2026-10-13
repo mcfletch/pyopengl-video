@@ -234,7 +234,7 @@ control layers' own.
 | L1 | `av1_decode.py` | `self._current` is published with a surface before its picture parameters are built. When building raises, the next lone tile group is submitted with no picture parameter buffer. | Fixed |
 | L2 | `av1_parse.py`, `av1_decode.py` | Film grain point counts are read as 4 bits and written into arrays of 14 and 10; the tile grid has no 64x64 limit on the non-uniform path; `context_update_tile_id` is not below the tile count. | Fixed |
 | L3 | `av1_parse.py` `_tile_info` | `ZeroDivisionError` and `ValueError` for a reference slot never written. | Fixed |
-| L4 | every `*_decode.py` | A parsed value is assigned to a ctypes field with nothing reading it back. | Open |
+| L4 | every `*_decode.py` | A parsed value is assigned to a ctypes field with nothing reading it back. | Fixed |
 
 ### W. Windows and oneVPL
 
@@ -493,7 +493,12 @@ Proposed, in the order they pay for themselves:
    round-trip assertions. A longer run with a random seed belongs in CI on a
    schedule.
 4. **A round-trip store** used by every control layer, so that rule 11 is a
-   property of one function and not of four hundred assignments.
+   property of one function and not of four hundred assignments. Done:
+   `vaapi/control.py` has `store`, `store_each` and `Checked`, a structure
+   whose every integer store is read back. The H.264 and HEVC layers use the
+   first two, the AV1 and VP9 layers build inside a `Checked`, and a
+   syntax-tree test for each fails a builder that fills a structure any other
+   way.
 
 ## Appendix A: syntax elements and their ranges
 

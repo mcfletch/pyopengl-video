@@ -24,7 +24,7 @@ from typing import Any, ClassVar, Protocol
 
 from pyopengl_video import bounds
 from pyopengl_video.colour import Colour
-from pyopengl_video.decoder import Sample
+from pyopengl_video.decoder import DecoderError, Sample
 from pyopengl_video.encoder import EncoderError
 from pyopengl_video.vaapi import api
 
@@ -337,3 +337,117 @@ def rate_control_buffers(settings: EncodeSettings, initial_qp: int,
             (api.VAEncMiscParameterTypeHRD, hrd),
         )
     ]
+
+
+# --------------------------------------------- stores a driver reads back
+#
+# ctypes keeps the low bits of an integer wider than its field and raises
+# nothing: 256 stored in a byte reads back as 0. A control layer fills the
+# structures a driver indexes its own arrays with, so every store into one is
+# read back, through `store`, `store_each` or a `Checked` structure.
+
+
+def store(target: ctypes.Structure, **values: int) -> None:
+    """Assign each of `values` to the field of `target` it names, and read it back.
+
+    ctypes keeps the low bits of an integer wider than its field and raises
+    nothing. A field that does not read back as the value assigned raises
+    :class:`DecoderError` naming the field, so that no parsed value reaches a
+    driver as another number.
+    """
+    for name, value in values.items():
+        setattr(target, name, value)
+        if getattr(target, name) != value:
+            raise DecoderError(
+                f'{name} is {value}, which does not fit the field '
+                f'{type(target).__name__} has for it')
+
+
+def store_each(target: Any, values: Sequence[int], name: str) -> None:
+    """Assign `values` to the first elements of the ctypes array `target`,
+    each read back as :func:`store` reads a field back.
+
+    name -- what the array holds, for the :class:`DecoderError`
+    """
+    if len(values) > len(target):
+        raise DecoderError(
+            f'{len(values)} values for {name}, and libva has room for {len(target)}')
+    for index, value in enumerate(values):
+        target[index] = value
+        if target[index] != value:
+            raise DecoderError(
+                f'{name} {index} is {value}, which does not fit the array '
+                'libva has for it')
+
+
+class Checked:
+    """A ctypes structure or array whose every integer store is read back.
+
+    target -- the structure or array to fill; :attr:`target` hands it back
+
+    A field or an element reads as it would on the target, a structure or an
+    array inside it as another :class:`Checked`. An integer that does not read
+    back as the value stored, and an element past the end of an array, raise
+    :class:`~pyopengl_video.decoder.DecoderError` naming the field::
+
+        parameters = Checked(VADecPictureParameterBufferVP9())
+        parameters.frame_width = header.width
+        parameters.pic_fields.bits.frame_type = header.frame_type
+        return parameters.target
+    """
+
+    __slots__ = ('_name', 'target')
+
+    def __init__(self, target: Any, name: str | None = None) -> None:
+        object.__setattr__(self, 'target', target)
+        object.__setattr__(self, '_name', name or type(target).__name__)
+
+    def _read(self, value: Any, name: str) -> Any:
+        if isinstance(value, (ctypes.Structure, ctypes.Union, ctypes.Array)):
+            return Checked(value, name)
+        return value
+
+    @staticmethod
+    def _refuse(name: str, value: int) -> DecoderError:
+        return DecoderError(f'{name} is {value}, which does not fit the field '
+                            'libva has for it')
+
+    def __getattr__(self, name: str) -> Any:
+        return self._read(getattr(self.target, name), f'{self._name}.{name}')
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if not hasattr(self.target, name):
+            raise AttributeError(f'{type(self.target).__name__} has no field {name!r}')
+        setattr(self.target, name, value)
+        if isinstance(value, int) and getattr(self.target, name) != value:
+            raise self._refuse(f'{self._name}.{name}', value)
+
+    def __len__(self) -> int:
+        return len(self.target)
+
+    def __getitem__(self, index: int | slice) -> Any:
+        if isinstance(index, slice):
+            return self.target[index]
+        return self._read(self.target[index], f'{self._name}[{index}]')
+
+    def __setitem__(self, index: int | slice, value: Any) -> None:
+        if isinstance(index, slice):
+            # Element by element, so that each is read back and one past the
+            # end is refused; a slice of a ctypes array is otherwise silent.
+            places = range(*index.indices(len(self.target)))
+            values = list(value)
+            if index.stop is not None and index.stop > len(self.target) or (
+                    len(values) != len(places)):
+                raise DecoderError(
+                    f'{len(values)} values for {self._name}, which has room for '
+                    f'{len(places)} of its {len(self.target)} entries there')
+            for place, element in zip(places, values, strict=True):
+                self[place] = element
+            return
+        name = f'{self._name}[{index}]'
+        if not 0 <= index < len(self.target):
+            raise DecoderError(f'{name} is past the {len(self.target)} entries '
+                               'libva has room for')
+        self.target[index] = value
+        if isinstance(value, int) and self.target[index] != value:
+            raise self._refuse(name, value)

@@ -16,7 +16,7 @@ import pytest
 from pyopengl_video.annexb import AnnexBReader
 from pyopengl_video.decoder import DecoderError
 from pyopengl_video.vaapi import api, h264_decode, hevc_api, hevc_decode
-from pyopengl_video.vaapi.h264_decode import store, store_each
+from pyopengl_video.vaapi.control import store, store_each
 from tests.h26x_fuzz import DATA
 
 RESERVED = ('va_reserved', 'ReservedBits', 'reserved')

@@ -14,7 +14,6 @@ parsed.
 """
 from __future__ import annotations
 
-import ctypes
 from collections.abc import Sequence
 from typing import Any
 
@@ -22,7 +21,13 @@ from pyopengl_video import codecs
 from pyopengl_video.decoder import DecoderError, Sample
 from pyopengl_video.mp4 import split_annexb
 from pyopengl_video.vaapi import api
-from pyopengl_video.vaapi.control import DecodeControl, DecodeSession, Format
+from pyopengl_video.vaapi.control import (
+    DecodeControl,
+    DecodeSession,
+    Format,
+    store,
+    store_each,
+)
 from pyopengl_video.vaapi.h264 import StreamError
 from pyopengl_video.vaapi.h264_dpb import DecodedPictureBuffer, Frame, Picture
 from pyopengl_video.vaapi.h264_parse import (
@@ -101,39 +106,6 @@ def profile_for(sps: SequenceParameterSet, pps: PictureParameterSet) -> int:
             'the stream uses slice groups (flexible macroblock ordering), which '
             'VA-API drivers do not decode')
     return VA_PROFILES[sps.profile_idc]
-
-
-def store(target: ctypes.Structure, **values: int) -> None:
-    """Assign each of `values` to the field of `target` it names, and read it back.
-
-    ctypes keeps the low bits of an integer wider than its field and raises
-    nothing. A field that does not read back as the value assigned raises
-    :class:`DecoderError` naming the field, so that no parsed value reaches a
-    driver as another number.
-    """
-    for name, value in values.items():
-        setattr(target, name, value)
-        if getattr(target, name) != value:
-            raise DecoderError(
-                f'{name} is {value}, which does not fit the field '
-                f'{type(target).__name__} has for it')
-
-
-def store_each(target: Any, values: Sequence[int], name: str) -> None:
-    """Assign `values` to the first elements of the ctypes array `target`,
-    each read back as :func:`store` reads a field back.
-
-    name -- what the array holds, for the :class:`DecoderError`
-    """
-    if len(values) > len(target):
-        raise DecoderError(
-            f'{len(values)} values for {name}, and libva has room for {len(target)}')
-    for index, value in enumerate(values):
-        target[index] = value
-        if target[index] != value:
-            raise DecoderError(
-                f'{name} {index} is {value}, which does not fit the array '
-                'libva has for it')
 
 
 def va_picture(frame: Frame) -> api.VAPictureH264:
