@@ -150,7 +150,8 @@ assume one frame in means one packet out.
   [the whole picture](plans/GPU-VIDEO-ENCODE.md),
   [Intel and AMD](plans/VAAPI-BACKEND.md),
   [Windows](plans/WINDOWS-SUPPORT.md),
-  [decoding into a texture](plans/GPU-VIDEO-DECODE.md).
+  [decoding into a texture](plans/GPU-VIDEO-DECODE.md),
+  [the security review and coding standards](plans/SECURITY-REVIEW.md).
 
 ## Development
 
