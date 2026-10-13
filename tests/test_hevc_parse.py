@@ -411,7 +411,7 @@ class TestScalingListData:
 
     def test_a_list_predicted_from_before_the_first_is_refused(self):
         broken = [[2, 0, 0, 0, 0, 0], *SCALING[1:]]
-        with pytest.raises(StreamError, match='predicted'):
+        with pytest.raises(StreamError, match='scaling_list_pred_matrix_id_delta is 2'):
             sequence(scaling=broken)
 
     def test_the_defaults(self):
@@ -468,7 +468,7 @@ class TestReferencePictureSets:
 
     def test_a_set_predicted_from_before_the_first_is_refused(self):
         sps, pps = sequence(st_rps=SETS[:1]), picture_set()
-        with pytest.raises(StreamError, match='predicted'):
+        with pytest.raises(StreamError, match='delta_idx_minus1 is 3, outside 0 to 0'):
             header(sps, pps, kind='P', rps={
                 'delta_idx_minus1': 3, 'delta_rps': 1, 'used': [1], 'use_delta': [1]})
 
@@ -483,6 +483,7 @@ class TestReferencePictureSets:
 class TestSliceSegmentHeaders:
     def sets(self, **pps_options):
         sps = sequence(width=160, height=96, diff_cb=2, sao=1, st_rps=SETS,
+                       ordering=((10, 2, 0),),
                        long_term=((3, 1), (40, 0), (77, 1)), temporal_mvp=1)
         return sps, picture_set(**pps_options)
 
@@ -569,7 +570,7 @@ class TestSliceSegmentHeaders:
         sps, pps = self.sets(weighted_pred=1)
         unit = slice_unit(sps, pps, kind='P', poc_lsb=4, rps=0,
                           weights={'denom': 7, 'chroma_delta': 1})
-        with pytest.raises(StreamError, match='denominator'):
+        with pytest.raises(StreamError, match='delta_chroma_log2_weight_denom is 1'):
             parse_slice_header(unit, {0: sps}, {0: pps})
 
     def test_the_fields_a_pps_switches_on(self):

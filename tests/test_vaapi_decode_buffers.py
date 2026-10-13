@@ -156,12 +156,19 @@ class TestSliceParameters:
         assert parameters.slice_type == 1
         assert parameters.num_ref_idx_l0_active_minus1 == 2
         assert parameters.num_ref_idx_l1_active_minus1 == 1
-        assert [parameters.RefPicList0[i].picture_id for i in range(3)] == [
-            10, 11, api.VA_INVALID_SURFACE]
-        assert parameters.RefPicList0[2].flags == api.VA_PICTURE_H264_INVALID
         assert [parameters.RefPicList1[i].picture_id for i in range(2)] == [11, 10]
-        assert all(parameters.RefPicList1[i].flags & api.VA_PICTURE_H264_INVALID
-                   for i in range(2, 32))
+        for entries, active in ((parameters.RefPicList0, 3), (parameters.RefPicList1, 2)):
+            assert all(entries[i].flags & api.VA_PICTURE_H264_INVALID
+                       and entries[i].picture_id == api.VA_INVALID_SURFACE
+                       for i in range(active, 32))
+
+    def test_every_active_entry_names_a_decoded_surface(self):
+        """Two frames are held and list 0 has three entries: the third is the
+        list's first frame again, never an entry with no surface."""
+        _, parameters = self.build()
+        assert [parameters.RefPicList0[i].picture_id for i in range(3)] == [10, 11, 10]
+        assert not any(parameters.RefPicList0[i].flags & api.VA_PICTURE_H264_INVALID
+                       for i in range(3))
 
     def test_the_slice_fields(self):
         _, parameters = self.build(slice_qp_delta=-3, cabac_init_idc=2,

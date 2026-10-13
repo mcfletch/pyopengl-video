@@ -3,6 +3,7 @@
 Each picture's surface is a label the test chooses, so what the buffer puts in
 a reference list or outputs can be named.
 """
+import dataclasses
 import logging
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from pyopengl_video.vaapi.hevc_parse import (
     NAL_RASL_N,
     NAL_SPS,
     NAL_TRAIL_N,
+    ShortTermRefPicSet,
     parse_nal,
     parse_pps,
     parse_slice_header,
@@ -164,6 +166,40 @@ class TestReferencePictureSet:
         assert stream.held() == ['0']
         assert surfaces(stream.buffer.reference_frames()) == [0]
 
+    def test_a_picture_decoding_restarts_at_has_no_stand_in(self):
+        """H10: a broken link picture's set names the picture before it, which
+        leaves the buffer with every other. A frame on its way out stands in
+        for nothing, so nothing the picture names is outside the buffer."""
+        stream = Stream()
+        stream.idr(0)
+        stream.decode(1, 1, before=(-1,))
+        picture = stream.buffer.begin(stream.header(
+            2, nal_type=NAL_BLA_W_LP, kind='I', no_output=1, before=(-1,)))
+        assert picture.rps.missing == (1,)
+        assert picture.rps.frames == []
+        assert stream.held() == []
+        assert stream.buffer.outputs() == []
+
+    def test_what_a_picture_predicts_from_stays_in_the_buffer(self):
+        """A stand-in included: every frame of a set is one the buffer holds
+        when the picture begins."""
+        stream = self.pyramid()
+        picture = stream.buffer.begin(stream.header(12, before=(-2, -4)))
+        assert picture.rps.missing
+        assert all(frame in stream.buffer.frames for frame in picture.rps.frames)
+
+    def test_an_order_count_past_thirty_two_bits_is_refused(self):
+        """8.3.1: PicOrderCntVal fits 32 signed bits, as libva's field does."""
+        stream = Stream(log2_max_poc_lsb_minus4=12)
+        stream.idr(0)
+        buffer = stream.buffer
+        # As after 32767 wraps of the LSB.
+        buffer._prev_msb, buffer._prev_lsb = 2**31 - 65536, 40000  # noqa: SLF001 - the count so far
+        stream.decode('last', 65535)
+        assert stream.pictures['last'].poc == 2**31 - 1
+        with pytest.raises(StreamError, match='PicOrderCntVal is 2147483648'):
+            stream.buffer.begin(stream.header(0))
+
     def test_a_reference_not_held_with_nothing_to_stand_in(self):
         stream = Stream()
         stream.decode('cra', 8, nal_type=NAL_CRA)
@@ -282,10 +318,22 @@ class TestReferenceLists:
     def test_an_i_slice_has_no_lists(self):
         assert self.lists(kind='I') == ([], [])
 
-    def test_a_modification_past_the_list_is_refused(self):
-        with pytest.raises(StreamError, match='entry 3'):
+    def test_a_modification_past_the_pictures_is_refused(self):
+        with pytest.raises(StreamError, match='list_entry_l0 is 3, outside 0 to 2'):
             self.lists(pps={'lists_modification': 1}, before=(-1, -5), after=(1,),
                        refs=(1, 0), modification=((3, 0), None))
+
+    def test_a_header_made_with_an_entry_past_the_list_is_refused(self):
+        """No parsed header names one; the buffer holds a header to its list
+        however it was made."""
+        stream = Stream()
+        stream.idr(0)
+        stream.decode(1, 1, before=(-1,))
+        slice_header = dataclasses.replace(stream.header(2, before=(-1, -2)),
+                                           list_entry_l0=(3,))
+        picture = stream.buffer.begin(slice_header)
+        with pytest.raises(StreamError, match='entry 3'):
+            stream.buffer.reference_lists(picture, slice_header)
 
     def test_a_slice_with_nothing_to_predict_from_is_refused(self):
         stream = Stream()
@@ -416,14 +464,25 @@ class TestOutput:
         assert stream.held() == ['second']
 
     def test_a_full_buffer_outputs_before_the_next_picture(self):
-        """Two pictures held and five allowed to wait: the size is what bumps."""
-        stream = Stream(ordering=((1, 5, 0),))
+        """Three pictures held where three are allowed, two of them waiting
+        and two may wait: the size is what bumps."""
+        stream = Stream(ordering=((2, 2, 0),))
         stream.idr(0)
-        stream.decode(1, 1, before=(-1,))
-        picture = stream.buffer.begin(stream.header(2, before=(-1,)))
-        assert surfaces(stream.buffer.outputs()) == [0]
-        assert stream.held() == ['1']
-        assert surfaces(stream.buffer.finish(picture, surface=2)) == []
+        stream.decode(8, 8, before=(-8,))
+        assert stream.decode(4, 4, before=(-4,), after=(4,)) == [0]
+        stream.buffer.begin(stream.header(2, before=(-2,), after=(2,)))
+        assert surfaces(stream.buffer.outputs()) == [4, 8]
+        assert stream.held() == ['0', '4']
+
+    def keeping(self, stream, poc, deltas):
+        """A header for picture `poc` whose set keeps the pictures at `deltas`.
+
+        Made by replacing the parsed set, because the parser holds a set to
+        the buffer's size and these are larger.
+        """
+        return dataclasses.replace(
+            stream.header(poc, before=deltas[:1]),
+            short_term_ref_pic_set=ShortTermRefPicSet(deltas, (1,) * len(deltas)))
 
     def test_a_buffer_full_of_references_takes_one_picture_more(self):
         """Two pictures allowed and two kept as references: the third has
@@ -431,17 +490,19 @@ class TestOutput:
         stream = Stream(ordering=((1, 0, 0),))
         stream.idr(0)
         stream.decode(1, 1, before=(-1,))
-        assert stream.decode(2, 2, before=(-1, -2)) == [2]
+        picture = stream.buffer.begin(self.keeping(stream, 2, (-1, -2)))
+        assert surfaces(stream.buffer.outputs() + stream.buffer.finish(picture, 2)) == [2]
         assert stream.held() == ['0', '1', '2']
 
     def test_more_references_than_the_buffer_holds_are_refused(self):
         stream = Stream(ordering=((1, 0, 0),))
         stream.idr(0)
         stream.decode(1, 1, before=(-1,))
-        stream.decode(2, 2, before=(-1, -2))
+        picture = stream.buffer.begin(self.keeping(stream, 2, (-1, -2)))
+        stream.buffer.finish(picture, 2)
         with pytest.raises(StreamError, match='keeps 3 reference pictures in a decoded '
                                               'picture buffer of 2'):
-            stream.decode(3, 3, before=(-1, -2, -3))
+            stream.buffer.begin(self.keeping(stream, 3, (-1, -2, -3)))
 
     def test_a_picture_that_has_waited_its_latency_is_shown(self):
         """Two may wait and none longer than two pictures: decoding 2 shows

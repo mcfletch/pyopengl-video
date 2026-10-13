@@ -19,13 +19,17 @@ import dataclasses
 from pyopengl_video.vaapi.h264 import (
     COLOUR_PRIMARIES_BT709,
     MATRIX_BT709,
+    MAX_QP,
     TRANSFER_BT709,
     VIDEO_FORMAT_UNSPECIFIED,
     BitWriter,
     annexb,
+    checked_frame_rate,
     emulation_prevented,
 )
 from pyopengl_video.vaapi.hevc_parse import (
+    MAX_LUMA_SAMPLES,
+    MAX_PICTURE_SIDE,
     NAL_IDR_N_LP,
     NAL_PPS,
     NAL_SPS,
@@ -102,7 +106,15 @@ def level_for(width: int, height: int, frame_rate: tuple[int, int],
 
 
 def nal_unit(rbsp: bytes, nal_unit_type: int, temporal_id: int = 0) -> bytes:
-    """An RBSP behind its two-byte NAL unit header, escaped (7.3.1.1 and 7.3.1.2)."""
+    """An RBSP behind its two-byte NAL unit header, escaped (7.3.1.1 and 7.3.1.2).
+
+    Raises :class:`ValueError` for a type outside 0 to 63 or a temporal_id
+    outside 0 to 6, which the header has no room for.
+    """
+    if not 0 <= nal_unit_type <= 63:
+        raise ValueError(f'nal_unit_type {nal_unit_type} is outside 0 to 63')
+    if not 0 <= temporal_id <= 6:
+        raise ValueError(f'temporal_id {temporal_id} is outside 0 to 6')
     return bytes([nal_unit_type << 1, temporal_id + 1]) + emulation_prevented(rbsp)
 
 
@@ -260,8 +272,9 @@ class ParameterSets:
     The stream is Main profile, Main tier: 8-bit 4:2:0, one slice a picture,
     limited-range BT.709.
 
-    width, height -- the picture in luma samples, both even
-    frame_rate -- an exact ``(numerator, denominator)``
+    width, height -- the picture in luma samples, both even, and no larger
+        coded than the largest picture of any level
+    frame_rate -- an exact ``(numerator, denominator)``, both terms above zero
     references -- how many pictures the decoded picture buffer keeps to
         predict from
     init_qp -- the quantiser the picture parameter set starts from, 0 to 51
@@ -278,6 +291,9 @@ class ParameterSets:
         pic_width_in_luma_samples and pic_height_in_luma_samples state; the
         conformance window crops it back
     level_idc -- general_level_idc
+
+    :class:`ValueError` is raised here for anything the headers cannot
+    state, so that none is written with a value that reads back as another.
     """
 
     def __init__(self, width: int, height: int, frame_rate: tuple[int, int], *,
@@ -291,13 +307,15 @@ class ParameterSets:
             raise ValueError(
                 f'{width}x{height} has an odd dimension, and 4:2:0 chroma is '
                 'subsampled by two in each direction')
-        if not 0 <= init_qp <= 51:
+        if not 0 <= init_qp <= MAX_QP:
             raise ValueError(f'{init_qp} is outside the HEVC quantiser range 0..51')
         if not 1 <= references <= 15:
             raise ValueError(f'{references} reference pictures; 1 to 15 are possible')
+        if bitrate < 0:
+            raise ValueError(f'a bitrate of {bitrate} bits per second')
         self.width = int(width)
         self.height = int(height)
-        self.frame_rate = (int(frame_rate[0]), int(frame_rate[1]))
+        self.frame_rate = checked_frame_rate(frame_rate)
         self.references = int(references)
         self.init_qp = int(init_qp)
         self.bitrate = int(bitrate)
@@ -307,13 +325,18 @@ class ParameterSets:
 
         smallest = 1 << self.blocks.min_coding
         across, down = alignment or (smallest, smallest)
-        if across % smallest or down % smallest:
+        if across < 1 or down < 1 or across % smallest or down % smallest:
             raise ValueError(
                 f'a coded size in multiples of {across}x{down} is not whole '
                 f'coding blocks of {smallest} samples')
         self.coded_size = (-(-self.width // across) * across,
                            -(-self.height // down) * down)
         coded_width, coded_height = self.coded_size
+        if (max(self.coded_size) > MAX_PICTURE_SIDE
+                or coded_width * coded_height > MAX_LUMA_SAMPLES):
+            raise ValueError(
+                f'{width}x{height} is coded as {coded_width}x{coded_height}, which '
+                'is larger than any level codes')
         #: conf_win_right_offset and conf_win_bottom_offset, in chroma samples.
         self.crop_right = (coded_width - self.width) // CROP_UNIT
         self.crop_bottom = (coded_height - self.height) // CROP_UNIT
@@ -512,9 +535,24 @@ class ParameterSets:
         The header of the one slice segment each picture is coded as, through
         its byte_alignment(). The slice data follows it in a stream.
 
-        qp -- the quantiser the slice is coded at, where it is not the one
-            the picture parameter set starts from
+        qp -- the quantiser the slice is coded at, 0 to 51, where it is not
+            the one the picture parameter set starts from
+
+        Raises :class:`ValueError` for a quantiser outside that range, and
+        for a picture the sequence's reference picture sets do not describe:
+        an IDR picture with references, another with none, or one with more
+        than the buffer keeps.
         """
+        slice_qp = self.init_qp if qp is None else int(qp)
+        if not 0 <= slice_qp <= MAX_QP:
+            raise ValueError(f'{qp} is outside the HEVC quantiser range 0..51')
+        if picture.idr and picture.references:
+            raise ValueError(
+                f'an IDR picture predicting from {len(picture.references)} pictures')
+        if not picture.idr and not 1 <= len(picture.references) <= self.references:
+            raise ValueError(
+                f'picture {picture.poc} predicts from {len(picture.references)} '
+                f'pictures, and the sequence has sets of 1 to {self.references}')
         writer = BitWriter()
         writer.flag(1)                          # first_slice_segment_in_pic_flag
         if picture.idr:
@@ -539,7 +577,7 @@ class ParameterSets:
             if picture.bidirectional:
                 writer.flag(0)                  # mvd_l1_zero_flag
             writer.ue(5 - MAX_NUM_MERGE_CAND)   # five_minus_max_num_merge_cand
-        writer.se((self.init_qp if qp is None else int(qp)) - self.init_qp)
+        writer.se(slice_qp - self.init_qp)      # slice_qp_delta
         # byte_alignment() is a one and then zeroes, as the end of an RBSP is.
         return nal_unit(writer.rbsp(), picture.nal_unit_type)
 

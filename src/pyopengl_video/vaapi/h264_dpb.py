@@ -5,10 +5,12 @@ clause 8.2 of ITU-T H.264. :class:`DecodedPictureBuffer` does that for a stream
 of progressive frames:
 
 - picture order counts of all three types (8.2.1)
-- gaps in frame_num, filled with "non-existing" frames (8.2.5.2)
+- gaps in frame_num, filled with "non-existing" frames (8.2.5.2), as many
+  as the sliding window keeps whatever the length of the gap
 - reference marking by sliding window and by memory management control
   operations (8.2.5.3, 8.2.5.4)
-- reference picture lists 0 and 1, initialised and then modified (8.2.4)
+- reference picture lists 0 and 1, initialised and then modified (8.2.4),
+  with a decoded frame in every entry
 - output order: the bumping process of annex C.4.5.3, bounded by the
   stream's reorder depth so a picture leaves as soon as nothing can precede it
 
@@ -18,10 +20,11 @@ an opaque value, and a caller's payload (a timestamp, say) travels with it.
 One picture is decoded as::
 
     picture = buffer.begin(first_slice_header)
+    displayed = buffer.outputs()            # what a gap in frame_num pushed out
     for header in slice_headers:
         list0, list1 = buffer.reference_lists(picture, header)
         ...                                 # hand the slice to the driver
-    displayed = buffer.finish(picture, surface, payload)
+    displayed += buffer.finish(picture, surface, payload)
 
 Field pictures are refused with :class:`StreamError`; every list here holds
 frames.
@@ -32,7 +35,7 @@ import dataclasses
 import logging
 from typing import Any
 
-from pyopengl_video.vaapi.h264 import StreamError
+from pyopengl_video.vaapi.h264 import StreamError, ranged
 from pyopengl_video.vaapi.h264_parse import (
     SLICE_B,
     SLICE_I,
@@ -45,6 +48,10 @@ from pyopengl_video.vaapi.h264_parse import (
 log = logging.getLogger(__name__)
 
 __all__ = ['DecodedPictureBuffer', 'Frame', 'Picture']
+
+#: The range 8.2.1 holds every picture order count and FrameNumOffset to.
+ORDER_COUNT_LEAST = -(1 << 31)
+ORDER_COUNT_MOST = (1 << 31) - 1
 
 #: The reference markings a frame can carry (8.2.5).
 SHORT_TERM = 'short'
@@ -142,7 +149,6 @@ class DecodedPictureBuffer:
         self._prev_poc_lsb = 0
         self._prev_frame_num = 0
         self._prev_frame_num_offset = 0
-        self._max_long_term_frame_idx: int | None = None
         #: Whether a picture has been decoded since the start or a reset, which
         #: is what a gap in frame_num is measured from.
         self._decoded_any = False
@@ -160,7 +166,12 @@ class DecodedPictureBuffer:
     # ------------------------------------------------------------ pictures
 
     def begin(self, header: SliceHeader) -> Picture:
-        """Start decoding the picture whose first slice header is `header`."""
+        """Start decoding the picture whose first slice header is `header`.
+
+        A gap in frame_num stores the frames it infers, which may output
+        frames that were waiting: take them with :meth:`outputs` before
+        choosing where to decode the picture.
+        """
         if header.field_pic_flag:
             raise StreamError(
                 'a field picture: this decoder takes progressive frames only, '
@@ -171,15 +182,22 @@ class DecodedPictureBuffer:
             self._prev_frame_num_offset = 0
         elif self._decoded_any:
             self._fill_gaps(header)
-        offset = self._frame_num_offset(header)
+        offset = ranged(self._frame_num_offset(header), 0, ORDER_COUNT_MOST,
+                        'FrameNumOffset')
+        msb = 0
         if sps.pic_order_cnt_type == 0:
             msb, top, bottom = self._order_type_zero(header)
-            return Picture(header, top, bottom, poc_msb=msb, frame_num_offset=offset)
-        if sps.pic_order_cnt_type == 1:
+        elif sps.pic_order_cnt_type == 1:
             top, bottom = self._order_type_one(header, offset)
         else:
             top = bottom = self._order_type_two(header, offset)
-        return Picture(header, top, bottom, frame_num_offset=offset)
+        return Picture(header, *_order_counts(top, bottom), poc_msb=msb,
+                       frame_num_offset=offset)
+
+    def outputs(self) -> list[Frame]:
+        """The frames output since the last call, in display order."""
+        outputs, self._outputs = self._outputs, []
+        return outputs
 
     def finish(self, picture: Picture, surface: Any, payload: Any = None) -> list[Frame]:
         """Mark and store the decoded picture; return the frames now to display."""
@@ -199,19 +217,17 @@ class DecodedPictureBuffer:
         if picture.has_mmco5:
             # 8.2.1: the picture is the new origin of the picture order count.
             origin = frame.poc
-            frame.top_field_order_cnt -= origin
-            frame.bottom_field_order_cnt -= origin
+            frame.top_field_order_cnt, frame.bottom_field_order_cnt = _order_counts(
+                frame.top_field_order_cnt - origin, frame.bottom_field_order_cnt - origin)
         self._store(frame, header.sps)
         self._remember(picture, frame)
         self._decoded_any = True
-        outputs, self._outputs = self._outputs, []
-        return outputs
+        return self.outputs()
 
     def flush(self) -> list[Frame]:
         """Output every frame still waiting, in display order, and empty the buffer."""
         self._bump_all()
-        outputs, self._outputs = self._outputs, []
-        return outputs
+        return self.outputs()
 
     def reference_frames(self) -> list[Frame]:
         """The frames marked as references, which the driver is told about."""
@@ -286,7 +302,13 @@ class DecodedPictureBuffer:
     # ------------------------------------------------------------ marking
 
     def _fill_gaps(self, header: SliceHeader) -> None:
-        """Infer the frames a jump in frame_num skipped (8.2.5.2)."""
+        """Infer the frames a jump in frame_num skipped (8.2.5.2).
+
+        Each inferred frame passes through the sliding window, which keeps
+        max_num_ref_frames of them. A longer gap therefore leaves the frames
+        at its end and no short-term frame from before it, and that is what
+        is stored, without a step for each frame_num between.
+        """
         sps = header.sps
         maximum = sps.max_frame_num
         expected = (self._prev_ref_frame_num + 1) % maximum
@@ -296,8 +318,21 @@ class DecodedPictureBuffer:
             log.debug('frame_num jumps from %d to %d in a stream that does not '
                       'allow gaps; the missing frames are inferred',
                       self._prev_ref_frame_num, header.frame_num)
-        unused = expected
-        while unused != header.frame_num:
+        gap = (header.frame_num - expected) % maximum
+        stored = min(gap, max(sps.max_num_ref_frames, 1))
+        passed = gap - stored
+        if passed:
+            for frame in self.frames:
+                if frame.short_term:
+                    frame.reference = None
+            # FrameNumOffset gains MaxFrameNum where frame_num returns to
+            # zero (8.2.1.2): at the first frame passed over, or after it.
+            wraps = (self._prev_frame_num > expected) + (0 < maximum - expected < passed)
+            self._prev_frame_num_offset += wraps * maximum
+            self._prev_ref_frame_num = self._prev_frame_num = (
+                expected + passed - 1) % maximum
+        unused = (expected + passed) % maximum
+        for _ in range(stored):
             offset = self._prev_frame_num_offset + (
                 maximum if self._prev_frame_num > unused else 0)
             frame = Frame(surface=None, frame_num=unused, top_field_order_cnt=0,
@@ -346,10 +381,8 @@ class DecodedPictureBuffer:
                 stored.reference = None
             if header.long_term_reference_flag:
                 frame.reference, frame.long_term_frame_idx = LONG_TERM, 0
-                self._max_long_term_frame_idx = 0
             else:
                 frame.reference = SHORT_TERM
-                self._max_long_term_frame_idx = None
             return
         if not picture.is_reference:
             return
@@ -385,16 +418,16 @@ class DecodedPictureBuffer:
             if target is not None:
                 target.reference = None
         elif kind == 4:
+            # MaxLongTermFrameIdx is not kept past this: decoding may resume
+            # after a seek, where the operation that set it was never read,
+            # and the parser holds every index below max_num_ref_frames.
             plus1 = operation.max_long_term_frame_idx_plus1
-            self._max_long_term_frame_idx = plus1 - 1 if plus1 else None
             for stored in self.frames:
-                if stored.long_term and (plus1 == 0
-                                         or stored.long_term_frame_idx > plus1 - 1):
+                if stored.long_term and stored.long_term_frame_idx >= plus1:
                     stored.reference = None
         elif kind == 5:
             for stored in self.frames:
                 stored.reference = None
-            self._max_long_term_frame_idx = None
         elif kind == 6:
             self._take_long_term_index(operation.long_term_frame_idx)
             frame.reference = LONG_TERM
@@ -452,12 +485,19 @@ class DecodedPictureBuffer:
     # ---------------------------------------------------- reference lists
 
     def reference_lists(self, picture: Picture, header: SliceHeader,
-                        ) -> tuple[list[Frame | None], list[Frame | None]]:
+                        ) -> tuple[list[Frame], list[Frame]]:
         """RefPicList0 and RefPicList1 for one slice of `picture` (8.2.4).
 
-        Each list has num_ref_idx_lX_active_minus1 + 1 entries, None where the
-        stream names more references than the buffer holds. An I slice has
-        two empty lists and a P slice an empty list 1.
+        Each list has num_ref_idx_lX_active_minus1 + 1 entries, and every
+        entry is a decoded frame. Where the specification's list has "no
+        reference picture", because the slice declares more entries than
+        there are reference frames, or has a frame inferred from a gap in
+        frame_num, a decoded frame stands in: the list's first, or the first
+        of the reference frames the list was made from where it has none. A
+        conforming stream predicts from neither kind of entry, and a driver
+        is given a surface for every entry it may index. A slice with no
+        decoded reference frame at all raises :class:`StreamError`. An I
+        slice has two empty lists and a P slice an empty list 1.
         """
         if header.slice_type in (SLICE_I, SLICE_SI):
             return [], []
@@ -472,8 +512,9 @@ class DecodedPictureBuffer:
                       key=lambda frame: frame.long_term_frame_idx)
         if header.slice_type != SLICE_B:
             initial0 = sorted(short, key=pic_num, reverse=True) + long
-            return self._modify(initial0, header.ref_pic_list_modification_l0,
-                                header.num_ref_idx_l0_active_minus1 + 1, header), []
+            return self._decoded(self._modify(
+                initial0, header.ref_pic_list_modification_l0,
+                header.num_ref_idx_l0_active_minus1 + 1, header), initial0, header), []
         current = picture.poc
         existing = [frame for frame in short if not frame.non_existing]
         before = sorted((frame for frame in existing if frame.poc < current),
@@ -485,11 +526,37 @@ class DecodedPictureBuffer:
         if len(initial1) > 1 and initial1 == initial0:
             initial1[0], initial1[1] = initial1[1], initial1[0]
         return (
-            self._modify(initial0, header.ref_pic_list_modification_l0,
-                         header.num_ref_idx_l0_active_minus1 + 1, header),
-            self._modify(initial1, header.ref_pic_list_modification_l1,
-                         header.num_ref_idx_l1_active_minus1 + 1, header),
+            self._decoded(self._modify(
+                initial0, header.ref_pic_list_modification_l0,
+                header.num_ref_idx_l0_active_minus1 + 1, header), initial0, header),
+            self._decoded(self._modify(
+                initial1, header.ref_pic_list_modification_l1,
+                header.num_ref_idx_l1_active_minus1 + 1, header), initial1, header),
         )
+
+    @staticmethod
+    def _decoded(entries: list[Frame | None], initial: list[Frame],
+                 header: SliceHeader) -> list[Frame]:
+        """`entries` with a decoded frame in every place (see :meth:`reference_lists`).
+
+        initial -- the reference frames the list was made from, in its order
+        """
+        def decoded(frames: list[Frame | None]) -> list[Frame]:
+            return [frame for frame in frames
+                    if frame is not None and not frame.non_existing]
+
+        kept = decoded(entries)
+        candidates = kept or decoded(list(initial))
+        if not candidates:
+            raise StreamError(
+                f'a {header.kind} slice of the picture with frame_num '
+                f'{header.frame_num} has no decoded frame to predict from')
+        if len(kept) < len(entries):
+            log.debug('frame_num %d: %d of %d reference list entries name no decoded '
+                      'frame; frame_num %d stands in', header.frame_num,
+                      len(entries) - len(kept), len(entries), candidates[0].frame_num)
+        return [entry if entry is not None and not entry.non_existing else candidates[0]
+                for entry in entries]
 
     def _modify(self, initial: list[Frame], modifications: tuple[tuple[int, int], ...],
                 count: int, header: SliceHeader) -> list[Frame | None]:
@@ -536,3 +603,10 @@ class DecodedPictureBuffer:
             kept = [entry for entry in entries[index:] if entry is not target]
             entries = (entries[:index] + [target] + kept + [None] * count)[:count]
         return entries
+
+
+def _order_counts(top: int, bottom: int) -> tuple[int, int]:
+    """TopFieldOrderCnt and BottomFieldOrderCnt, held to the 32 signed bits
+    8.2.1 requires of them and libva carries them in."""
+    return (ranged(top, ORDER_COUNT_LEAST, ORDER_COUNT_MOST, 'TopFieldOrderCnt'),
+            ranged(bottom, ORDER_COUNT_LEAST, ORDER_COUNT_MOST, 'BottomFieldOrderCnt'))

@@ -715,3 +715,71 @@ class TestGroupOfPictures:
     def test_a_structure_with_no_pictures_or_no_references_is_refused(self, settings, message):
         with pytest.raises(ValueError, match=message):
             GroupOfPictures(**settings)
+
+
+# ------------------------------------------- what the writers will not write
+
+
+class TestRefusedArguments:
+    """A writer packs what it is given into the width the syntax has for it,
+    so an argument the syntax cannot state is refused before anything is
+    written, with :class:`ValueError` as for a size."""
+
+    @pytest.mark.parametrize('rate', [(30, 0), (0, 1), (-30, 1), (30, -1), (29.97, 1)])
+    def test_a_frame_rate_that_is_no_rate_is_refused(self, rate):
+        with pytest.raises(ValueError, match='frame rate'):
+            sets(rate=rate)
+
+    @pytest.mark.parametrize('rate', [(2**32, 1), (1, 2**32)])
+    def test_a_frame_rate_past_the_timing_fields_is_refused(self, rate):
+        with pytest.raises(ValueError, match='32-bit'):
+            sets(rate=rate)
+
+    def test_the_fastest_rate_the_fields_hold_is_written(self):
+        assert sps_of(sets(rate=(2**32 - 1, 1))).vui.vui_time_scale == 2**32 - 1
+
+    @pytest.mark.parametrize('alignment', [(0, 0), (-8, 8), (8, -8)])
+    def test_an_alignment_that_is_no_size_is_refused(self, alignment):
+        with pytest.raises(ValueError, match='coded size in multiples'):
+            sets(alignment=alignment)
+
+    @pytest.mark.parametrize('size', [(10**7, 64), (64, 16890), (8192, 8192)])
+    def test_a_picture_larger_than_any_level_codes_is_refused(self, size):
+        with pytest.raises(ValueError, match='larger than any level codes'):
+            sets(size=size)
+
+    def test_a_negative_bitrate_is_refused(self):
+        with pytest.raises(ValueError, match='bitrate'):
+            sets(bitrate=-1)
+
+    @pytest.mark.parametrize('qp', [-300, -1, 52, 200])
+    def test_a_slice_quantiser_off_the_scale_is_refused(self, qp):
+        with pytest.raises(ValueError, match='quantiser range'):
+            sets().slice_header(IDR, qp=qp)
+
+    @pytest.mark.parametrize('qp', [0, 51])
+    def test_the_ends_of_the_quantiser_scale_are_written(self, qp):
+        assert header_of(sets(init_qp=26), IDR, qp).slice_qp_delta == qp - 26
+
+    def test_a_picture_the_sequences_sets_do_not_describe_is_refused(self):
+        made = sets(references=2)
+        with pytest.raises(ValueError, match='IDR picture predicting from 1'):
+            made.slice_header(Picture(idr=True, poc=0, references=(1,)))
+        with pytest.raises(ValueError, match='predicts from 0 pictures'):
+            made.slice_header(Picture(idr=False, poc=3))
+        with pytest.raises(ValueError, match='predicts from 3 pictures'):
+            made.slice_header(predicted(3, count=3))
+
+    @pytest.mark.parametrize(('kind', 'temporal_id', 'named'), [
+        (64, 0, 'nal_unit_type 64'), (70, 0, 'nal_unit_type 70'),
+        (-1, 0, 'nal_unit_type -1'), (1, 7, 'temporal_id 7'), (1, 9, 'temporal_id 9'),
+        (1, -1, 'temporal_id -1')])
+    def test_a_nal_header_field_past_its_bits_is_refused(self, kind, temporal_id, named):
+        """A type of 70 is not written as type 6, and a temporal_id of 9 does
+        not carry into the layer id."""
+        with pytest.raises(ValueError, match=named):
+            nal_unit(b'\x80', kind, temporal_id)
+
+    def test_the_largest_nal_header_fields_are_written(self):
+        unit = parse_nal(nal_unit(b'\x80', 63, 6))
+        assert (unit.nal_unit_type, unit.nuh_layer_id, unit.temporal_id) == (63, 0, 6)

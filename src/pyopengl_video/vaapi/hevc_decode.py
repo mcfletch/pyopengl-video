@@ -16,6 +16,8 @@ from pyopengl_video.decoder import DecoderError, Sample
 from pyopengl_video.mp4 import split_annexb
 from pyopengl_video.vaapi import api, hevc_api
 from pyopengl_video.vaapi.control import DecodeControl, DecodeSession, Format
+from pyopengl_video.vaapi.h264 import StreamError
+from pyopengl_video.vaapi.h264_decode import store, store_each
 from pyopengl_video.vaapi.hevc_dpb import DecodedPictureBuffer, Frame, Picture
 from pyopengl_video.vaapi.hevc_parse import (
     DEFAULT_SCALING_LISTS,
@@ -125,8 +127,9 @@ def va_picture(frame: Frame, flags: int = 0) -> hevc_api.VAPictureHEVC:
     """A reference frame as libva names it, with its reference picture set bits."""
     if frame.long_term:
         flags |= hevc_api.VA_PICTURE_HEVC_LONG_TERM_REFERENCE
-    return hevc_api.VAPictureHEVC(picture_id=frame.surface, pic_order_cnt=frame.poc,
-                                  flags=flags)
+    picture = hevc_api.VAPictureHEVC()
+    store(picture, picture_id=frame.surface, pic_order_cnt=frame.poc, flags=flags)
+    return picture
 
 
 def picture_parameters(picture: Picture, headers: Sequence[SliceHeader],
@@ -138,10 +141,7 @@ def picture_parameters(picture: Picture, headers: Sequence[SliceHeader],
     header = headers[0]
     sps, pps = header.sps, header.pps
     parameters = hevc_api.VAPictureParameterBufferHEVC()
-    current = parameters.CurrPic
-    current.picture_id = surface
-    current.pic_order_cnt = picture.poc
-    current.flags = 0
+    store(parameters.CurrPic, picture_id=surface, pic_order_cnt=picture.poc, flags=0)
     rps = picture.rps
     references = rps.frames
     if len(references) > hevc_api.REFERENCE_FRAMES:
@@ -161,89 +161,92 @@ def picture_parameters(picture: Picture, headers: Sequence[SliceHeader],
         elif frame in rps.lt_curr:
             flags = hevc_api.VA_PICTURE_HEVC_RPS_LT_CURR
         parameters.ReferenceFrames[index] = va_picture(frame, flags)
-    parameters.pic_width_in_luma_samples = sps.pic_width_in_luma_samples
-    parameters.pic_height_in_luma_samples = sps.pic_height_in_luma_samples
-    bits = parameters.pic_fields.bits
-    bits.chroma_format_idc = sps.chroma_format_idc
-    bits.separate_colour_plane_flag = sps.separate_colour_plane_flag
-    bits.pcm_enabled_flag = sps.pcm_enabled_flag
-    bits.scaling_list_enabled_flag = sps.scaling_list_enabled_flag
-    bits.transform_skip_enabled_flag = pps.transform_skip_enabled_flag
-    bits.amp_enabled_flag = sps.amp_enabled_flag
-    bits.strong_intra_smoothing_enabled_flag = sps.strong_intra_smoothing_enabled_flag
-    bits.sign_data_hiding_enabled_flag = pps.sign_data_hiding_enabled_flag
-    bits.constrained_intra_pred_flag = pps.constrained_intra_pred_flag
-    bits.cu_qp_delta_enabled_flag = pps.cu_qp_delta_enabled_flag
-    bits.weighted_pred_flag = pps.weighted_pred_flag
-    bits.weighted_bipred_flag = pps.weighted_bipred_flag
-    bits.transquant_bypass_enabled_flag = pps.transquant_bypass_enabled_flag
-    bits.tiles_enabled_flag = pps.tiles_enabled_flag
-    bits.entropy_coding_sync_enabled_flag = pps.entropy_coding_sync_enabled_flag
-    bits.pps_loop_filter_across_slices_enabled_flag = (
-        pps.pps_loop_filter_across_slices_enabled_flag)
-    bits.loop_filter_across_tiles_enabled_flag = pps.loop_filter_across_tiles_enabled_flag
-    bits.pcm_loop_filter_disabled_flag = sps.pcm_loop_filter_disabled_flag
-    bits.NoPicReorderingFlag = int(sps.reorder_pics == 0)
-    bits.NoBiPredFlag = int(all(entry.slice_type != SLICE_B for entry in headers))
-    parameters.sps_max_dec_pic_buffering_minus1 = sps.sps_max_dec_pic_buffering_minus1[-1]
-    parameters.bit_depth_luma_minus8 = sps.bit_depth_luma_minus8
-    parameters.bit_depth_chroma_minus8 = sps.bit_depth_chroma_minus8
-    parameters.pcm_sample_bit_depth_luma_minus1 = sps.pcm_sample_bit_depth_luma_minus1
-    parameters.pcm_sample_bit_depth_chroma_minus1 = sps.pcm_sample_bit_depth_chroma_minus1
-    parameters.log2_min_luma_coding_block_size_minus3 = (
-        sps.log2_min_luma_coding_block_size_minus3)
-    parameters.log2_diff_max_min_luma_coding_block_size = (
-        sps.log2_diff_max_min_luma_coding_block_size)
-    parameters.log2_min_transform_block_size_minus2 = (
-        sps.log2_min_luma_transform_block_size_minus2)
-    parameters.log2_diff_max_min_transform_block_size = (
-        sps.log2_diff_max_min_luma_transform_block_size)
-    parameters.log2_min_pcm_luma_coding_block_size_minus3 = (
-        sps.log2_min_pcm_luma_coding_block_size_minus3)
-    parameters.log2_diff_max_min_pcm_luma_coding_block_size = (
-        sps.log2_diff_max_min_pcm_luma_coding_block_size)
-    parameters.max_transform_hierarchy_depth_intra = sps.max_transform_hierarchy_depth_intra
-    parameters.max_transform_hierarchy_depth_inter = sps.max_transform_hierarchy_depth_inter
-    parameters.init_qp_minus26 = pps.init_qp_minus26
-    parameters.diff_cu_qp_delta_depth = pps.diff_cu_qp_delta_depth
-    parameters.pps_cb_qp_offset = pps.pps_cb_qp_offset
-    parameters.pps_cr_qp_offset = pps.pps_cr_qp_offset
-    parameters.log2_parallel_merge_level_minus2 = pps.log2_parallel_merge_level_minus2
-    parameters.num_tile_columns_minus1 = pps.num_tile_columns_minus1
-    parameters.num_tile_rows_minus1 = pps.num_tile_rows_minus1
+    store(parameters.pic_fields.bits,
+          chroma_format_idc=sps.chroma_format_idc,
+          separate_colour_plane_flag=sps.separate_colour_plane_flag,
+          pcm_enabled_flag=sps.pcm_enabled_flag,
+          scaling_list_enabled_flag=sps.scaling_list_enabled_flag,
+          transform_skip_enabled_flag=pps.transform_skip_enabled_flag,
+          amp_enabled_flag=sps.amp_enabled_flag,
+          strong_intra_smoothing_enabled_flag=sps.strong_intra_smoothing_enabled_flag,
+          sign_data_hiding_enabled_flag=pps.sign_data_hiding_enabled_flag,
+          constrained_intra_pred_flag=pps.constrained_intra_pred_flag,
+          cu_qp_delta_enabled_flag=pps.cu_qp_delta_enabled_flag,
+          weighted_pred_flag=pps.weighted_pred_flag,
+          weighted_bipred_flag=pps.weighted_bipred_flag,
+          transquant_bypass_enabled_flag=pps.transquant_bypass_enabled_flag,
+          tiles_enabled_flag=pps.tiles_enabled_flag,
+          entropy_coding_sync_enabled_flag=pps.entropy_coding_sync_enabled_flag,
+          pps_loop_filter_across_slices_enabled_flag=(
+              pps.pps_loop_filter_across_slices_enabled_flag),
+          loop_filter_across_tiles_enabled_flag=pps.loop_filter_across_tiles_enabled_flag,
+          pcm_loop_filter_disabled_flag=sps.pcm_loop_filter_disabled_flag,
+          NoPicReorderingFlag=int(sps.reorder_pics == 0),
+          NoBiPredFlag=int(all(entry.slice_type != SLICE_B for entry in headers)))
+    store(parameters,
+          pic_width_in_luma_samples=sps.pic_width_in_luma_samples,
+          pic_height_in_luma_samples=sps.pic_height_in_luma_samples,
+          sps_max_dec_pic_buffering_minus1=sps.sps_max_dec_pic_buffering_minus1[-1],
+          bit_depth_luma_minus8=sps.bit_depth_luma_minus8,
+          bit_depth_chroma_minus8=sps.bit_depth_chroma_minus8,
+          pcm_sample_bit_depth_luma_minus1=sps.pcm_sample_bit_depth_luma_minus1,
+          pcm_sample_bit_depth_chroma_minus1=sps.pcm_sample_bit_depth_chroma_minus1,
+          log2_min_luma_coding_block_size_minus3=(
+              sps.log2_min_luma_coding_block_size_minus3),
+          log2_diff_max_min_luma_coding_block_size=(
+              sps.log2_diff_max_min_luma_coding_block_size),
+          log2_min_transform_block_size_minus2=(
+              sps.log2_min_luma_transform_block_size_minus2),
+          log2_diff_max_min_transform_block_size=(
+              sps.log2_diff_max_min_luma_transform_block_size),
+          log2_min_pcm_luma_coding_block_size_minus3=(
+              sps.log2_min_pcm_luma_coding_block_size_minus3),
+          log2_diff_max_min_pcm_luma_coding_block_size=(
+              sps.log2_diff_max_min_pcm_luma_coding_block_size),
+          max_transform_hierarchy_depth_intra=sps.max_transform_hierarchy_depth_intra,
+          max_transform_hierarchy_depth_inter=sps.max_transform_hierarchy_depth_inter,
+          init_qp_minus26=pps.init_qp_minus26,
+          diff_cu_qp_delta_depth=pps.diff_cu_qp_delta_depth,
+          pps_cb_qp_offset=pps.pps_cb_qp_offset,
+          pps_cr_qp_offset=pps.pps_cr_qp_offset,
+          log2_parallel_merge_level_minus2=pps.log2_parallel_merge_level_minus2,
+          num_tile_columns_minus1=pps.num_tile_columns_minus1,
+          num_tile_rows_minus1=pps.num_tile_rows_minus1,
+          log2_max_pic_order_cnt_lsb_minus4=sps.log2_max_pic_order_cnt_lsb_minus4,
+          num_short_term_ref_pic_sets=len(sps.short_term_ref_pic_sets),
+          num_long_term_ref_pic_sps=len(sps.lt_ref_pic_poc_lsb_sps),
+          num_ref_idx_l0_default_active_minus1=pps.num_ref_idx_l0_default_active_minus1,
+          num_ref_idx_l1_default_active_minus1=pps.num_ref_idx_l1_default_active_minus1,
+          pps_beta_offset_div2=pps.pps_beta_offset_div2,
+          pps_tc_offset_div2=pps.pps_tc_offset_div2,
+          num_extra_slice_header_bits=pps.num_extra_slice_header_bits,
+          st_rps_bits=header.st_rps_bits)
     # The arrays hold every column and row but the twentieth and twenty-second,
     # which a grid that large leaves to be worked out from the picture's size.
-    for target, sizes in ((parameters.column_width_minus1, pps.tile_columns(sps)),
-                          (parameters.row_height_minus1, pps.tile_rows(sps))):
-        for index, size in enumerate(sizes[:len(target)]):
-            target[index] = size - 1
-    parsing = parameters.slice_parsing_fields.bits
-    parsing.lists_modification_present_flag = pps.lists_modification_present_flag
-    parsing.long_term_ref_pics_present_flag = sps.long_term_ref_pics_present_flag
-    parsing.sps_temporal_mvp_enabled_flag = sps.sps_temporal_mvp_enabled_flag
-    parsing.cabac_init_present_flag = pps.cabac_init_present_flag
-    parsing.output_flag_present_flag = pps.output_flag_present_flag
-    parsing.dependent_slice_segments_enabled_flag = pps.dependent_slice_segments_enabled_flag
-    parsing.pps_slice_chroma_qp_offsets_present_flag = (
-        pps.pps_slice_chroma_qp_offsets_present_flag)
-    parsing.sample_adaptive_offset_enabled_flag = sps.sample_adaptive_offset_enabled_flag
-    parsing.deblocking_filter_override_enabled_flag = (
-        pps.deblocking_filter_override_enabled_flag)
-    parsing.pps_disable_deblocking_filter_flag = pps.pps_deblocking_filter_disabled_flag
-    parsing.slice_segment_header_extension_present_flag = (
-        pps.slice_segment_header_extension_present_flag)
-    parsing.RapPicFlag = int(header.irap)
-    parsing.IdrPicFlag = int(header.idr)
-    parsing.IntraPicFlag = int(all(entry.slice_type == SLICE_I for entry in headers))
-    parameters.log2_max_pic_order_cnt_lsb_minus4 = sps.log2_max_pic_order_cnt_lsb_minus4
-    parameters.num_short_term_ref_pic_sets = len(sps.short_term_ref_pic_sets)
-    parameters.num_long_term_ref_pic_sps = len(sps.lt_ref_pic_poc_lsb_sps)
-    parameters.num_ref_idx_l0_default_active_minus1 = pps.num_ref_idx_l0_default_active_minus1
-    parameters.num_ref_idx_l1_default_active_minus1 = pps.num_ref_idx_l1_default_active_minus1
-    parameters.pps_beta_offset_div2 = pps.pps_beta_offset_div2
-    parameters.pps_tc_offset_div2 = pps.pps_tc_offset_div2
-    parameters.num_extra_slice_header_bits = pps.num_extra_slice_header_bits
-    parameters.st_rps_bits = header.st_rps_bits
+    # Each tile has a coding tree block or more, so no size less one is negative.
+    for target, sizes, name in (
+            (parameters.column_width_minus1, pps.tile_columns(sps), 'tile column width'),
+            (parameters.row_height_minus1, pps.tile_rows(sps), 'tile row height')):
+        store_each(target, [size - 1 for size in sizes[:len(target)]], name)
+    store(parameters.slice_parsing_fields.bits,
+          lists_modification_present_flag=pps.lists_modification_present_flag,
+          long_term_ref_pics_present_flag=sps.long_term_ref_pics_present_flag,
+          sps_temporal_mvp_enabled_flag=sps.sps_temporal_mvp_enabled_flag,
+          cabac_init_present_flag=pps.cabac_init_present_flag,
+          output_flag_present_flag=pps.output_flag_present_flag,
+          dependent_slice_segments_enabled_flag=(
+              pps.dependent_slice_segments_enabled_flag),
+          pps_slice_chroma_qp_offsets_present_flag=(
+              pps.pps_slice_chroma_qp_offsets_present_flag),
+          sample_adaptive_offset_enabled_flag=sps.sample_adaptive_offset_enabled_flag,
+          deblocking_filter_override_enabled_flag=(
+              pps.deblocking_filter_override_enabled_flag),
+          pps_disable_deblocking_filter_flag=pps.pps_deblocking_filter_disabled_flag,
+          slice_segment_header_extension_present_flag=(
+              pps.slice_segment_header_extension_present_flag),
+          RapPicFlag=int(header.irap),
+          IdrPicFlag=int(header.idr),
+          IntraPicFlag=int(all(entry.slice_type == SLICE_I for entry in headers)))
     return parameters
 
 
@@ -268,16 +271,23 @@ def iq_matrix(sps: SequenceParameterSet,
                              chosen.lists, strict=True):
         for index, values in enumerate(lists):
             scan = DIAGONAL_4X4 if len(values) == len(DIAGONAL_4X4) else DIAGONAL_8X8
-            for position, raster in enumerate(scan):
-                target[index][raster] = values[position]
-    matrix.ScalingListDC16x16[:] = chosen.dc[0]
-    matrix.ScalingListDC32x32[:] = chosen.dc[1]
+            raster = [0] * len(scan)
+            for position, place in enumerate(scan):
+                raster[place] = values[position]
+            store_each(target[index], raster, 'scaling factor')
+    store_each(matrix.ScalingListDC16x16, chosen.dc[0], '16x16 DC scaling factor')
+    store_each(matrix.ScalingListDC32x32, chosen.dc[1], '32x32 DC scaling factor')
     return matrix
 
 
 def _reference_list(entries: Sequence[Frame], references: Sequence[Frame],
                     target: Any) -> None:
-    for index in range(hevc_api.REFERENCE_FRAMES):
+    """One RefPicList: each entry's place in `references`, the rest naming none."""
+    if len(entries) > len(target):
+        raise DecoderError(
+            f'a reference list of {len(entries)} entries, and libva describes '
+            f'{len(target)}')
+    for index in range(len(target)):
         target[index] = (references.index(entries[index]) if index < len(entries)
                          else hevc_api.NO_REFERENCE)
 
@@ -293,61 +303,76 @@ def slice_parameters(header: SliceHeader, list0: Sequence[Frame], list1: Sequenc
     last -- this is the picture's last slice segment
     entry_offset -- how many entry points the picture's earlier slice
         segments have
+
+    Raises :class:`DecoderError` for a slice segment whose header leaves no
+    slice data in those `size` bytes.
     """
+    if header.header_bytes + header.header_escapes >= size:
+        raise DecoderError(
+            f'a slice segment header of {header.header_bytes} bytes and '
+            f'{header.header_escapes} escapes in a slice segment of {size} bytes')
     parameters = hevc_api.VASliceParameterBufferHEVC()
-    parameters.slice_data_size = size
-    parameters.slice_data_offset = 0
-    parameters.slice_data_flag = api.VA_SLICE_DATA_FLAG_ALL
-    parameters.slice_data_byte_offset = header.header_bytes
-    parameters.slice_segment_address = header.slice_segment_address
+    store(parameters,
+          slice_data_size=size, slice_data_offset=0,
+          slice_data_flag=api.VA_SLICE_DATA_FLAG_ALL,
+          slice_data_byte_offset=header.header_bytes,
+          slice_segment_address=header.slice_segment_address,
+          collocated_ref_idx=(hevc_api.NO_REFERENCE if header.collocated_ref_idx is None
+                              else header.collocated_ref_idx),
+          num_ref_idx_l0_active_minus1=header.num_ref_idx_l0_active_minus1,
+          num_ref_idx_l1_active_minus1=header.num_ref_idx_l1_active_minus1,
+          slice_qp_delta=header.slice_qp_delta,
+          slice_cb_qp_offset=header.slice_cb_qp_offset,
+          slice_cr_qp_offset=header.slice_cr_qp_offset,
+          slice_beta_offset_div2=header.slice_beta_offset_div2,
+          slice_tc_offset_div2=header.slice_tc_offset_div2,
+          five_minus_max_num_merge_cand=header.five_minus_max_num_merge_cand,
+          num_entry_point_offsets=header.num_entry_point_offsets,
+          entry_offset_to_subset_array=entry_offset,
+          slice_data_num_emu_prevn_bytes=header.header_escapes)
     _reference_list(list0, references, parameters.RefPicList[0])
     _reference_list(list1, references, parameters.RefPicList[1])
-    flags = parameters.LongSliceFlags.fields
-    flags.LastSliceOfPic = int(last)
-    flags.dependent_slice_segment_flag = header.dependent_slice_segment_flag
-    flags.slice_type = header.slice_type
-    flags.color_plane_id = header.colour_plane_id
-    flags.slice_sao_luma_flag = header.slice_sao_luma_flag
-    flags.slice_sao_chroma_flag = header.slice_sao_chroma_flag
-    flags.mvd_l1_zero_flag = header.mvd_l1_zero_flag
-    flags.cabac_init_flag = header.cabac_init_flag
-    flags.slice_temporal_mvp_enabled_flag = header.slice_temporal_mvp_enabled_flag
-    flags.slice_deblocking_filter_disabled_flag = header.slice_deblocking_filter_disabled_flag
-    flags.collocated_from_l0_flag = header.collocated_from_l0_flag
-    flags.slice_loop_filter_across_slices_enabled_flag = (
-        header.slice_loop_filter_across_slices_enabled_flag)
-    parameters.collocated_ref_idx = (hevc_api.NO_REFERENCE if header.collocated_ref_idx is None
-                                     else header.collocated_ref_idx)
-    parameters.num_ref_idx_l0_active_minus1 = header.num_ref_idx_l0_active_minus1
-    parameters.num_ref_idx_l1_active_minus1 = header.num_ref_idx_l1_active_minus1
-    parameters.slice_qp_delta = header.slice_qp_delta
-    parameters.slice_cb_qp_offset = header.slice_cb_qp_offset
-    parameters.slice_cr_qp_offset = header.slice_cr_qp_offset
-    parameters.slice_beta_offset_div2 = header.slice_beta_offset_div2
-    parameters.slice_tc_offset_div2 = header.slice_tc_offset_div2
+    store(parameters.LongSliceFlags.fields,
+          LastSliceOfPic=int(last),
+          dependent_slice_segment_flag=header.dependent_slice_segment_flag,
+          slice_type=header.slice_type,
+          color_plane_id=header.colour_plane_id,
+          slice_sao_luma_flag=header.slice_sao_luma_flag,
+          slice_sao_chroma_flag=header.slice_sao_chroma_flag,
+          mvd_l1_zero_flag=header.mvd_l1_zero_flag,
+          cabac_init_flag=header.cabac_init_flag,
+          slice_temporal_mvp_enabled_flag=header.slice_temporal_mvp_enabled_flag,
+          slice_deblocking_filter_disabled_flag=(
+              header.slice_deblocking_filter_disabled_flag),
+          collocated_from_l0_flag=header.collocated_from_l0_flag,
+          slice_loop_filter_across_slices_enabled_flag=(
+              header.slice_loop_filter_across_slices_enabled_flag))
     table = header.pred_weight_table
     if table is not None:
-        parameters.luma_log2_weight_denom = table.luma_log2_weight_denom
-        parameters.delta_chroma_log2_weight_denom = table.delta_chroma_log2_weight_denom
-        for target, values in (
-            (parameters.delta_luma_weight_l0, table.delta_luma_weight_l0),
-            (parameters.luma_offset_l0, table.luma_offset_l0),
-            (parameters.delta_luma_weight_l1, table.delta_luma_weight_l1),
-            (parameters.luma_offset_l1, table.luma_offset_l1),
+        store(parameters,
+              luma_log2_weight_denom=table.luma_log2_weight_denom,
+              delta_chroma_log2_weight_denom=table.delta_chroma_log2_weight_denom)
+        for target, values, name in (
+            (parameters.delta_luma_weight_l0, table.delta_luma_weight_l0, 'luma weight'),
+            (parameters.luma_offset_l0, table.luma_offset_l0, 'luma offset'),
+            (parameters.delta_luma_weight_l1, table.delta_luma_weight_l1, 'luma weight'),
+            (parameters.luma_offset_l1, table.luma_offset_l1, 'luma offset'),
         ):
-            target[:len(values)] = values
-        for pairs, chroma in (
-            (parameters.delta_chroma_weight_l0, table.delta_chroma_weight_l0),
-            (parameters.ChromaOffsetL0, table.chroma_offset_l0),
-            (parameters.delta_chroma_weight_l1, table.delta_chroma_weight_l1),
-            (parameters.ChromaOffsetL1, table.chroma_offset_l1),
+            store_each(target, values, name)
+        for pairs, chroma, name in (
+            (parameters.delta_chroma_weight_l0, table.delta_chroma_weight_l0,
+             'chroma weight'),
+            (parameters.ChromaOffsetL0, table.chroma_offset_l0, 'chroma offset'),
+            (parameters.delta_chroma_weight_l1, table.delta_chroma_weight_l1,
+             'chroma weight'),
+            (parameters.ChromaOffsetL1, table.chroma_offset_l1, 'chroma offset'),
         ):
+            if len(chroma) > len(pairs):
+                raise DecoderError(
+                    f'{name}s for {len(chroma)} references, and libva describes '
+                    f'{len(pairs)}')
             for index, pair in enumerate(chroma):
-                pairs[index][:] = pair
-    parameters.five_minus_max_num_merge_cand = header.five_minus_max_num_merge_cand
-    parameters.num_entry_point_offsets = header.num_entry_point_offsets
-    parameters.entry_offset_to_subset_array = entry_offset
-    parameters.slice_data_num_emu_prevn_bytes = header.header_escapes
+                store_each(pairs[index], pair, name)
     return parameters
 
 
@@ -391,14 +416,22 @@ class HEVCDecoding(DecodeControl):
             self._parameter_set(parse_nal(data))
 
     def _parameter_set(self, unit: NalUnit) -> None:
+        """Keep a parameter set under its id.
+
+        A set sent again unchanged, as streams do at each key frame, leaves
+        the one held in place, so the slice segments of one picture go on
+        naming the same objects.
+        """
         if unit.nal_unit_type == NAL_SPS:
             sps = parse_sps(unit.rbsp)
-            self._sequences[sps.sps_seq_parameter_set_id] = sps
+            if self._sequences.get(sps.sps_seq_parameter_set_id) != sps:
+                self._sequences[sps.sps_seq_parameter_set_id] = sps
             if not self._described:
                 self._describe(sps)
         elif unit.nal_unit_type == NAL_PPS:
             pps = parse_pps(unit.rbsp)
-            self._pictures[pps.pps_pic_parameter_set_id] = pps
+            if self._pictures.get(pps.pps_pic_parameter_set_id) != pps:
+                self._pictures[pps.pps_pic_parameter_set_id] = pps
 
     def _describe(self, sps: SequenceParameterSet) -> None:
         self.size = sps.size
@@ -429,6 +462,15 @@ class HEVCDecoding(DecodeControl):
             current = self._begin(header, sample)
         if current is None:
             return                              # the picture's first slice never arrived
+        first = current.picture.header
+        if (header.slice_pic_parameter_set_id != first.slice_pic_parameter_set_id
+                or header.sps is not first.sps or header.pps is not first.pps):
+            # 7.4.7.1: every slice segment of a picture names one picture
+            # parameter set, and the surfaces are those of its sequence.
+            raise StreamError(
+                f'the slice segment at coding tree block {header.slice_segment_address} '
+                f'of picture {current.picture.poc} is coded against other parameter '
+                'sets than the picture\'s first')
         current.slices.append((header, unit))
         if not header.dependent_slice_segment_flag:
             current.independent = header
@@ -440,9 +482,13 @@ class HEVCDecoding(DecodeControl):
         # What the buffer outputs here gives up its surface, so it is shown
         # before a surface is chosen for this picture.
         self._show(self._buffer.outputs())
-        surface = None if picture.skipped else self.session.acquire()
-        self._current = _Current(picture, surface, sample)
-        return self._current
+        # The picture is the current one before its surface is chosen, so
+        # that held() names what it predicts from while the session chooses.
+        # Without a surface it is gathered and never submitted.
+        current = self._current = _Current(picture, None, sample)
+        if not picture.skipped:
+            current.surface = self.session.acquire()
+        return current
 
     def _activate(self, header: SliceHeader) -> None:
         """Make sure the surfaces suit the sequence this picture belongs to.
@@ -467,33 +513,39 @@ class HEVCDecoding(DecodeControl):
 
     def _finish(self) -> None:
         """Submit the gathered picture and show what the buffer outputs."""
-        current, self._current = self._current, None
+        current = self._current
         if current is None or current.surface is None:
+            self._current = None
             return
         picture = current.picture
         headers = [header for header, _ in current.slices]
         references = picture.rps.frames
         first = headers[0]
-        batches: list[list[tuple[int, Any]]] = [[
-            (api.VAPictureParameterBufferType,
-             picture_parameters(picture, headers, current.surface)),
-            (api.VAIQMatrixBufferType, iq_matrix(first.sps, first.pps)),
-        ]]
-        entry_offset = 0
-        list0: list[Frame] = []
-        list1: list[Frame] = []
-        for index, (header, unit) in enumerate(current.slices):
-            if not header.dependent_slice_segment_flag:
-                # A dependent slice segment predicts with its slice's lists.
-                list0, list1 = self._buffer.reference_lists(picture, header)
-            batches.append([
-                (api.VASliceParameterBufferType,
-                 slice_parameters(header, list0, list1, references, len(unit.data),
-                                  last=index == len(current.slices) - 1,
-                                  entry_offset=entry_offset)),
-                (api.VASliceDataBufferType, unit.data)])
-            entry_offset += header.num_entry_point_offsets
-        self.session.submit(current.surface, batches, f'picture {picture.poc}')
+        try:
+            batches: list[list[tuple[int, Any]]] = [[
+                (api.VAPictureParameterBufferType,
+                 picture_parameters(picture, headers, current.surface)),
+                (api.VAIQMatrixBufferType, iq_matrix(first.sps, first.pps)),
+            ]]
+            entry_offset = 0
+            list0: list[Frame] = []
+            list1: list[Frame] = []
+            for index, (header, unit) in enumerate(current.slices):
+                if not header.dependent_slice_segment_flag:
+                    # A dependent slice segment predicts with its slice's lists.
+                    list0, list1 = self._buffer.reference_lists(picture, header)
+                batches.append([
+                    (api.VASliceParameterBufferType,
+                     slice_parameters(header, list0, list1, references, len(unit.data),
+                                      last=index == len(current.slices) - 1,
+                                      entry_offset=entry_offset)),
+                    (api.VASliceDataBufferType, unit.data)])
+                entry_offset += header.num_entry_point_offsets
+            self.session.submit(current.surface, batches, f'picture {picture.poc}')
+        finally:
+            # The picture is the current one, and its references held, until
+            # it has been handed over or refused.
+            self._current = None
         self._show(self._buffer.finish(
             picture, surface=current.surface,
             payload=(current.sample.timestamp, current.sample.duration,
@@ -515,7 +567,13 @@ class HEVCDecoding(DecodeControl):
         self._buffer.reset()
 
     def held(self) -> set[int]:
+        """The surfaces in use: the buffer's, the one the picture being
+        gathered is decoded into, and every one its reference picture set
+        names."""
         found = {frame.surface for frame in self._buffer.frames}
-        if self._current is not None and self._current.surface is not None:
-            found.add(self._current.surface)
+        current = self._current
+        if current is not None:
+            found.update(frame.surface for frame in current.picture.rps.frames)
+            if current.surface is not None:
+                found.add(current.surface)
         return found

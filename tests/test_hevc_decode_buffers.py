@@ -31,12 +31,16 @@ from pyopengl_video.vaapi.hevc_decode import (
     profile_for,
     slice_parameters,
 )
+from pyopengl_video.vaapi.hevc_dpb import DecodedPictureBuffer, Frame, ReferencePictureSet
 from pyopengl_video.vaapi.hevc_parse import (
     DEFAULT_8X8_INTER,
     DEFAULT_8X8_INTRA,
+    NAL_BLA_W_LP,
     NAL_CRA,
     NAL_END_OF_SEQUENCE,
     NAL_IDR_W_RADL,
+    NAL_PPS,
+    NAL_SPS,
     NAL_TRAIL_N,
 )
 from tests.hevc_syntax import (
@@ -116,12 +120,13 @@ class TestPictureParameters:
         assert found == [104, 108]
 
     def test_more_references_than_libva_describes_are_refused(self):
-        stream = Stream(ordering=((16, 0, 0),))
-        stream.idr(0)
-        for poc in range(1, 17):
-            stream.decode(poc, poc, before=tuple(range(-1, -poc - 1, -1)))
-        slice_header = stream.header(17, before=tuple(range(-1, -17, -1)))
+        """No parsed set is this large: a buffer holds 16 pictures, the one
+        being decoded among them. The set is made directly."""
+        stream = pyramid()
+        slice_header = stream.header(6, before=(-2,))
         picture = stream.buffer.begin(slice_header)
+        picture.rps = ReferencePictureSet(
+            foll=tuple(Frame(surface=number, poc=number) for number in range(16)))
         with pytest.raises(DecoderError, match='16 reference pictures'):
             picture_parameters(picture, [slice_header], 99)
 
@@ -165,7 +170,7 @@ class TestPictureParameters:
         assert (parameters.bit_depth_luma_minus8, parameters.bit_depth_chroma_minus8) == (2, 2)
 
     def test_the_picture_set_fields(self):
-        _, _, parameters = self.build(pps={
+        _, _, parameters = self.build(diff_cb=2, pps={
             'dependent_slices': 1, 'output_flag_present': 1, 'extra_bits': 2,
             'sign_hiding': 1, 'cabac_init_present': 1, 'refs': (2, 1), 'init_qp': -5,
             'constrained_intra': 1, 'transform_skip': 1, 'cu_qp_delta_depth': 2,
@@ -868,6 +873,124 @@ class TestTheLayer:
             control.decode(sample)
         assert session.formats == []
         assert session.submitted == []
+
+
+class Dropping(DecodedPictureBuffer):
+    """A buffer that hands back a picture predicting from a frame it does not
+    keep, in surface 0."""
+
+    def begin(self, header):
+        picture = super().begin(header)
+        if not header.idr:
+            picture.rps = ReferencePictureSet(st_curr_before=(Frame(surface=0, poc=0),))
+        return picture
+
+
+class TestWhatAPicturePredictsFromIsNeverDecodedInto:
+    """H10: a surface the picture's reference picture set names is in use
+    until the picture is finished, whatever the buffer keeps."""
+
+    written = TestTheLayer.written
+    IDR = TestTheLayer.IDR
+
+    def references(self, submitted):
+        _, batches, _ = submitted
+        return [entry.picture_id for entry in batches[0][0][1].ReferenceFrames
+                if not entry.flags & INVALID]
+
+    def test_a_picture_decoding_restarts_at_takes_no_stand_in_from_what_it_drops(self):
+        """A broken link picture whose set names the picture before it. That
+        picture is not predicted from across the link and leaves the buffer,
+        with no_output_of_prior_pics_flag unshown: it stands in for nothing."""
+        session, control = layer()
+        control.decode(self.written(self.IDR))
+        control.decode(self.written({'kind': 'P', 'poc_lsb': 1, 'rps': coded(before=(-1,))}))
+        control.decode(self.written({'nal_type': NAL_BLA_W_LP, 'kind': 'I', 'no_output': 1,
+                                     'poc_lsb': 2, 'rps': coded(before=(-1,))}))
+        assert len(session.submitted) == 3
+        assert self.references(session.submitted[2]) == []
+        assert control.held() == {session.submitted[2][0]}
+
+    def test_the_surface_chosen_for_a_picture_is_none_its_set_names(self):
+        """The session chooses a surface while the control layer holds the
+        set's, though the buffer here has dropped the frame."""
+        session, control = layer()
+        control._buffer = Dropping()  # noqa: SLF001 - the buffer is what is replaced
+        control.decode(self.written(self.IDR))
+        control.flush()
+        assert control.held() == set()
+        control.decode(self.written({'kind': 'P', 'poc_lsb': 1, 'rps': coded(before=(-1,))}))
+        target = session.submitted[1][0]
+        assert self.references(session.submitted[1]) == [0]
+        assert target != 0
+
+
+class TestOneSetOfParametersAPicture:
+    """D7: the surfaces are those of the sequence the picture's first slice
+    segment names, and every other segment of it names the same sets."""
+
+    IDR = TestTheLayer.IDR
+
+    def test_a_segment_naming_another_picture_parameter_set_is_refused(self):
+        session, control = layer()
+        sps, first, second = sequence(), picture_set(), picture_set(pic_parameter_set_id=1)
+        units = [*parameter_units(), nal(NAL_PPS, pps_bytes(pic_parameter_set_id=1)),
+                 nal(NAL_IDR_W_RADL, slice_rbsp(sps, first, **self.IDR)),
+                 nal(NAL_IDR_W_RADL, slice_rbsp(sps, second, **self.IDR, first=0, address=5))]
+        with pytest.raises(StreamError, match='other parameter sets than the picture'):
+            control.decode(Sample(annexb(*units), 0, 3000, True, 0))
+        assert session.submitted == []
+
+    def test_a_segment_of_a_sequence_of_another_size_is_refused(self):
+        """Its address is inside the larger picture and outside the surfaces."""
+        session, control = layer()
+        small, large = sequence(), sequence(seq_parameter_set_id=1, width=128, height=128)
+        first = picture_set()
+        second = picture_set(pic_parameter_set_id=1, seq_parameter_set_id=1)
+        units = [*parameter_units(),
+                 nal(NAL_SPS, sps_bytes(seq_parameter_set_id=1, width=128, height=128)),
+                 nal(NAL_PPS, pps_bytes(pic_parameter_set_id=1, seq_parameter_set_id=1)),
+                 nal(NAL_IDR_W_RADL, slice_rbsp(small, first, **self.IDR)),
+                 nal(NAL_IDR_W_RADL, slice_rbsp(large, second, **self.IDR, first=0,
+                                                address=40))]
+        with pytest.raises(StreamError, match='other parameter sets than the picture'):
+            control.decode(Sample(annexb(*units), 0, 3000, True, 0))
+        control.flush()
+        (_, batches, _), = session.submitted
+        assert len(batches) == 1 + 1
+        assert session.formats[-1].coded_size == (64, 64)
+
+    def test_a_sequence_sent_again_changed_within_a_picture_is_refused(self):
+        session, control = layer()
+        small, large = sequence(), sequence(width=128, height=128)
+        pps = picture_set()
+        units = [*parameter_units(), nal(NAL_IDR_W_RADL, slice_rbsp(small, pps, **self.IDR)),
+                 nal(NAL_SPS, sps_bytes(width=128, height=128)),
+                 nal(NAL_IDR_W_RADL, slice_rbsp(large, pps, **self.IDR, first=0, address=40))]
+        with pytest.raises(StreamError, match='other parameter sets than the picture'):
+            control.decode(Sample(annexb(*units), 0, 3000, True, 0))
+        assert session.submitted == []
+
+    def test_sets_sent_again_unchanged_within_a_picture_change_nothing(self):
+        session, control = layer()
+        sps, pps = sequence(), picture_set()
+        units = [*parameter_units(), nal(NAL_IDR_W_RADL, slice_rbsp(sps, pps, **self.IDR)),
+                 *parameter_units(),
+                 nal(NAL_IDR_W_RADL, slice_rbsp(sps, pps, **self.IDR, first=0, address=5))]
+        control.decode(Sample(annexb(*units), 0, 3000, True, 0))
+        (_, batches, _), = session.submitted
+        assert len(batches) == 1 + 2
+
+
+def test_a_slice_segment_that_is_all_header_is_refused():
+    """The offset of its slice data is the end of the data handed over."""
+    stream = pyramid()
+    slice_header = stream.header(6, before=(-2,), data=b'')
+    picture = stream.buffer.begin(slice_header)
+    list0, _ = stream.buffer.reference_lists(picture, slice_header)
+    with pytest.raises(DecoderError, match='slice segment header of 6 bytes'):
+        slice_parameters(slice_header, list0, [], picture.rps.frames,
+                         slice_header.header_bytes, last=True)
 
 
 class TestDamagedStreams:

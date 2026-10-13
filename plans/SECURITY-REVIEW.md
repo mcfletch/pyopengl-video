@@ -75,10 +75,10 @@ size rebuilds them. That part is sound.
 | D1 | `playback.py` `Player._new_texture` | Output textures are made at `movie.size`, the container's stated size, and `NV12Converter.draw` sets the viewport to the decoded picture's size. A 120x68 stream in an MP4 stating 640x480 gives a 640x480 texture with the picture in one corner and the other 1.2 MB never written (texture storage is undefined until written); stating 16x16 crops the picture; stating 0x0 raises a bare `GLError`. A stated 8192x8192 allocates 256 MB a texture for a thumbnail-sized stream. Reproduced on NVDEC. | Fixed |
 | D2 | `playback.py` | A stream that changes size at a key frame keeps the output textures of the old size, for the same reason. | Fixed |
 | D3 | `convert.py` fragment shader | `texelFetch(luma, …)` is undefined outside the texture. `visible` is not checked against `texture_size`, and `draw(size=…)` larger than `visible` fetches at negative coordinates. | Fixed |
-| D4 | `h264_parse.py`, `hevc_parse.py` cropping | A cropping window larger than the picture gives a negative visible size, which reaches `session.output` (`visible=(0, 0, -136, -136)`). | Open |
+| D4 | `h264_parse.py`, `hevc_parse.py` cropping | A cropping window larger than the picture gives a negative visible size, which reaches `session.output` (`visible=(0, 0, -136, -136)`). | Fixed |
 | D5 | `nvdec/decoder.py` `Sequence.of` | `display_area` from NVIDIA's parser is not checked to lie inside the coded size before it becomes `visible`. | Open |
 | D6 | `vaapi/av1_decode.py`, `av1_parse.py` | An AV1 frame header may state a frame size larger than the sequence header's maximum. Surfaces are 64x48 and the driver is told 4096x2304. | Open |
-| D7 | `vaapi/hevc_decode.py` | A later slice segment of a picture may name a PPS whose SPS is another size; it is appended to the picture under way. | Open |
+| D7 | `vaapi/hevc_decode.py` | A later slice segment of a picture may name a PPS whose SPS is another size; it is appended to the picture under way. | Fixed |
 | D8 | `vaapi/vp9_decode.py` | A non-key frame may state another profile than its key frame; a 65536-wide key frame is written to a 16-bit field as 0. | Open |
 | D9 | `vaapi/encoder.py` `register` | A caller's texture is exported at the encoder's size without asking OpenGL what size it is: a 16x16 texture is described to libva as 4096x4096. | Fixed |
 | D10 | `mp4.py`, `ivf.py` | The stated width and height are never held to 1 or more; (0, 0) passes `Backend.supports`. | Fixed |
@@ -137,27 +137,55 @@ ctypes field is masked.
 
 | Id | Where | Finding | Status |
 |---|---|---|---|
-| H1 | `h264_parse.py`, `h264_dpb.py` | `num_ref_idx_l0/l1_active_minus1` unbounded: 200 reaches the driver beside a 32-entry list; 2^28 allocates 2 GB from a few dozen bytes; 40 with weighted prediction raises `IndexError`. | Open |
-| H2 | `h264_parse.py` slice header | `first_mb_in_slice`, `cabac_init_idc`, `slice_qp_delta`, `disable_deblocking_filter_idc`, the deblocking offsets, weight denominators, weights and offsets reach the driver unchecked or masked. | Open |
-| H3 | `hevc_parse.py` slice header | `collocated_ref_idx`, `slice_segment_address`, `five_minus_max_num_merge_cand`, QP and deblocking offsets, weights reach the driver unchecked or masked. | Open |
-| H4 | `hevc_parse.py` SPS and PPS | Picture size (0x0 accepted; 65600 asked of the surface and 64 told to the driver), block-size logarithms, PCM sizes, `num_long_term_ref_pics_sps`, `init_qp_minus26`, `diff_cu_qp_delta_depth` unchecked. | Open |
-| H5 | `hevc_parse.py` `_tile_sizes` | A uniform tile grid with more tiles than CTBs gives zero-width tiles, written as `column_width_minus1 = 65535`. | Open |
-| H6 | `h264_dpb.py` `_fill_gaps` | One iteration for each skipped `frame_num`, and `log2_max_frame_num_minus4` is unchecked: a 45-byte stream does not return. | Open |
-| H7 | `h264_decode.py` | `slice_data_bit_offset` is 16 bits: a header of 68024 bits is written as 2488. | Open |
-| H8 | `h264_parse.py` | Weight denominators are used as shift counts: a 41-byte unit allocates 2 GB. | Open |
-| H9 | both | DPB size and reorder depth come from the stream: 100,001 surfaces are asked for. | Open |
-| H10 | `hevc_dpb.py` | For a BLA picture with P slices a stand-in reference is chosen and then dropped from `held()`: the picture is decoded into the surface it predicts from. | Open |
-| H11 | `h264_dpb.py`, `h264_decode.py` | A P or B slice with no reference is submitted with `VA_INVALID_SURFACE` in an active list entry. | Open |
-| H12 | `h264_parse.py` SPS | `pic_width_in_mbs_minus1`, `log2_max_frame_num_minus4` and others are masked on their way to the driver. | Open |
-| H13 | `h264_parse.py`, `h264_dpb.py` | `long_term_frame_idx` unbounded; `_max_long_term_frame_idx` written and never read. | Open |
-| H14 | both | Parameter set ids are unbounded dictionary keys: 20,000 sets are held. | Open |
-| H15 | `h264.py` `ue` | 32 leading zeroes are accepted; the specification's largest code has 31. | Open |
-| H16 | `hevc_parse.py` | An inter-predicted reference picture set can exceed 16 pictures; only the explicit form is checked. | Open |
-| H17 | `h264_decode.py:371`, `vaapi/decoder.py:69` | `AssertionError` from `flush()` before any picture; `as_decoder_error` names three exception types and lets `IndexError`, `MemoryError` and `AssertionError` through. | Open |
-| H18 | `h264.py`, `hevc.py` writers | `qp`, `max_num_ref_frames`, `idr_pic_id`, a zero frame-rate term and `nal_unit` type and temporal id are written unchecked. | Open |
+| H1 | `h264_parse.py`, `h264_dpb.py` | `num_ref_idx_l0/l1_active_minus1` unbounded: 200 reaches the driver beside a 32-entry list; 2^28 allocates 2 GB from a few dozen bytes; 40 with weighted prediction raises `IndexError`. | Fixed |
+| H2 | `h264_parse.py` slice header | `first_mb_in_slice`, `cabac_init_idc`, `slice_qp_delta`, `disable_deblocking_filter_idc`, the deblocking offsets, weight denominators, weights and offsets reach the driver unchecked or masked. | Fixed |
+| H3 | `hevc_parse.py` slice header | `collocated_ref_idx`, `slice_segment_address`, `five_minus_max_num_merge_cand`, QP and deblocking offsets, weights reach the driver unchecked or masked. | Fixed |
+| H4 | `hevc_parse.py` SPS and PPS | Picture size (0x0 accepted; 65600 asked of the surface and 64 told to the driver), block-size logarithms, PCM sizes, `num_long_term_ref_pics_sps`, `init_qp_minus26`, `diff_cu_qp_delta_depth` unchecked. | Fixed |
+| H5 | `hevc_parse.py` `_tile_sizes` | A uniform tile grid with more tiles than CTBs gives zero-width tiles, written as `column_width_minus1 = 65535`. | Fixed |
+| H6 | `h264_dpb.py` `_fill_gaps` | One iteration for each skipped `frame_num`, and `log2_max_frame_num_minus4` is unchecked: a 45-byte stream does not return. | Fixed |
+| H7 | `h264_decode.py` | `slice_data_bit_offset` is 16 bits: a header of 68024 bits is written as 2488. | Fixed |
+| H8 | `h264_parse.py` | Weight denominators are used as shift counts: a 41-byte unit allocates 2 GB. | Fixed |
+| H9 | both | DPB size and reorder depth come from the stream: 100,001 surfaces are asked for. | Fixed |
+| H10 | `hevc_dpb.py` | For a BLA picture with P slices a stand-in reference is chosen and then dropped from `held()`: the picture is decoded into the surface it predicts from. | Fixed |
+| H11 | `h264_dpb.py`, `h264_decode.py` | A P or B slice with no reference is submitted with `VA_INVALID_SURFACE` in an active list entry. | Fixed |
+| H12 | `h264_parse.py` SPS | `pic_width_in_mbs_minus1`, `log2_max_frame_num_minus4` and others are masked on their way to the driver. | Fixed |
+| H13 | `h264_parse.py`, `h264_dpb.py` | `long_term_frame_idx` unbounded; `_max_long_term_frame_idx` written and never read. | Fixed |
+| H14 | both | Parameter set ids are unbounded dictionary keys: 20,000 sets are held. | Fixed |
+| H15 | `h264.py` `ue` | 32 leading zeroes are accepted; the specification's largest code has 31. | Fixed |
+| H16 | `hevc_parse.py` | An inter-predicted reference picture set can exceed 16 pictures; only the explicit form is checked. | Fixed |
+| H17 | `h264_decode.py:371`, `vaapi/decoder.py:69` | `AssertionError` from `flush()` before any picture; `as_decoder_error` names three exception types and lets `IndexError`, `MemoryError` and `AssertionError` through. | Fixed |
+| H18 | `h264.py`, `hevc.py` writers | `qp`, `max_num_ref_frames`, `idr_pic_id`, a zero frame-rate term and `nal_unit` type and temporal id are written unchecked. | Fixed |
 
-The full table of unchecked syntax elements, with the range and the clause for
-each, is in *Appendix A*.
+The ranges every element is now held to, with the clause for each, are in
+*Appendix A*. No bare `ue()` or `se()` remains in either parser:
+`ue_in` and `se_in` state the range with the read.
+
+What the fixes decided, for a maintainer to weigh:
+
+- H11: a P or B slice with no decoded reference at all is refused. A list that
+  is only partly empty has a decoded frame standing in for the missing entry,
+  on the reading that 8.2.4.2 allows "no reference picture" entries in a
+  conforming stream, as just after an IDR whose PPS default count exceeds the
+  frames held. That reading is from memory of the clause and wants checking
+  against the text; refusing instead is a small change in `_decoded`
+  (`h264_dpb.py`).
+- H13: `_max_long_term_frame_idx` is removed and `long_term_frame_idx` is
+  held below `max_num_ref_frames` at the parser. Enforcing the stored maximum
+  would refuse valid streams after a seek past the MMCO 4 that set it.
+- `max_dec_frame_buffering` below `max_num_ref_frames` is refused (E.2.1). An
+  encoder that writes it wrongly no longer plays.
+- Every value the H.264 and HEVC control layers give libva goes through
+  `store` or `store_each`, which read the field back and raise on a
+  difference; a syntax-tree test fails for a builder that assigns a field
+  directly.
+
+Found while fixing, and fixed: an H.264 frame pushed out by a `frame_num` gap
+was shown after the next picture's surface was chosen, so that picture could be
+decoded into a surface still waiting to be shown.
+
+`tests/test_fuzz_h264.py` and `tests/test_fuzz_hevc.py` run 8,000 and 6,000
+seeded mutations in the suite. 100,000 more of each on other seeds found
+nothing.
 
 ### V. VA-API device and session layer
 

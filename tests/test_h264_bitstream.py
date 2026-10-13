@@ -11,8 +11,10 @@ from pyopengl_video.vaapi.h264 import (
     BitWriter,
     GroupOfPictures,
     ParameterSets,
+    Picture,
     annexb,
     emulation_prevented,
+    nal_unit,
 )
 
 
@@ -611,3 +613,86 @@ class TestSliceHeader:
         data, bits = built.packed_parameter_sets()
         assert data == annexb(built.sps(), built.pps())
         assert bits == len(data) * 8
+
+
+# ------------------------------------------- what the writers will not write
+
+
+class TestRefusedArguments:
+    """A writer packs what it is given into the width the syntax has for it,
+    so an argument the syntax cannot state is refused before anything is
+    written, with :class:`ValueError` as for a size."""
+
+    @pytest.mark.parametrize('rate', [(30, 0), (0, 1), (-30, 1), (30, -1), (29.97, 1)])
+    def test_a_frame_rate_that_is_no_rate_is_refused(self, rate):
+        with pytest.raises(ValueError, match='frame rate'):
+            sets(frame_rate=rate)
+
+    @pytest.mark.parametrize('rate', [(2**31, 1), (1, 2**32)])
+    def test_a_frame_rate_past_the_timing_fields_is_refused(self, rate):
+        """The time scale is twice the numerator, in 32 bits."""
+        with pytest.raises(ValueError, match='32-bit'):
+            sets(frame_rate=rate)
+
+    def test_the_fastest_and_slowest_rates_the_fields_hold_are_written(self):
+        fastest = parse_sps(sets(frame_rate=(2**31 - 1, 1)).sps())['vui']
+        assert fastest['time_scale'] == 2**32 - 2
+        slowest = parse_sps(sets(frame_rate=(1, 2**32 - 1)).sps())['vui']
+        assert slowest['num_units_in_tick'] == 2**32 - 1
+
+    @pytest.mark.parametrize('frames', [0, -1, 17, 100])
+    def test_a_buffer_of_no_frames_or_more_than_sixteen_is_refused(self, frames):
+        with pytest.raises(ValueError, match='decoded picture buffer'):
+            sets(max_num_ref_frames=frames)
+
+    def test_a_buffer_of_sixteen_frames_is_written(self):
+        assert parse_sps(sets(max_num_ref_frames=16).sps())['max_num_ref_frames'] == 16
+
+    def test_a_frame_wider_than_any_level_codes_is_refused(self):
+        with pytest.raises(ValueError, match='most any level codes'):
+            sets(width=1000000, height=64)
+
+    def test_a_negative_bitrate_is_refused(self):
+        with pytest.raises(ValueError, match='bitrate'):
+            sets(bitrate=-1)
+
+    @pytest.mark.parametrize('qp', [-300, -1, 52, 200])
+    def test_a_slice_quantiser_off_the_scale_is_refused(self, qp):
+        built = sets()
+        with pytest.raises(ValueError, match='quantiser range'):
+            built.slice_header(pictures()[0], qp=qp)
+
+    @pytest.mark.parametrize('qp', [0, 51])
+    def test_the_ends_of_the_quantiser_scale_are_written(self, qp):
+        built = sets(init_qp=26)
+        header = parse_slice_header(built.slice_header(pictures()[0], qp=qp), built)
+        assert header['slice_qp_delta'] == qp - 26
+
+    @pytest.mark.parametrize('identifier', [-1, 65536, 10**6])
+    def test_an_idr_pic_id_outside_sixteen_bits_is_refused(self, identifier):
+        picture = Picture(True, True, True, 0, 0, identifier, ())
+        with pytest.raises(ValueError, match='idr_pic_id'):
+            sets().slice_header(picture)
+
+    def test_more_references_than_the_buffer_holds_are_refused(self):
+        picture = Picture(False, False, True, 1, 2, 0, tuple(range(40)))
+        with pytest.raises(ValueError, match='predicting from 40 frames'):
+            sets(max_num_ref_frames=4).slice_header(picture)
+
+    @pytest.mark.parametrize(('kind', 'priority', 'named'), [
+        (40, 3, 'nal_unit_type 40'), (-1, 3, 'nal_unit_type -1'),
+        (7, 7, 'nal_ref_idc 7'), (7, -1, 'nal_ref_idc -1')])
+    def test_a_nal_header_field_past_its_bits_is_refused(self, kind, priority, named):
+        """Neither is masked into a unit of another type."""
+        with pytest.raises(ValueError, match=named):
+            nal_unit(b'\x80', kind, priority)
+
+    def test_the_largest_nal_header_fields_are_written(self):
+        assert nal_unit(b'\x80', 31, 3) == b'\x7f\x80'
+
+    @pytest.mark.parametrize('settings', [
+        {'max_num_ref_frames': 17}, {'log2_max_frame_num': -1},
+        {'log2_max_frame_num': 3}, {'log2_max_frame_num': 17}])
+    def test_a_group_structure_no_sequence_declares_is_refused(self, settings):
+        with pytest.raises(ValueError):
+            GroupOfPictures(gop=8, **settings)

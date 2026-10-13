@@ -657,7 +657,7 @@ class TestSliceHeaderSyntax:
             writer.ue(10)
             writer.ue(0)
 
-        with pytest.raises(StreamError, match='slice_type 10'):
+        with pytest.raises(StreamError, match='slice_type is 10'):
             parse_slice_header(slice_unit(write), sequences, pictures)
 
     def test_field_pictures_are_reported(self):
@@ -743,5 +743,5 @@ class TestLimitsTheStreamCannotExceed:
         assert parse_pps(writer.rbsp(), {0: sps}).num_ref_idx_l0_default_active_minus1 == 31
         writer = BitWriter()
         write_pps_head(writer, refs=(32, 0))
-        with pytest.raises(StreamError, match='num_ref_idx_active_minus1'):
+        with pytest.raises(StreamError, match='num_ref_idx_l0_default_active_minus1'):
             parse_pps(writer.rbsp(), {0: sps})

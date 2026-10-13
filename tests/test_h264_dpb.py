@@ -8,7 +8,7 @@ clause it implements.
 """
 import pytest
 
-from pyopengl_video.vaapi.h264_dpb import DecodedPictureBuffer
+from pyopengl_video.vaapi.h264_dpb import SHORT_TERM, DecodedPictureBuffer, Frame
 from pyopengl_video.vaapi.h264_parse import MemoryManagementOperation as Op
 from pyopengl_video.vaapi.h264_parse import StreamError
 from tests.h264_syntax import header, picture_set, restriction_vui, sequence
@@ -370,6 +370,120 @@ class TestFrameNumGaps:
         assert sorted(f.frame_num for f in dpb.reference_frames()) == [4, 5]
 
 
+class Stepwise(DecodedPictureBuffer):
+    """8.2.5.2 as it is written: a frame inferred for every frame_num skipped."""
+
+    def _fill_gaps(self, header):
+        maximum = header.sps.max_frame_num
+        unused = (self._prev_ref_frame_num + 1) % maximum
+        if header.frame_num == self._prev_ref_frame_num:
+            return
+        while unused != header.frame_num:
+            offset = self._prev_frame_num_offset + (
+                maximum if self._prev_frame_num > unused else 0)
+            frame = Frame(surface=None, frame_num=unused, top_field_order_cnt=0,
+                          bottom_field_order_cnt=0, non_existing=True)
+            self._sliding_window(header.sps, unused)
+            frame.reference = SHORT_TERM
+            self._store(frame, header.sps)
+            self._prev_ref_frame_num = self._prev_frame_num = unused
+            self._prev_frame_num_offset = offset
+            unused = (unused + 1) % maximum
+
+
+class Counting(DecodedPictureBuffer):
+    """Counts the frames stored, decoded and inferred."""
+
+    stored = 0
+
+    def _store(self, frame, sps):
+        self.stored += 1
+        super()._store(frame, sps)
+
+
+class TestLongFrameNumGaps:
+    """H6: a gap costs what the sliding window keeps, not its length."""
+
+    def held(self, dpb):
+        return [(frame.frame_num, frame.surface, frame.reference, frame.non_existing)
+                for frame in dpb.frames]
+
+    @pytest.mark.parametrize('refs', [1, 2, 3, 5])
+    @pytest.mark.parametrize('long_term', [0, 1])
+    def test_every_gap_ends_as_stepping_through_it_does(self, refs, long_term):
+        """MaxFrameNum is 16. From each frame_num to each other one, the
+        frames held, what is output and the picture's order count are those
+        of the specification's loop; picture order count type 2 states
+        FrameNumOffset in the count."""
+        sps, pps = sets(refs=refs, gaps=1, poc_type=2)
+        for before in range(16):
+            for after in range(16):
+                found = []
+                for dpb in (DecodedPictureBuffer(), Stepwise()):
+                    shown = decode(dpb, header(sps, pps, kind='I', idr=True,
+                                               long_term_reference_flag=long_term), 100)
+                    for frame_num in range(1, before + 1):
+                        shown += decode(dpb, header(sps, pps, frame_num=frame_num),
+                                        100 + frame_num)
+                    picture = dpb.begin(header(sps, pps, frame_num=after))
+                    shown += names(dpb.outputs())
+                    found.append((picture.poc, picture.frame_num_offset, shown,
+                                  self.held(dpb)))
+                assert found[0] == found[1], (before, after)
+
+    def test_a_gap_of_a_whole_frame_num_range_stores_the_window_alone(self):
+        """MaxFrameNum is 65536, the largest there is, and the gap is all of
+        it but two: four frames are inferred, and the picture is stored."""
+        sps, pps = sets(refs=4, gaps=1, log2_max_frame_num_minus4=12)
+        dpb = Counting()
+        decode(dpb, header(sps, pps, kind='I', idr=True), 0)
+        decode(dpb, header(sps, pps, frame_num=65535, poc_lsb=2), 1)
+        assert dpb.stored == 1 + 4 + 1
+        assert [(frame.frame_num, frame.non_existing)
+                for frame in dpb.reference_frames()] == [
+            (65532, True), (65533, True), (65534, True), (65535, False)]
+
+    def test_frames_from_before_a_long_gap_are_no_longer_references(self):
+        sps, pps = sets(refs=2, gaps=1, log2_max_frame_num_minus4=12)
+        dpb = DecodedPictureBuffer()
+        decode(dpb, header(sps, pps, kind='I', idr=True), 0)
+        decode(dpb, header(sps, pps, frame_num=1, poc_lsb=2), 1)
+        decode(dpb, header(sps, pps, frame_num=40000, poc_lsb=4), 2)
+        assert [frame.frame_num for frame in dpb.reference_frames()] == [39999, 40000]
+
+    def test_what_a_gap_pushes_out_is_there_before_the_picture_is_finished(self):
+        """The frames inferred take the buffer's places, so a frame waiting
+        to be shown leaves when the picture begins, while its surface is
+        still its own."""
+        sps, pps = sets(reorder=2, refs=2, gaps=1)
+        dpb = DecodedPictureBuffer()
+        assert decode(dpb, header(sps, pps, kind='I', idr=True), 0) == []
+        assert decode(dpb, header(sps, pps, frame_num=1, poc_lsb=2), 1) == []
+        picture = dpb.begin(header(sps, pps, frame_num=5, poc_lsb=10))
+        assert names(dpb.outputs()) == [0, 1]
+        assert names(dpb.finish(picture, surface=5)) == []
+
+
+class TestPictureOrderCountRange:
+    """8.2.1: every order count fits 32 signed bits, which is what libva
+    carries one in."""
+
+    def test_a_bottom_field_count_past_the_range_is_refused(self):
+        sps, pps = sets(reorder=0)
+        dpb = DecodedPictureBuffer()
+        decode(dpb, header(sps, pps, kind='I', idr=True), 0)
+        with pytest.raises(StreamError, match='BottomFieldOrderCnt is 2147483649'):
+            dpb.begin(header(sps, pps, frame_num=1, poc_lsb=2,
+                             delta_pic_order_cnt_bottom=2**31 - 1))
+
+    def test_the_ends_of_the_range_are_counts(self):
+        sps, pps = sets(reorder=0)
+        dpb = DecodedPictureBuffer()
+        picture = dpb.begin(header(sps, pps, kind='I', idr=True,
+                                   delta_pic_order_cnt_bottom=2**31 - 1))
+        assert picture.bottom_field_order_cnt == 2**31 - 1
+
+
 # ---------------------------------------------------------- reference lists
 
 
@@ -410,14 +524,45 @@ class TestInitialListsForP:
         l0, _ = dpb.reference_lists(picture, current)
         assert names(l0) == [3, 2, 1, 0]
 
-    def test_a_list_longer_than_the_references_is_padded(self):
+    def test_a_list_longer_than_the_references_ends_in_its_first_frame(self):
+        """8.2.4.2 has "no reference picture" there; a driver is given a surface."""
         sps, pps = sets(reorder=0, refs=4)
         dpb = stream(sps, pps, 1)
         current = header(sps, pps, frame_num=2, poc_lsb=4,
                          num_ref_idx_l0_active_minus1=2)
         picture = dpb.begin(current)
         l0, _ = dpb.reference_lists(picture, current)
-        assert names(l0) == [1, 0, None]
+        assert names(l0) == [1, 0, 1]
+
+    def test_a_frame_inferred_from_a_gap_is_not_predicted_from(self):
+        """Frame 2 was never decoded: the list's first decoded frame, frame
+        1, is in its place, and has a surface."""
+        sps, pps = sets(reorder=0, refs=4, gaps=1)
+        dpb = stream(sps, pps, 1)
+        current = header(sps, pps, frame_num=3, poc_lsb=6,
+                         num_ref_idx_l0_active_minus1=2)
+        picture = dpb.begin(current)
+        l0, _ = dpb.reference_lists(picture, current)
+        assert names(l0) == [1, 1, 0]
+        assert not any(frame.non_existing for frame in l0)
+
+    def test_a_predicted_slice_with_no_decoded_frame_is_refused(self):
+        """H11: a stream that opens on a P slice has nothing to predict
+        from, and no list of surfaces to give a driver."""
+        sps, pps = sets(reorder=0, refs=4)
+        dpb = DecodedPictureBuffer()
+        current = header(sps, pps, frame_num=3, poc_lsb=6)
+        picture = dpb.begin(current)
+        with pytest.raises(StreamError, match='P slice .* no decoded frame to predict'):
+            dpb.reference_lists(picture, current)
+
+    def test_a_bidirectional_slice_with_no_decoded_frame_is_refused(self):
+        sps, pps = sets(reorder=2, refs=4)
+        dpb = DecodedPictureBuffer()
+        current = header(sps, pps, kind='B', frame_num=3, poc_lsb=6)
+        picture = dpb.begin(current)
+        with pytest.raises(StreamError, match='B slice .* no decoded frame to predict'):
+            dpb.reference_lists(picture, current)
 
     def test_a_list_shorter_than_the_references_is_cut(self):
         sps, pps = sets(reorder=0, refs=4)

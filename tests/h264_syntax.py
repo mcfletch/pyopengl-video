@@ -148,9 +148,15 @@ def write_pps_head(writer, *, weighted_pred=0, weighted_bipred=0, refs=(0, 0),
     writer.flag(redundant)
 
 
+#: What stands for the macroblocks of a slice, after its header.
+SLICE_DATA = 0xA5
+
+
 def slice_unit(write, *, nal_ref_idc=2, nal_unit_type=1):
+    """A slice NAL unit: the header `write` writes, then a byte of slice data."""
     writer = BitWriter()
     write(writer)
+    writer.u(SLICE_DATA, 8)
     return parse_nal(nal_unit(writer.rbsp(), nal_unit_type, nal_ref_idc))
 
 

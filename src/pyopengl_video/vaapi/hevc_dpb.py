@@ -6,7 +6,8 @@ does that for one layer:
 
 - picture order counts (8.3.1)
 - the reference picture set of each picture, and the marking it implies (8.3.2)
-- a stand-in for a reference the buffer does not hold
+- a stand-in for a reference the buffer does not hold, chosen from the frames
+  that stay in the buffer while the picture is decoded
 - which pictures are not decoded: random access skipped leading pictures after
   the picture decoding started at, and whatever precedes that picture (8.1.3)
 - reference picture lists 0 and 1, with their modifications (8.3.4)
@@ -31,12 +32,16 @@ import dataclasses
 import logging
 from typing import Any
 
-from pyopengl_video.vaapi.h264 import StreamError
+from pyopengl_video.vaapi.h264 import StreamError, ranged
 from pyopengl_video.vaapi.hevc_parse import SLICE_B, SLICE_I, SliceHeader
 
 log = logging.getLogger(__name__)
 
 __all__ = ['DecodedPictureBuffer', 'Frame', 'Picture', 'ReferencePictureSet']
+
+#: The range 8.3.1 holds PicOrderCntVal to, which is also libva's field for it.
+ORDER_COUNT_LEAST = -(1 << 31)
+ORDER_COUNT_MOST = (1 << 31) - 1
 
 #: The reference markings a frame can carry (8.3.2).
 SHORT_TERM = 'short'
@@ -188,10 +193,13 @@ class DecodedPictureBuffer:
         if header.irap:
             self._skip_rasl = no_rasl_output
         if no_rasl_output:
-            for frame in self.frames:
-                frame.reference = None
+            # Decoding restarts here and nothing held is predicted from again,
+            # so the buffer is emptied before the reference picture set is
+            # derived: a frame on its way out stands in for nothing.
+            self._restart(header)
         rps = self._reference_picture_set(header, poc)
-        self._make_room(header, no_rasl_output)
+        if not no_rasl_output:
+            self._make_room(header)
         self._starting = False
         return Picture(header, poc=poc, no_rasl_output=no_rasl_output,
                        output=bool(header.pic_output_flag), rps=rps)
@@ -240,7 +248,7 @@ class DecodedPictureBuffer:
             msb = self._prev_msb - maximum
         else:
             msb = self._prev_msb
-        return msb + lsb
+        return ranged(msb + lsb, ORDER_COUNT_LEAST, ORDER_COUNT_MOST, 'PicOrderCntVal')
 
     # ------------------------------------------------- reference picture set
 
@@ -318,7 +326,8 @@ class DecodedPictureBuffer:
         The picture is decoded from the nearest one there is, which shows
         something close to it; with nothing held there is nothing to stand in.
         A frame that was only waiting to be shown becomes a reference, so it
-        is kept while the picture is decoded from it.
+        stays in :attr:`frames`, and its surface stays the buffer's, while the
+        picture is decoded from it.
         """
         held = [frame for frame in self.frames if frame.reference] or self.frames
         if not held:
@@ -331,16 +340,18 @@ class DecodedPictureBuffer:
 
     # ------------------------------------------------------------- output
 
-    def _make_room(self, header: SliceHeader, no_rasl_output: bool) -> None:
+    def _restart(self, header: SliceHeader) -> None:
+        """Empty the buffer for a picture decoding restarts at (C.5.2.2).
+
+        The frames still waiting are shown first unless the picture says they
+        are not to be.
+        """
+        while not header.no_output_of_prior_pics_flag and self._bump():
+            pass
+        self.frames = []
+
+    def _make_room(self, header: SliceHeader) -> None:
         """Remove and output frames before the current picture is decoded (C.5.2.2)."""
-        if no_rasl_output:
-            # Decoding restarts here, and nothing held is predicted from again.
-            # The frames still waiting are shown first unless the picture says
-            # they are not to be.
-            while not header.no_output_of_prior_pics_flag and self._bump():
-                pass
-            self.frames = []
-            return
         sps = header.sps
         self.frames = [frame for frame in self.frames
                        if frame.reference or frame.needed_for_output]

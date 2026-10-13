@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import dataclasses
 
+from pyopengl_video.backend import VideoError
+
 #: Bytes per macroblock edge. Every coded dimension is a multiple of this, and a
 #: frame that is not is coded larger and cropped back in the SPS.
 MACROBLOCK = 16
@@ -83,6 +85,42 @@ LEVELS: tuple[tuple[int, int, int, int], ...] = (
 
 #: What table A-2 multiplies the level's MaxBR by for High profile.
 HIGH_PROFILE_BITRATE_FACTOR = 1.25
+
+#: The most macroblocks either side of a frame has at the highest level:
+#: Sqrt(MaxFS * 8), rounded down (A.3.1).
+MAX_SIDE_MBS = 1055
+
+#: No decoded picture buffer holds more frames than this (A.3.1), which is
+#: also the most entries a frame's reference list has (7.4.3).
+MAX_DPB_FRAMES = 16
+
+#: The quantiser range of 8-bit video (7.4.2.2).
+MAX_QP = 51
+
+#: The largest value a 32-bit field of the timing information holds.
+MAX_TIMING_TERM = (1 << 32) - 1
+
+
+def checked_frame_rate(frame_rate: tuple[int, int], ticks_per_frame: int = 1,
+                       ) -> tuple[int, int]:
+    """`frame_rate` as ``(numerator, denominator)``, where a header can state it.
+
+    ticks_per_frame -- how many of the stream's clock ticks one frame is,
+        which multiplies the numerator in the time scale
+
+    Raises :class:`ValueError` unless both terms are whole numbers above zero
+    and the time scale and tick each fit the 32 bits the syntax gives them.
+    """
+    numerator, denominator = int(frame_rate[0]), int(frame_rate[1])
+    if (numerator, denominator) != tuple(frame_rate) or numerator < 1 or denominator < 1:
+        raise ValueError(
+            f'a frame rate of {frame_rate[0]}/{frame_rate[1]}: both terms are whole '
+            'numbers above zero')
+    if numerator * ticks_per_frame > MAX_TIMING_TERM or denominator > MAX_TIMING_TERM:
+        raise ValueError(
+            f'a frame rate of {numerator}/{denominator} does not fit the 32-bit '
+            'time scale and tick a header states it in')
+    return numerator, denominator
 
 
 class BitWriter:
@@ -158,14 +196,38 @@ class BitWriter:
         )
 
 
-class StreamError(ValueError):
-    """A bitstream breaks the H.264 syntax, or uses a part of it not decoded here."""
+class StreamError(VideoError, ValueError):
+    """A bitstream breaks the H.264 syntax, or uses a part of it not decoded here.
+
+    A :class:`~pyopengl_video.backend.VideoError`, as every error this
+    package raises is, and a :class:`ValueError`, which is what the bytes
+    handed over are.
+    """
 
 
 #: The longest run of leading zeroes an exponential-Golomb code may have. The
-#: specification's ``ue(v)`` values fit in 32 bits, so a longer prefix is data
-#: that is not H.264.
-MAX_EXP_GOLOMB_ZEROES = 32
+#: largest ``ue(v)`` code number is 2**32 - 2 (9.1), which has this many, so a
+#: longer prefix is data that is not H.264.
+MAX_EXP_GOLOMB_ZEROES = 31
+
+
+#: The largest ``ue(v)`` code number (9.1), which is the range of a syntax
+#: element the specification bounds no further.
+UE_MOST = (1 << 32) - 2
+
+#: The largest magnitude of an ``se(v)`` value (9.1.1), which is what the
+#: specification holds a picture order count offset to.
+SE_MOST = (1 << 31) - 1
+
+
+def ranged(value: int, low: int, high: int, name: str) -> int:
+    """`value`, where it is from `low` to `high`; :class:`StreamError` otherwise.
+
+    name -- the syntax element or derived variable, for the message
+    """
+    if not low <= value <= high:
+        raise StreamError(f'{name} is {value}, outside {low} to {high}')
+    return value
 
 
 class BitReader:
@@ -229,6 +291,22 @@ class BitReader:
         magnitude = (code + 1) >> 1
         return magnitude if code & 1 else -magnitude
 
+    def ue_in(self, low: int, high: int, name: str) -> int:
+        """A ``ue(v)`` syntax element whose value is from `low` to `high`.
+
+        name -- the element, for the :class:`StreamError` a value outside
+            the range raises
+        """
+        return ranged(self.ue(), low, high, name)
+
+    def se_in(self, low: int, high: int, name: str) -> int:
+        """An ``se(v)`` syntax element whose value is from `low` to `high`.
+
+        name -- the element, for the :class:`StreamError` a value outside
+            the range raises
+        """
+        return ranged(self.se(), low, high, name)
+
     def more_rbsp_data(self) -> bool:
         """Whether syntax remains before the stop bit -- ``more_rbsp_data()``."""
         return self.position < self._last_one
@@ -271,9 +349,14 @@ def nal_unit(payload: bytes, nal_unit_type: int, nal_ref_idc: int = 3) -> bytes:
 
     nal_ref_idc says how much of a reference the unit is; parameter sets and
     reference pictures use 3, and a picture nothing predicts from uses 0.
+    Raises :class:`ValueError` for a type outside 0 to 31 or a nal_ref_idc
+    outside 0 to 3, which the header byte has no room for.
     """
-    return emulation_prevented(
-        bytes([(nal_ref_idc & 3) << 5 | (nal_unit_type & 0x1F)]) + payload)
+    if not 0 <= nal_unit_type <= 31:
+        raise ValueError(f'nal_unit_type {nal_unit_type} is outside 0 to 31')
+    if not 0 <= nal_ref_idc <= 3:
+        raise ValueError(f'nal_ref_idc {nal_ref_idc} is outside 0 to 3')
+    return emulation_prevented(bytes([nal_ref_idc << 5 | nal_unit_type]) + payload)
 
 
 def annexb(*units: bytes) -> bytes:
@@ -311,14 +394,20 @@ class ParameterSets:
     :attr:`height_in_mbs`, and the field widths the slice headers use.
 
     width/height -- the picture size a caller asked for, in luma samples; both
-        even, because chroma is subsampled by two in each direction
-    frame_rate -- as an exact ``(numerator, denominator)`` ratio
-    max_num_ref_frames -- how many pictures the decoded picture buffer holds
-    init_qp -- the quantiser the picture parameter set starts from
+        even, because chroma is subsampled by two in each direction, and
+        neither more than 16880, the widest frame of any level
+    frame_rate -- as an exact ``(numerator, denominator)`` ratio, both terms
+        above zero
+    max_num_ref_frames -- how many pictures the decoded picture buffer holds,
+        1 to 16
+    init_qp -- the quantiser the picture parameter set starts from, 0 to 51
     bitrate -- bits per second the stream is aiming at, which the level must
         cover; zero leaves the bitrate out of the level
     transform_8x8 -- whether the encoder may use the 8x8 transform, which High
         profile allows and the picture parameter set must declare
+
+    :class:`ValueError` is raised here for anything the headers cannot
+    state, so that none is written with a value that reads back as another.
     """
 
     def __init__(self, width: int, height: int, frame_rate: tuple[int, int],
@@ -330,11 +419,22 @@ class ParameterSets:
             raise ValueError(
                 f'{width}x{height} has an odd dimension, and 4:2:0 chroma is '
                 'subsampled by two in each direction')
-        if not 0 <= init_qp <= 51:
+        if max(width, height) > MAX_SIDE_MBS * MACROBLOCK:
+            raise ValueError(
+                f'{width}x{height} is wider or taller than {MAX_SIDE_MBS * MACROBLOCK} '
+                'samples, the most any level codes')
+        if not 0 <= init_qp <= MAX_QP:
             raise ValueError(f'{init_qp} is outside the H.264 quantiser range 0..51')
+        if not 1 <= max_num_ref_frames <= MAX_DPB_FRAMES:
+            raise ValueError(
+                f'a decoded picture buffer of {max_num_ref_frames} frames; 1 to '
+                f'{MAX_DPB_FRAMES} are possible')
+        if bitrate < 0:
+            raise ValueError(f'a bitrate of {bitrate} bits per second')
         self.width = int(width)
         self.height = int(height)
-        self.frame_rate = (int(frame_rate[0]), int(frame_rate[1]))
+        # The tick is a field period, so the time scale counts twice the frames.
+        self.frame_rate = checked_frame_rate(frame_rate, ticks_per_frame=2)
         self.max_num_ref_frames = int(max_num_ref_frames)
         self.init_qp = int(init_qp)
         self.bitrate = int(bitrate)
@@ -414,7 +514,6 @@ class ParameterSets:
         writer.u(MATRIX_BT709, 8)
         writer.flag(0)                          # chroma_loc_info_present
         writer.flag(1)                          # timing_info_present
-        # The tick is a field period, so the time scale counts twice the frames.
         writer.u(self.frame_rate[1], 32)        # num_units_in_tick
         writer.u(self.frame_rate[0] * 2, 32)    # time_scale
         writer.flag(1)                          # fixed_frame_rate_flag
@@ -472,14 +571,26 @@ class ParameterSets:
         it is what the driver needs in order to carry on writing from the right
         bit.
 
-        qp -- the quantiser this picture is coded at, when it differs from the
-            one the picture parameter set starts from
+        qp -- the quantiser this picture is coded at, 0 to 51, when it differs
+            from the one the picture parameter set starts from
+
+        Raises :class:`ValueError` for a quantiser, an idr_pic_id or a number
+        of references the header cannot state.
         """
         return self.packed_slice_header(picture, qp)[0]
 
     def packed_slice_header(self, picture: Picture,
                             qp: int | None = None) -> tuple[bytes, int]:
         """The slice header as bytes, and how many bits of it are syntax."""
+        slice_qp = self.init_qp if qp is None else int(qp)
+        if not 0 <= slice_qp <= MAX_QP:
+            raise ValueError(f'{qp} is outside the H.264 quantiser range 0..51')
+        if not 0 <= picture.idr_pic_id <= 0xFFFF:
+            raise ValueError(f'idr_pic_id {picture.idr_pic_id} is outside 0 to 65535')
+        if len(picture.references) > self.max_num_ref_frames:
+            raise ValueError(
+                f'a picture predicting from {len(picture.references)} frames in a '
+                f'decoded picture buffer of {self.max_num_ref_frames}')
         writer = BitWriter()
         writer.ue(0)                            # first_mb_in_slice
         writer.ue(SLICE_TYPE_I + 5 if picture.intra else SLICE_TYPE_P + 5)
@@ -502,7 +613,7 @@ class ParameterSets:
                 writer.flag(0)                  # adaptive_ref_pic_marking_mode
         if not picture.intra:
             writer.ue(0)                        # cabac_init_idc
-        writer.se((self.init_qp if qp is None else int(qp)) - self.init_qp)
+        writer.se(slice_qp - self.init_qp)      # slice_qp_delta
         writer.ue(0)                            # disable_deblocking_filter_idc
         writer.se(0)                            # slice_alpha_c0_offset_div2
         writer.se(0)                            # slice_beta_offset_div2
@@ -562,9 +673,10 @@ class GroupOfPictures:
 
     gop -- frames between IDR pictures; one makes every picture an IDR
     max_num_ref_frames -- how many pictures the decoded picture buffer holds,
-        which the sequence parameter set must declare as the same number
-    log2_max_frame_num -- the width of the frame_num field, which is where it
-        wraps back to zero
+        1 to 16, which the sequence parameter set must declare as the same
+        number
+    log2_max_frame_num -- the width of the frame_num field, 4 to 16 bits,
+        which is where it wraps back to zero
     """
 
     def __init__(self, gop: int, max_num_ref_frames: int = 1,
@@ -575,6 +687,13 @@ class GroupOfPictures:
             raise ValueError(
                 f'a decoded picture buffer of {max_num_ref_frames} leaves a '
                 'predicted picture nothing to predict from')
+        if max_num_ref_frames > MAX_DPB_FRAMES:
+            raise ValueError(
+                f'a decoded picture buffer of {max_num_ref_frames} frames; '
+                f'{MAX_DPB_FRAMES} is the most')
+        if not 4 <= log2_max_frame_num <= 16:
+            raise ValueError(
+                f'a frame_num field of {log2_max_frame_num} bits; 4 to 16 are possible')
         self.gop = int(gop)
         self.max_num_ref_frames = int(max_num_ref_frames)
         self.max_frame_num = 1 << int(log2_max_frame_num)

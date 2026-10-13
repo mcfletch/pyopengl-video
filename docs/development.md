@@ -397,6 +397,20 @@ the OpenGL textures and the calls, and are the same for every codec. A layer
 holds no driver, so its rules are tested with a stand-in session
 (`tests/test_vaapi_decode_session.py`, and each codec's own no-driver tests).
 
+A driver indexes its own arrays with what it is handed and checks little of
+it, and ctypes stores an integer wider than its field as its low bits. Two
+rules keep a stream's value from reaching a driver as another number:
+
+- A parser reads each `ue(v)` and `se(v)` element with `BitReader.ue_in` or
+  `se_in` (`vaapi/h264.py`), which take the element's range and name and raise
+  `StreamError` outside it. The range is the specification's, with the clause
+  beside it where it is not plain, and a bound the specification derives
+  (the macroblocks of a picture, the active reference count, the tile grid)
+  is checked with `ranged` against the derived value.
+- A control layer assigns a structure's fields with `store`, and an array's
+  elements with `store_each` (`vaapi/h264_decode.py`). Each reads back what it
+  assigned and raises `DecoderError` where that is not the value given.
+
 A codec is switched on by one `Support` entry in `DECODERS` or `ENCODERS` in
 `vaapi/codecs.py`, naming the libva profiles that carry it and the layer's
 class. Discovery, `open_decoder`, `open_encoder` and the players follow from
@@ -448,6 +462,33 @@ These tests need no driver:
   wrote into the MP4 of the same stream.
 - `tests/test_vaapi_decode_buffers.py` builds libva's picture, matrix and
   slice buffers from known headers.
+- `tests/test_h264_ranges.py` and `tests/test_hevc_ranges.py` write a
+  parameter set or a slice header with one element outside its range, and
+  the parser names that element in a `StreamError`. The ranges are those of
+  Appendix A of `plans/SECURITY-REVIEW.md`.
+- `tests/test_fuzz_h264.py` and `tests/test_fuzz_hevc.py` run some thousands
+  of mutated fixtures, from a fixed seed, through the parser and the control
+  layer to a session that checks each buffer it is handed
+  (`tests/h26x_fuzz.py`). A case fails for an exception that is not a
+  `StreamError` or a `DecoderError`, for taking a second, for a parsed element
+  or a buffer field outside its range, for a reference list entry with no
+  surface, and for a picture decoded into a surface it predicts from.
+- `tests/test_h26x_fields.py` runs every H.264 and HEVC fixture through its
+  control layer and compares each field of each buffer with the syntax
+  element parsed.
+- `tests/test_av1_hostile.py` and `tests/test_vp9_hostile.py` write a header
+  with one value outside what its specification allows: a tile grid past 64
+  columns, a frame larger than its sequence, film grain points out of order, a
+  reference slot that holds no frame, a tile that runs past its frame. The
+  parser refuses each with a `StreamError`, and the control layer submits
+  nothing. The writers are in `tests/av1_syntax.py` and `tests/vp9_syntax.py`.
+- `tests/test_fuzz_av1.py` and `tests/test_fuzz_vp9.py` are the same gate as
+  the H.264 and HEVC ones, over the IVF fixtures (`tests/ivf_fuzz.py`). The
+  control layer fills its buffers through `ivf_fuzz.recorded`, which reads
+  every store back, so a case also fails for a value that does not fit the
+  field it was stored in. `TestEveryStoreReadsBack` in
+  `tests/test_av1_decode_buffers.py` and `tests/test_vp9_reference_slots.py`
+  runs every AV1 and VP9 fixture, whole, through the same check.
 - `tests/test_playback.py` drives the player with a fake decoder, converter
   and texture factory, so seeking and decoding ahead run without GL.
 

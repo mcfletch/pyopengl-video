@@ -214,10 +214,10 @@ def write_vui(writer, vui, sub_layers_minus1=0):
 def sps_bytes(*, width=64, height=64, conformance_window=None, bit_depth=0,
               bit_depth_chroma=None, chroma_format_idc=1, profile_idc=1, level_idc=93,
               log2_max_poc_lsb_minus4=4, sub_layers_minus1=0, sub_layers=(),
-              ordering=((4, 2, 0),), min_cb_minus3=0, diff_cb=1, scaling=None,
+              ordering=((5, 2, 0),), min_cb_minus3=0, diff_cb=1, scaling=None,
               amp=0, sao=0, pcm=None, st_rps=(), long_term=None, temporal_mvp=0,
               strong_smoothing=0, vui=None, range_extension=None,
-              extension_flags=None, seq_parameter_set_id=0):
+              extension_flags=None, seq_parameter_set_id=0, transform=(0, 2, 1, 2)):
     """An SPS in the order of 7.3.2.2, with the variations under test.
 
     scaling -- ``'default'`` enables the lists and codes none; otherwise the
@@ -225,6 +225,8 @@ def sps_bytes(*, width=64, height=64, conformance_window=None, bit_depth=0,
     pcm -- (luma depth less one, chroma depth less one, minimum block size
         less three, size range, loop filter disabled)
     long_term -- ``(poc lsb, used)`` for each long-term picture a slice may name
+    transform -- the smallest transform block's size less two, the range of
+        sizes above it, and the hierarchy depths for inter and intra blocks
     range_extension -- the nine flags of sps_range_extension()
     extension_flags -- the multilayer, 3D and screen content flags
     """
@@ -248,10 +250,8 @@ def sps_bytes(*, width=64, height=64, conformance_window=None, bit_depth=0,
     write_ordering(writer, ordering, sub_layers_minus1)
     writer.ue(min_cb_minus3)
     writer.ue(diff_cb)
-    writer.ue(0)                                # log2_min_luma_transform_block_size_minus2
-    writer.ue(2)                                # log2_diff_max_min_luma_transform_block_size
-    writer.ue(1)                                # max_transform_hierarchy_depth_inter
-    writer.ue(2)                                # max_transform_hierarchy_depth_intra
+    for value in transform:
+        writer.ue(value)
     writer.flag(scaling is not None)
     if scaling is not None:
         writer.flag(scaling != 'default')
@@ -449,8 +449,9 @@ def slice_rbsp(sps, pps, *, nal_type=NAL_TRAIL_R, first=1, no_output=0, dependen
                 coded = BitWriter()
                 write_st_ref_pic_set(coded, len(sets), rps or {}, in_slice=True)
                 write_st_ref_pic_set(writer, len(sets), rps or {}, in_slice=True)
-                total = _st_ref_pic_set(BitReader(coded.rbsp()), len(sets), list(sets),
-                                        in_slice=True).used
+                total = _st_ref_pic_set(
+                    BitReader(coded.rbsp()), len(sets), list(sets), in_slice=True,
+                    most=sps.sps_max_dec_pic_buffering_minus1[-1]).used
             if sps.long_term_ref_pics_present_flag:
                 from_sps = (long_term or {}).get('sps', ())
                 pictures = (long_term or {}).get('pics', ())

@@ -321,7 +321,7 @@ error naming the feature.
 | H.264 | Constrained Baseline, Main and High at 8 bits. Several slices a picture, CAVLC and CABAC, B-frames and pyramids, weighted prediction, long-term references, scaling matrices. Interlaced coding on the NVDEC backends. | High 10, 4:2:2 and 4:4:4 profiles; interlaced coding and slice groups on `vaapi` |
 | HEVC | Main at 8 bits and Main 10. Several slices with wavefront entry points, tiles, weighted prediction, coded and default scaling lists, long-term references, temporal sub-layers, open groups (CRA with RASL pictures). | 4:2:2, 4:4:4 and monochrome, 12 bits, luma and chroma of different depths, the range, multilayer, 3D and screen-content extensions |
 | AV1 | Main profile at 8 and 10 bits, and monochrome. Hidden and alt-ref frames, `show_existing_frame`, intra-only and switch frames, tiles, segmentation, quantiser matrices, loop restoration, global motion, super-resolution, film grain. | High and Professional profiles, a frame size that changes between key frames, layers above the base, tile list OBUs |
-| VP9 | Profile 0, and profile 2 at 10 bits. Superframes, hidden alt-ref frames, `show_existing_frame`, tile columns and rows, segmentation, lossless. | profiles 1 and 3, 12 bits, a frame whose size or depth differs from its key frame's |
+| VP9 | Profile 0, and profile 2 at 10 bits. Superframes, hidden alt-ref frames, `show_existing_frame`, tile columns and rows, segmentation, lossless. | profiles 1 and 3, 12 bits, a frame whose size, depth or profile differs from its key frame's |
 
 Every backend decodes all four codecs, where the GPU has the decoder. On the
 NVDEC backends NVIDIA's parser reads the stream, so the features in the table
@@ -386,6 +386,23 @@ A file that is not what a reader reads raises `MP4Error` or `IVFError`. Both
 are `ContainerError`s, and a `ContainerError` is a `VideoError` and a
 `ValueError`. `Movie.open` raises `ContainerError` itself for a container it
 names and does not read. A sample index outside a track is an `IndexError`.
+
+A coded stream's syntax is whatever its writer chose, as a file's lengths
+are. The H.264 and HEVC parsers hold every element to the range its
+specification gives it, and one outside it raises `StreamError` naming the
+element, its value and the range: `max_num_ref_frames is 100000, outside 0 to
+16`. From a VA-API decoder that is the cause of a `DecoderError`, and the
+picture is not submitted. `StreamError` is a `VideoError` and a `ValueError`.
+
+The AV1 and VP9 parsers do the same for what their headers state: a frame
+larger than its sequence header allows, more than 64 tile columns or rows, a
+tile that runs past its frame, film grain points out of their order, a
+reference slot that holds no frame. An AV1 sequence header that differs from
+the one before starts a new sequence, which begins at a key frame that is
+shown; any other frame after it is a `StreamError` while a frame of the
+sequence before is held as a reference. A VP9 frame that states
+another profile than its key frame's is refused, and so is one of 65536
+samples a side: VA-API is told each dimension in 16 bits.
 
 ## Performance
 

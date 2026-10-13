@@ -14,6 +14,14 @@ the size of the decoded picture buffer, are properties of the parsed sets.
 Every NAL unit type a progressive High-profile stream uses is read in full.
 Interlaced syntax (field pictures, MBAFF) and slice groups are parsed and
 reported, and :mod:`pyopengl_video.vaapi.decoder` refuses them.
+
+A stream's values are whatever its writer chose, and the structures a driver
+reads have narrower fields than the syntax. Every ``ue(v)`` and ``se(v)``
+element is therefore read with its range, the one clause 7.4 or annex E gives
+it, and :class:`StreamError` names the element, its value and the range for
+one outside it. Where the specification bounds an element by something
+derived -- the macroblocks of the picture, the size of the decoded picture
+buffer, the active reference count -- the check is against that.
 """
 from __future__ import annotations
 
@@ -23,7 +31,16 @@ from math import gcd
 from typing import Any
 
 from pyopengl_video.colour import Colour
-from pyopengl_video.vaapi.h264 import BitReader, StreamError, rbsp_of
+from pyopengl_video.vaapi.h264 import (
+    MAX_DPB_FRAMES,
+    MAX_SIDE_MBS,
+    SE_MOST,
+    UE_MOST,
+    BitReader,
+    StreamError,
+    ranged,
+    rbsp_of,
+)
 
 __all__ = [
     'DEFAULT_4X4_INTER', 'DEFAULT_4X4_INTRA', 'DEFAULT_8X8_INTER',
@@ -75,8 +92,18 @@ MAX_DPB_MBS = {
     42: 34816, 50: 110400, 51: 184320, 52: 184320, 60: 696320, 61: 696320,
     62: 696320,
 }
-#: No decoded picture buffer holds more frames than this (A.3.1).
-MAX_DPB_FRAMES = 16
+#: MaxFS of the highest level (table A-1): the most macroblocks a frame has.
+MAX_FRAME_MBS = 139264
+
+#: The longest slice header, NAL header byte included: libva carries the
+#: length as ``slice_data_bit_offset``, which is 16 bits wide.
+MAX_HEADER_BITS = 0xFFFF
+
+#: The most memory management control operations one slice header carries.
+#: Operations 1 and 3 each take one of at most 32 short-term reference fields,
+#: operation 2 one of at most 32 long-term ones, and 4 and 6 may each appear
+#: once beside them (7.4.3.3).
+MAX_MARKING_OPERATIONS = 66
 
 # ------------------------------------------------------------ scaling lists
 
@@ -255,12 +282,7 @@ class SequenceParameterSet:
         which depend on the chroma subsampling and on whether the frame is
         coded as fields.
         """
-        if self.chroma_array_type == 0:
-            unit_x, unit_y = 1, 2 - self.frame_mbs_only_flag
-        else:
-            sub_width = 1 if self.chroma_format_idc == 3 else 2
-            sub_height = 2 if self.chroma_format_idc == 1 else 1
-            unit_x, unit_y = sub_width, sub_height * (2 - self.frame_mbs_only_flag)
+        unit_x, unit_y = _crop_units(self.chroma_array_type, self.frame_mbs_only_flag)
         left, right, top, bottom = self.frame_crop
         width, height = self.coded_size
         return (unit_x * left, unit_y * top,
@@ -349,13 +371,24 @@ class PictureParameterSet:
     second_chroma_qp_index_offset: int
 
 
+def _crop_units(chroma_array_type: int, frame_mbs_only_flag: int) -> tuple[int, int]:
+    """CropUnitX and CropUnitY (7.4.2.1.1): the luma samples one unit of a
+    frame cropping offset is, across and down."""
+    fields = 2 - frame_mbs_only_flag
+    if chroma_array_type == 0:
+        return 1, fields
+    sub_width = 1 if chroma_array_type == 3 else 2
+    sub_height = 2 if chroma_array_type == 1 else 1
+    return sub_width, sub_height * fields
+
+
 def _scaling_list(reader: BitReader, size: int) -> ScalingList:
     """scaling_list() (7.3.2.1.1.1), in zig-zag order."""
     values = []
     last = next_scale = 8
     for index in range(size):
         if next_scale:
-            next_scale = (last + reader.se() + 256) % 256
+            next_scale = (last + reader.se_in(-128, 127, 'delta_scale') + 256) % 256
             if index == 0 and next_scale == 0:
                 return 'default'
         value = last if next_scale == 0 else next_scale
@@ -373,18 +406,22 @@ def _scaling_lists(reader: BitReader, count: int) -> tuple[ScalingList, ...]:
 
 def _skip_hrd(reader: BitReader) -> None:
     """hrd_parameters() (E.1.2), read past: playback needs none of it."""
-    count = reader.ue() + 1
+    count = reader.ue_in(0, 31, 'cpb_cnt_minus1') + 1
     reader.u(4)                                 # bit_rate_scale
     reader.u(4)                                 # cpb_size_scale
     for _ in range(count):
-        reader.ue()                             # bit_rate_value_minus1
-        reader.ue()                             # cpb_size_value_minus1
+        reader.ue_in(0, UE_MOST, 'bit_rate_value_minus1')
+        reader.ue_in(0, UE_MOST, 'cpb_size_value_minus1')
         reader.flag()                           # cbr_flag
     reader.u(20)                                # four delay and offset lengths
 
 
-def _parse_vui(reader: BitReader) -> VideoUsability:
-    """vui_parameters() (E.1.1)."""
+def _parse_vui(reader: BitReader, max_num_ref_frames: int) -> VideoUsability:
+    """vui_parameters() (E.1.1), with the ranges of E.2.1.
+
+    max_num_ref_frames -- the sequence's, which max_dec_frame_buffering is
+        no less than
+    """
     found: dict[str, Any] = {}
     if reader.flag():                           # aspect_ratio_info_present_flag
         idc = reader.u(8)
@@ -403,8 +440,10 @@ def _parse_vui(reader: BitReader) -> VideoUsability:
             found['transfer_characteristics'] = reader.u(8)
             found['matrix_coefficients'] = reader.u(8)
     if reader.flag():                           # chroma_loc_info_present_flag
-        found['chroma_sample_loc_type_top_field'] = reader.ue()
-        found['chroma_sample_loc_type_bottom_field'] = reader.ue()
+        found['chroma_sample_loc_type_top_field'] = reader.ue_in(
+            0, 5, 'chroma_sample_loc_type_top_field')
+        found['chroma_sample_loc_type_bottom_field'] = reader.ue_in(
+            0, 5, 'chroma_sample_loc_type_bottom_field')
     if reader.flag():                           # timing_info_present_flag
         found['num_units_in_tick'] = reader.u(32)
         found['time_scale'] = reader.u(32)
@@ -421,12 +460,16 @@ def _parse_vui(reader: BitReader) -> VideoUsability:
     if reader.flag():                           # bitstream_restriction_flag
         found['bitstream_restriction_flag'] = 1
         reader.flag()                           # motion_vectors_over_pic_boundaries
-        reader.ue()                             # max_bytes_per_pic_denom
-        reader.ue()                             # max_bits_per_mb_denom
-        reader.ue()                             # log2_max_mv_length_horizontal
-        reader.ue()                             # log2_max_mv_length_vertical
-        found['max_num_reorder_frames'] = reader.ue()
-        found['max_dec_frame_buffering'] = reader.ue()
+        reader.ue_in(0, 16, 'max_bytes_per_pic_denom')
+        reader.ue_in(0, 16, 'max_bits_per_mb_denom')
+        reader.ue_in(0, 16, 'log2_max_mv_length_horizontal')
+        reader.ue_in(0, 16, 'log2_max_mv_length_vertical')
+        reorder = reader.ue_in(0, MAX_DPB_FRAMES, 'max_num_reorder_frames')
+        buffering = reader.ue_in(max_num_ref_frames, MAX_DPB_FRAMES,
+                                 'max_dec_frame_buffering')
+        found['max_num_reorder_frames'] = ranged(
+            reorder, 0, buffering, 'max_num_reorder_frames')
+        found['max_dec_frame_buffering'] = buffering
     return VideoUsability(**found)
 
 
@@ -436,48 +479,61 @@ def parse_sps(rbsp: bytes) -> SequenceParameterSet:
     profile_idc = reader.u(8)
     constraint_flags = reader.u(8)
     level_idc = reader.u(8)
-    seq_parameter_set_id = reader.ue()
+    seq_parameter_set_id = reader.ue_in(0, 31, 'seq_parameter_set_id')
     chroma_format_idc, separate_colour_plane_flag = 1, 0
     bit_depth_luma_minus8 = bit_depth_chroma_minus8 = 0
     qpprime_bypass = scaling_present = 0
     scaling_lists: tuple[ScalingList, ...] = ()
     if profile_idc in HIGH_PROFILES:
-        chroma_format_idc = reader.ue()
+        chroma_format_idc = reader.ue_in(0, 3, 'chroma_format_idc')
         if chroma_format_idc == 3:
             separate_colour_plane_flag = reader.flag()
-        bit_depth_luma_minus8 = reader.ue()
-        bit_depth_chroma_minus8 = reader.ue()
+        bit_depth_luma_minus8 = reader.ue_in(0, 6, 'bit_depth_luma_minus8')
+        bit_depth_chroma_minus8 = reader.ue_in(0, 6, 'bit_depth_chroma_minus8')
         qpprime_bypass = reader.flag()
         scaling_present = reader.flag()
         if scaling_present:
             scaling_lists = _scaling_lists(reader, 8 if chroma_format_idc != 3 else 12)
-    log2_max_frame_num_minus4 = reader.ue()
-    if log2_max_frame_num_minus4 > MAX_LOG2_FRAME_NUM_MINUS4:
-        raise StreamError(
-            f'log2_max_frame_num_minus4 {log2_max_frame_num_minus4} is past '
-            f'{MAX_LOG2_FRAME_NUM_MINUS4}')
-    pic_order_cnt_type = reader.ue()
+    log2_max_frame_num_minus4 = reader.ue_in(0, 12, 'log2_max_frame_num_minus4')
+    pic_order_cnt_type = reader.ue_in(0, 2, 'pic_order_cnt_type')
     log2_max_poc_lsb_minus4 = delta_always_zero = 0
     offset_for_non_ref_pic = offset_for_top_to_bottom_field = 0
     offset_for_ref_frame: tuple[int, ...] = ()
     if pic_order_cnt_type == 0:
-        log2_max_poc_lsb_minus4 = reader.ue()
+        log2_max_poc_lsb_minus4 = reader.ue_in(0, 12, 'log2_max_pic_order_cnt_lsb_minus4')
     elif pic_order_cnt_type == 1:
         delta_always_zero = reader.flag()
-        offset_for_non_ref_pic = reader.se()
-        offset_for_top_to_bottom_field = reader.se()
-        offset_for_ref_frame = tuple(reader.se() for _ in range(reader.ue()))
-    elif pic_order_cnt_type != 2:
-        raise StreamError(f'pic_order_cnt_type {pic_order_cnt_type} is not 0, 1 or 2')
-    max_num_ref_frames = reader.ue()
+        offset_for_non_ref_pic = reader.se_in(-SE_MOST, SE_MOST, 'offset_for_non_ref_pic')
+        offset_for_top_to_bottom_field = reader.se_in(
+            -SE_MOST, SE_MOST, 'offset_for_top_to_bottom_field')
+        cycle = reader.ue_in(0, 255, 'num_ref_frames_in_pic_order_cnt_cycle')
+        offset_for_ref_frame = tuple(
+            reader.se_in(-SE_MOST, SE_MOST, 'offset_for_ref_frame') for _ in range(cycle))
+    max_num_ref_frames = reader.ue_in(0, MAX_DPB_FRAMES, 'max_num_ref_frames')
     gaps = reader.flag()
-    width_minus1 = reader.ue()
-    height_minus1 = reader.ue()
+    width_minus1 = reader.ue_in(0, MAX_SIDE_MBS - 1, 'pic_width_in_mbs_minus1')
+    height_minus1 = reader.ue_in(0, MAX_SIDE_MBS - 1, 'pic_height_in_map_units_minus1')
     frame_mbs_only = reader.flag()
+    # A.3.1: neither side of a frame, nor the frame, is larger than any level's.
+    width_in_mbs = width_minus1 + 1
+    height_in_mbs = ranged((2 - frame_mbs_only) * (height_minus1 + 1), 1, MAX_SIDE_MBS,
+                           'FrameHeightInMbs')
+    ranged(width_in_mbs * height_in_mbs, 1, MAX_FRAME_MBS, 'PicSizeInMbs')
     mbaff = 0 if frame_mbs_only else reader.flag()
     direct_8x8 = reader.flag()
-    crop = (reader.ue(), reader.ue(), reader.ue(), reader.ue()) if reader.flag() else (0, 0, 0, 0)
-    vui = _parse_vui(reader) if reader.flag() else None
+    crop = (0, 0, 0, 0)
+    if reader.flag():                           # frame_cropping_flag
+        # 7.4.2.1.1: each pair of offsets leaves at least one unit between them.
+        unit_x, unit_y = _crop_units(
+            0 if separate_colour_plane_flag else chroma_format_idc, frame_mbs_only)
+        across = width_in_mbs * 16 // unit_x
+        down = height_in_mbs * 16 // unit_y
+        left = reader.ue_in(0, across - 1, 'frame_crop_left_offset')
+        right = reader.ue_in(0, across - 1 - left, 'frame_crop_right_offset')
+        top = reader.ue_in(0, down - 1, 'frame_crop_top_offset')
+        bottom = reader.ue_in(0, down - 1 - top, 'frame_crop_bottom_offset')
+        crop = (left, right, top, bottom)
+    vui = _parse_vui(reader, max_num_ref_frames) if reader.flag() else None
     return SequenceParameterSet(
         profile_idc=profile_idc, constraint_flags=constraint_flags,
         level_idc=level_idc, seq_parameter_set_id=seq_parameter_set_id,
@@ -522,6 +578,11 @@ def _ceil_log2(value: int) -> int:
     return (value - 1).bit_length()
 
 
+def _qp_bd_offset(sps: SequenceParameterSet) -> int:
+    """QpBdOffsetY (7.4.2.1.1): how far below zero a luma quantiser reaches."""
+    return 6 * sps.bit_depth_luma_minus8
+
+
 def parse_pps(rbsp: bytes,
               sequences: Mapping[int, SequenceParameterSet]) -> PictureParameterSet:
     """A picture parameter set from its RBSP.
@@ -531,8 +592,8 @@ def parse_pps(rbsp: bytes,
     format.
     """
     reader = BitReader(rbsp)
-    pic_parameter_set_id = reader.ue()
-    seq_parameter_set_id = reader.ue()
+    pic_parameter_set_id = reader.ue_in(0, 255, 'pic_parameter_set_id')
+    seq_parameter_set_id = reader.ue_in(0, 31, 'seq_parameter_set_id')
     sps = sequences.get(seq_parameter_set_id)
     if sps is None:
         raise StreamError(
@@ -541,32 +602,35 @@ def parse_pps(rbsp: bytes,
             'defined')
     entropy = reader.flag()
     bottom_field_pic_order = reader.flag()
-    groups_minus1 = reader.ue()
+    groups_minus1 = reader.ue_in(0, 7, 'num_slice_groups_minus1')
     map_type = change_rate_minus1 = 0
     if groups_minus1 > 0:
-        map_type = reader.ue()
+        # 7.4.2.2: everything a slice group map states is inside the picture.
+        last_unit = sps.width_in_mbs * (sps.pic_height_in_map_units_minus1 + 1) - 1
+        map_type = reader.ue_in(0, 6, 'slice_group_map_type')
         if map_type == 0:
             for _ in range(groups_minus1 + 1):
-                reader.ue()                     # run_length_minus1
+                reader.ue_in(0, last_unit, 'run_length_minus1')
         elif map_type == 2:
             for _ in range(groups_minus1):
-                reader.ue()                     # top_left
-                reader.ue()                     # bottom_right
+                top_left = reader.ue_in(0, last_unit, 'top_left')
+                reader.ue_in(top_left, last_unit, 'bottom_right')
         elif map_type in (3, 4, 5):
             reader.flag()                       # slice_group_change_direction_flag
-            change_rate_minus1 = reader.ue()
+            change_rate_minus1 = reader.ue_in(
+                0, last_unit, 'slice_group_change_rate_minus1')
         elif map_type == 6:
-            units = reader.ue() + 1
+            units = reader.ue_in(last_unit, last_unit, 'pic_size_in_map_units_minus1') + 1
             width = _ceil_log2(groups_minus1 + 1)
             for _ in range(units):
-                reader.u(width)                 # slice_group_id
-    l0_default = _reference_count(reader.ue())
-    l1_default = _reference_count(reader.ue())
+                ranged(reader.u(width), 0, groups_minus1, 'slice_group_id')
+    l0_default = reader.ue_in(0, 31, 'num_ref_idx_l0_default_active_minus1')
+    l1_default = reader.ue_in(0, 31, 'num_ref_idx_l1_default_active_minus1')
     weighted_pred = reader.flag()
-    weighted_bipred = reader.u(2)
-    qp_minus26 = reader.se()
-    qs_minus26 = reader.se()
-    chroma_offset = reader.se()
+    weighted_bipred = ranged(reader.u(2), 0, 2, 'weighted_bipred_idc')
+    qp_minus26 = reader.se_in(-(26 + _qp_bd_offset(sps)), 25, 'pic_init_qp_minus26')
+    qs_minus26 = reader.se_in(-26, 25, 'pic_init_qs_minus26')
+    chroma_offset = reader.se_in(-12, 12, 'chroma_qp_index_offset')
     deblocking = reader.flag()
     constrained_intra = reader.flag()
     redundant = reader.flag()
@@ -579,7 +643,7 @@ def parse_pps(rbsp: bytes,
         if scaling_present:
             eights = (2 if sps.chroma_format_idc != 3 else 6) * transform_8x8
             scaling_lists = _scaling_lists(reader, 6 + eights)
-        second_chroma_offset = reader.se()
+        second_chroma_offset = reader.se_in(-12, 12, 'second_chroma_qp_index_offset')
     return PictureParameterSet(
         pic_parameter_set_id=pic_parameter_set_id,
         seq_parameter_set_id=seq_parameter_set_id,
@@ -746,18 +810,37 @@ class SliceHeader:
         return self.nal_ref_idc != 0
 
 
-def _modifications(reader: BitReader) -> tuple[tuple[int, int], ...]:
-    """One list's ref_pic_list_modification operations (7.3.3.1)."""
+def _modifications(reader: BitReader, entries: int, max_pic_num: int,
+                   last_long_term: int) -> tuple[tuple[int, int], ...]:
+    """One list's ref_pic_list_modification operations (7.3.3.1).
+
+    entries -- how long the list is, which is the most operations it takes
+    max_pic_num -- MaxPicNum, which bounds abs_diff_pic_num_minus1
+    last_long_term -- the largest long_term_pic_num there can be
+    """
     if not reader.flag():
         return ()
     found: list[tuple[int, int]] = []
     while True:
-        idc = reader.ue()
+        # 7.4.3.1: 4 and 5 are multiview coding's, in other NAL unit types.
+        idc = reader.ue_in(0, 3, 'modification_of_pic_nums_idc')
         if idc == 3:
             return tuple(found)
-        if idc > 5:
-            raise StreamError(f'modification_of_pic_nums_idc {idc} is not defined')
-        found.append((idc, reader.ue()))
+        if len(found) == entries:
+            raise StreamError(
+                f'more than {entries} reference list modifications for a list '
+                f'of {entries}')
+        if idc == 2:
+            found.append((idc, reader.ue_in(0, last_long_term, 'long_term_pic_num')))
+        else:
+            found.append((idc, reader.ue_in(0, max_pic_num - 1,
+                                            'abs_diff_pic_num_minus1')))
+
+
+def _weight(reader: BitReader, name: str) -> tuple[int, int]:
+    """One explicit weight and its offset, each in a signed byte (7.4.3.2)."""
+    return (reader.se_in(-128, 127, f'{name}_weight'),
+            reader.se_in(-128, 127, f'{name}_offset'))
 
 
 def _weights(reader: BitReader, count: int, denom: int, chroma_denom: int,
@@ -772,43 +855,22 @@ def _weights(reader: BitReader, count: int, denom: int, chroma_denom: int,
     for _ in range(count):
         if reader.flag():
             any_luma = True
-            luma.append((reader.se(), reader.se()))
+            luma.append(_weight(reader, 'luma'))
         else:
             luma.append((1 << denom, 0))
         if chroma and reader.flag():
             any_chroma = True
-            cb = (reader.se(), reader.se())
-            cr = (reader.se(), reader.se())
-            chromas.append((cb, cr))
+            chromas.append((_weight(reader, 'chroma'), _weight(reader, 'chroma')))
         else:
             chromas.append(default_chroma)
     return tuple(luma), tuple(chromas), any_luma, any_chroma
 
 
-#: What H.264 allows (7.4.2.1.1, 7.4.2.2 and 7.4.3), so a stream that exceeds
-#: them is refused before a loop or a shift is sized from the claim.
-MAX_LOG2_FRAME_NUM_MINUS4 = 12
-MAX_REFERENCE_INDEX = 31
-MAX_WEIGHT_DENOMINATOR = 7
-
-
-def _reference_count(minus1: int) -> int:
-    """A ``num_ref_idx_*_active_minus1`` value, refused where it is past the limit."""
-    if minus1 > MAX_REFERENCE_INDEX:
-        raise StreamError(
-            f'num_ref_idx_active_minus1 {minus1} is past {MAX_REFERENCE_INDEX}')
-    return minus1
-
-
 def _pred_weight_table(reader: BitReader, sps: SequenceParameterSet,
                        l0: int, l1: int | None) -> PredWeightTable:
-    denom = reader.ue()
+    denom = reader.ue_in(0, 7, 'luma_log2_weight_denom')
     chroma = sps.chroma_array_type != 0
-    chroma_denom = reader.ue() if chroma else 0
-    if max(denom, chroma_denom) > MAX_WEIGHT_DENOMINATOR:
-        raise StreamError(
-            f'a prediction weight denominator of {max(denom, chroma_denom)} is past '
-            f'{MAX_WEIGHT_DENOMINATOR}')
+    chroma_denom = reader.ue_in(0, 7, 'chroma_log2_weight_denom') if chroma else 0
     luma_l0, chroma_l0, luma_flag_l0, chroma_flag_l0 = _weights(
         reader, l0, denom, chroma_denom, chroma)
     if l1 is None:
@@ -826,39 +888,55 @@ def _pred_weight_table(reader: BitReader, sps: SequenceParameterSet,
         chroma_weight_l1_flag=chroma_flag_l1)
 
 
-def _marking(reader: BitReader) -> tuple[MemoryManagementOperation, ...]:
-    """The adaptive part of dec_ref_pic_marking() (7.3.3.3)."""
+def _marking(reader: BitReader, sps: SequenceParameterSet, max_pic_num: int,
+             last_long_term: int) -> tuple[MemoryManagementOperation, ...]:
+    """The adaptive part of dec_ref_pic_marking() (7.3.3.3).
+
+    max_pic_num -- MaxPicNum, which bounds difference_of_pic_nums_minus1
+    last_long_term -- the largest long_term_pic_num there can be
+    """
     found: list[MemoryManagementOperation] = []
     while True:
-        operation = reader.ue()
+        operation = reader.ue_in(0, 6, 'memory_management_control_operation')
         if operation == 0:
             return tuple(found)
-        if operation > 6:
+        if len(found) == MAX_MARKING_OPERATIONS:
             raise StreamError(
-                f'memory_management_control_operation {operation} is not defined')
+                f'more than {MAX_MARKING_OPERATIONS} memory management control '
+                'operations in one slice header')
         arguments: dict[str, int] = {}
         if operation in (1, 3):
-            arguments['difference_of_pic_nums_minus1'] = reader.ue()
+            arguments['difference_of_pic_nums_minus1'] = reader.ue_in(
+                0, max_pic_num - 1, 'difference_of_pic_nums_minus1')
         if operation == 2:
-            arguments['long_term_pic_num'] = reader.ue()
+            arguments['long_term_pic_num'] = reader.ue_in(
+                0, last_long_term, 'long_term_pic_num')
         if operation in (3, 6):
-            arguments['long_term_frame_idx'] = reader.ue()
+            # 7.4.3.3: no index reaches max_num_ref_frames.
+            arguments['long_term_frame_idx'] = reader.ue_in(
+                0, sps.max_num_ref_frames - 1, 'long_term_frame_idx')
         if operation == 4:
-            arguments['max_long_term_frame_idx_plus1'] = reader.ue()
+            arguments['max_long_term_frame_idx_plus1'] = reader.ue_in(
+                0, sps.max_num_ref_frames, 'max_long_term_frame_idx_plus1')
         found.append(MemoryManagementOperation(operation, **arguments))
 
 
 def parse_slice_header(unit: NalUnit,
                        sequences: Mapping[int, SequenceParameterSet],
                        pictures: Mapping[int, PictureParameterSet]) -> SliceHeader:
-    """The header of a slice NAL unit, read against the parameter sets so far."""
+    """The header of a slice NAL unit, read against the parameter sets so far.
+
+    Every element is held to the range 7.4.3 gives it, against the sequence
+    and picture parameter sets the slice names, and :class:`StreamError` names
+    the one that is outside it. A header longer than libva's 16-bit
+    ``slice_data_bit_offset`` counts is refused the same way.
+    """
     reader = BitReader(unit.rbsp)
-    first_mb = reader.ue()
-    raw_type = reader.ue()
-    if raw_type > 9:
-        raise StreamError(f'slice_type {raw_type} is not defined')
-    slice_type = raw_type % 5
-    pps_id = reader.ue()
+    first_mb = reader.ue_in(0, MAX_FRAME_MBS - 1, 'first_mb_in_slice')
+    slice_type = reader.ue_in(0, 9, 'slice_type') % 5
+    intra = slice_type in (SLICE_I, SLICE_SI)
+    idr = unit.nal_unit_type == NAL_IDR
+    pps_id = reader.ue_in(0, 255, 'pic_parameter_set_id')
     pps = pictures.get(pps_id)
     if pps is None:
         raise StreamError(
@@ -869,6 +947,16 @@ def parse_slice_header(unit: NalUnit,
         raise StreamError(
             f'picture parameter set {pps_id} names sequence parameter set '
             f'{pps.seq_parameter_set_id}, which the stream has not defined')
+    if not intra and (idr or not sps.max_num_ref_frames):
+        raise StreamError(
+            f'a {SLICE_KINDS[slice_type]} slice in '
+            + ('an IDR picture' if idr else 'a sequence that keeps no reference frame')
+            + ', which has nothing to predict from')
+    # The sequence parameter set may have been sent again since the picture
+    # parameter set was read against it.
+    qp_bd_offset = _qp_bd_offset(sps)
+    init_qp = 26 + ranged(pps.pic_init_qp_minus26, -(26 + qp_bd_offset), 25,
+                          'pic_init_qp_minus26')
     if sps.separate_colour_plane_flag:
         reader.u(2)                             # colour_plane_id
     frame_num = reader.u(sps.log2_max_frame_num_minus4 + 4)
@@ -877,36 +965,50 @@ def parse_slice_header(unit: NalUnit,
         field_pic = reader.flag()
         if field_pic:
             bottom_field = reader.flag()
-    idr = unit.nal_unit_type == NAL_IDR
-    idr_pic_id = reader.ue() if idr else 0
+    # 7.4.3: a field, and a frame of macroblock pairs, addresses half as many.
+    frame_mbs = sps.width_in_mbs * sps.frame_height_in_mbs
+    halved = field_pic or sps.mb_adaptive_frame_field_flag
+    ranged(first_mb, 0, frame_mbs // (2 if halved else 1) - 1, 'first_mb_in_slice')
+    idr_pic_id = reader.ue_in(0, 65535, 'idr_pic_id') if idr else 0
     poc_lsb = delta_bottom = 0
     delta = [0, 0]
     in_frame = pps.bottom_field_pic_order_in_frame_present_flag and not field_pic
     if sps.pic_order_cnt_type == 0:
         poc_lsb = reader.u(sps.log2_max_pic_order_cnt_lsb_minus4 + 4)
         if in_frame:
-            delta_bottom = reader.se()
+            delta_bottom = reader.se_in(-SE_MOST, SE_MOST, 'delta_pic_order_cnt_bottom')
     if sps.pic_order_cnt_type == 1 and not sps.delta_pic_order_always_zero_flag:
-        delta[0] = reader.se()
+        delta[0] = reader.se_in(-SE_MOST, SE_MOST, 'delta_pic_order_cnt[0]')
         if in_frame:
-            delta[1] = reader.se()
-    redundant = reader.ue() if pps.redundant_pic_cnt_present_flag else 0
+            delta[1] = reader.se_in(-SE_MOST, SE_MOST, 'delta_pic_order_cnt[1]')
+    redundant = 0
+    if pps.redundant_pic_cnt_present_flag:
+        redundant = reader.ue_in(0, 127, 'redundant_pic_cnt')
     direct_spatial = reader.flag() if slice_type == SLICE_B else 0
     l0 = pps.num_ref_idx_l0_default_active_minus1
     l1 = pps.num_ref_idx_l1_default_active_minus1
     override = 0
-    if slice_type in (SLICE_P, SLICE_SP, SLICE_B):
-        override = reader.flag()
-        if override:
-            l0 = _reference_count(reader.ue())
-            if slice_type == SLICE_B:
-                l1 = _reference_count(reader.ue())
+    # 7.4.3: a frame's lists have at most 16 entries and a field's 32.
+    fields = 2 if field_pic else 1
+    most_active = 16 * fields - 1
+    max_pic_num = sps.max_frame_num * fields
+    last_long_term = sps.max_num_ref_frames * fields - 1
     modifications_l0: tuple[tuple[int, int], ...] = ()
     modifications_l1: tuple[tuple[int, int], ...] = ()
-    if slice_type not in (SLICE_I, SLICE_SI):
-        modifications_l0 = _modifications(reader)
+    if not intra:
+        override = reader.flag()
+        if override:
+            l0 = reader.ue_in(0, most_active, 'num_ref_idx_l0_active_minus1')
+            if slice_type == SLICE_B:
+                l1 = reader.ue_in(0, most_active, 'num_ref_idx_l1_active_minus1')
+        else:
+            ranged(l0, 0, most_active, 'num_ref_idx_l0_default_active_minus1')
+            if slice_type == SLICE_B:
+                ranged(l1, 0, most_active, 'num_ref_idx_l1_default_active_minus1')
+        modifications_l0 = _modifications(reader, l0 + 1, max_pic_num, last_long_term)
         if slice_type == SLICE_B:
-            modifications_l1 = _modifications(reader)
+            modifications_l1 = _modifications(reader, l1 + 1, max_pic_num,
+                                              last_long_term)
     weights = None
     if ((pps.weighted_pred_flag and slice_type in (SLICE_P, SLICE_SP))
             or (pps.weighted_bipred_idc == 1 and slice_type == SLICE_B)):
@@ -921,28 +1023,30 @@ def parse_slice_header(unit: NalUnit,
         else:
             adaptive = reader.flag()
             if adaptive:
-                operations = _marking(reader)
+                operations = _marking(reader, sps, max_pic_num, last_long_term)
     cabac_init = 0
-    if pps.entropy_coding_mode_flag and slice_type not in (SLICE_I, SLICE_SI):
-        cabac_init = reader.ue()
-    qp_delta = reader.se()
+    if pps.entropy_coding_mode_flag and not intra:
+        cabac_init = reader.ue_in(0, 2, 'cabac_init_idc')
+    # 7.4.3: SliceQPY is from -QpBdOffsetY to 51.
+    qp_delta = reader.se_in(-qp_bd_offset - init_qp, 51 - init_qp, 'slice_qp_delta')
     if slice_type in (SLICE_SP, SLICE_SI):
         if slice_type == SLICE_SP:
             reader.flag()                       # sp_for_switch_flag
-        reader.se()                             # slice_qs_delta
+        init_qs = 26 + pps.pic_init_qs_minus26  # QSY is from 0 to 51
+        reader.se_in(-init_qs, 51 - init_qs, 'slice_qs_delta')
     deblocking_idc = alpha = beta = 0
     if pps.deblocking_filter_control_present_flag:
-        deblocking_idc = reader.ue()
+        deblocking_idc = reader.ue_in(0, 2, 'disable_deblocking_filter_idc')
         if deblocking_idc != 1:
-            alpha = reader.se()
-            beta = reader.se()
+            alpha = reader.se_in(-6, 6, 'slice_alpha_c0_offset_div2')
+            beta = reader.se_in(-6, 6, 'slice_beta_offset_div2')
     if pps.num_slice_groups_minus1 > 0 and 3 <= pps.slice_group_map_type <= 5:
         units = sps.width_in_mbs * (sps.pic_height_in_map_units_minus1 + 1)
         rate = pps.slice_group_change_rate_minus1 + 1
         bits = 0
         while rate << bits < units + rate:      # Ceil(Log2(units / rate + 1))
             bits += 1
-        reader.u(bits)                          # slice_group_change_cycle
+        ranged(reader.u(bits), 0, -(-units // rate), 'slice_group_change_cycle')
     return SliceHeader(
         nal_ref_idc=unit.nal_ref_idc, nal_unit_type=unit.nal_unit_type,
         first_mb_in_slice=first_mb, slice_type=slice_type,
@@ -962,7 +1066,9 @@ def parse_slice_header(unit: NalUnit,
         memory_management=operations, cabac_init_idc=cabac_init,
         slice_qp_delta=qp_delta, disable_deblocking_filter_idc=deblocking_idc,
         slice_alpha_c0_offset_div2=alpha, slice_beta_offset_div2=beta,
-        header_bits=reader.position + 8, sps=sps, pps=pps,
+        header_bits=ranged(reader.position + 8, 8, MAX_HEADER_BITS,
+                           'the length of the slice header in bits'),
+        sps=sps, pps=pps,
     )
 
 
