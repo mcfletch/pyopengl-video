@@ -16,6 +16,7 @@ says D3D10 and D3D11 resources are allowed.
 from __future__ import annotations
 
 import ctypes
+import functools
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -41,6 +42,7 @@ from pyopengl_video.inputs import (
     create_framebuffer,
     delete_framebuffer,
 )
+from pyopengl_video.teardown import release_all
 from pyopengl_video.windows import d3d11
 from pyopengl_video.windows.com import InteropError
 
@@ -55,6 +57,17 @@ WGL_ACCESS_WRITE_DISCARD_NV = 0x0002
 #: The extension whose presence means D3D11 resources may be registered. The
 #: original ``WGL_NV_DX_interop`` covers Direct3D 9 alone.
 EXTENSION = 'WGL_NV_DX_interop2'
+
+
+def last_error() -> int:
+    """The calling thread's last Windows error code, for a message.
+
+    Read straight after a WGL call that answered failure. PyOpenGL makes that
+    call, and other calls may run on the thread before this one does, so the
+    code describes the failure and is not something to branch on.
+    """
+    reader = getattr(ctypes, 'GetLastError', None)
+    return int(reader()) if reader is not None else 0
 
 
 def parse_extension_string(text: bytes | None) -> set[str]:
@@ -176,13 +189,17 @@ class SharedTexture(InputHandle):
         writes against the encoder's reads, or a decoder's writes against the
         shader that samples them. Locking twice over is an error the driver
         reports, so it is refused here with a message that says which call is
-        the extra one.
+        the extra one. A texture that has been closed has no registration to
+        lock, and is refused likewise.
         """
         if self._locked:
             raise InteropError(0, 'wglDXLockObjectsNV',
                                'this texture is already held for drawing')
+        if self.handle is None or self.interop.pointer is None:
+            raise InteropError(0, 'wglDXLockObjectsNV',
+                               'this texture has been closed')
         if not wglDXLockObjectsNV(self.interop.pointer, 1, handle_array(self.handle)):
-            raise InteropError(ctypes.GetLastError(), 'wglDXLockObjectsNV')
+            raise InteropError(last_error(), 'wglDXLockObjectsNV')
         self._locked = True
 
     def relinquish(self) -> None:
@@ -192,7 +209,7 @@ class SharedTexture(InputHandle):
                                'this texture is not held for drawing')
         self._locked = False
         if not wglDXUnlockObjectsNV(self.interop.pointer, 1, handle_array(self.handle)):
-            raise InteropError(ctypes.GetLastError(), 'wglDXUnlockObjectsNV')
+            raise InteropError(last_error(), 'wglDXUnlockObjectsNV')
 
     @contextmanager
     def for_drawing(self) -> Iterator[SharedTexture]:
@@ -211,23 +228,35 @@ class SharedTexture(InputHandle):
         return self.resource.read()
 
     def close(self) -> None:
-        """Unregister the texture and give both views of it back."""
-        try:
-            if self.texture:
-                try:
-                    if self._locked:
-                        self.relinquish()
-                    delete_framebuffer(self.framebuffer)
-                    self.framebuffer = 0
-                finally:
-                    if self.handle is not None and self.interop.pointer is not None:
-                        wglDXUnregisterObjectNV(self.interop.pointer, self.handle)
-                    self.handle = None
-                glDeleteTextures([self.texture])
-                self.texture = 0
-        finally:
-            self.resource.close()
-            self.interop.forget(self)
+        """Unregister the texture and give both views of it back. Safe to call twice.
+
+        Raises :class:`InteropError` while OpenGL holds the texture, inside a
+        :meth:`for_drawing` scope or between :meth:`acquire` and
+        :meth:`relinquish`, since the registration is locked. Each of the
+        releases is attempted whatever the others do, and the first failure is
+        raised afterwards.
+        """
+        if self._locked:
+            raise InteropError(0, 'wglDXUnregisterObjectNV',
+                               'this texture is held for OpenGL, inside its '
+                               'for_drawing() scope or acquired and not relinquished')
+        release_all(self._delete_framebuffer, self._unregister, self._delete_texture,
+                    self.resource.close, functools.partial(self.interop.forget, self))
+
+    def _delete_framebuffer(self) -> None:
+        framebuffer, self.framebuffer = self.framebuffer, 0
+        if framebuffer:
+            delete_framebuffer(framebuffer)
+
+    def _unregister(self) -> None:
+        handle, self.handle = self.handle, None
+        if handle is not None and self.interop.pointer is not None:
+            wglDXUnregisterObjectNV(self.interop.pointer, handle)
+
+    def _delete_texture(self) -> None:
+        texture, self.texture = self.texture, 0
+        if texture:
+            glDeleteTextures([texture])
 
     def __enter__(self) -> SharedTexture:
         return self
@@ -253,7 +282,7 @@ class InteropDevice:
         self.pointer = wglDXOpenDeviceNV(device.pointer)
         if not self.pointer:
             raise InteropError(
-                ctypes.GetLastError(), 'wglDXOpenDeviceNV',
+                last_error(), 'wglDXOpenDeviceNV',
                 'the Direct3D device and the OpenGL context are probably on '
                 'different GPUs')
         self._textures: list[SharedTexture] = []
@@ -272,17 +301,15 @@ class InteropDevice:
         handle = wglDXRegisterObjectNV(self.pointer, resource.pointer, name,
                                        GL_TEXTURE_2D, access)
         if not handle:
-            error = ctypes.GetLastError()
-            glDeleteTextures([name])
-            resource.close()
+            error = last_error()
+            release_all(lambda: glDeleteTextures([name]), resource.close)
             raise InteropError(error, 'wglDXRegisterObjectNV',
                                f'{width}x{height} DXGI format {format}')
         try:
             shared = (factory or SharedTexture)(self, resource, name, handle)
-        except Exception:
-            wglDXUnregisterObjectNV(self.pointer, handle)
-            glDeleteTextures([name])
-            resource.close()
+        except BaseException:
+            release_all(lambda: wglDXUnregisterObjectNV(self.pointer, handle),
+                        lambda: glDeleteTextures([name]), resource.close)
             raise
         self._textures.append(shared)
         return shared
@@ -292,15 +319,17 @@ class InteropDevice:
         self._textures = [kept for kept in self._textures if kept is not texture]
 
     def close(self) -> None:
-        """Close every texture made here, then the bridge. Safe to call twice."""
-        try:
-            for texture in list(self._textures):
-                texture.close()
-        finally:
-            self._textures = []
-            if self.pointer is not None:
-                wglDXCloseDeviceNV(self.pointer)
-                self.pointer = None
+        """Close every texture made here, then the bridge. Safe to call twice.
+
+        Every release is attempted, and the first failure raised afterwards.
+        """
+        textures, self._textures = self._textures, []
+        release_all(*(texture.close for texture in textures), self._close_device)
+
+    def _close_device(self) -> None:
+        pointer, self.pointer = self.pointer, None
+        if pointer is not None:
+            wglDXCloseDeviceNV(pointer)
 
     def __enter__(self) -> InteropDevice:
         return self

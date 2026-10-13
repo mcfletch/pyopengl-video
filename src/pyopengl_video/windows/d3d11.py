@@ -15,6 +15,8 @@ import dataclasses
 from ctypes import POINTER, Structure, byref, c_int32, c_size_t, c_uint32, c_void_p, c_wchar
 from typing import Any
 
+from pyopengl_video import bounds
+from pyopengl_video.encoder import EncoderError
 from pyopengl_video.windows.com import GUID, InteropError, check, guid, load, method, release
 
 #: DXGI pixel formats this package names. The two RGBA orders are the ones an
@@ -58,6 +60,10 @@ DXGI_ERROR_NOT_FOUND = -2005270526       # the end of an adapter enumeration
 VENDORS = {0x10DE: 'NVIDIA', 0x8086: 'Intel', 0x1002: 'AMD', 0x1414: 'Microsoft'}
 
 #: How many bytes one pixel of a format takes, for the formats read back.
+#: The largest width or height of a Direct3D 11 2D texture
+#: (``D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION``).
+LARGEST_TEXTURE_SIDE = 16384
+
 _BYTES_PER_PIXEL = {DXGI_FORMAT_R8G8B8A8_UNORM: 4, DXGI_FORMAT_B8G8R8A8_UNORM: 4}
 
 
@@ -133,26 +139,35 @@ def _enumerate() -> list[tuple[Adapter, c_void_p]]:
     factory = _factory()
     try:
         enumerate_adapters = method(factory, _ENUM_ADAPTERS1, c_uint32, POINTER(c_void_p))
-        found = []
+        found: list[tuple[Adapter, c_void_p]] = []
         index = 0
-        while True:
-            interface = c_void_p()
-            if enumerate_adapters(factory, index, byref(interface)) != 0:
-                break
-            description = DXGI_ADAPTER_DESC1()
-            check(method(interface, _GET_DESC1, POINTER(DXGI_ADAPTER_DESC1))(
-                interface, byref(description)), 'IDXGIAdapter1::GetDesc1')
-            found.append((
-                Adapter(
-                    index=index,
-                    description=description.Description,
-                    vendor_id=description.VendorId,
-                    device_id=description.DeviceId,
-                    luid=ctypes.string_at(byref(description.AdapterLuid), 8),
-                ),
-                interface,
-            ))
-            index += 1
+        try:
+            while True:
+                interface = c_void_p()
+                if enumerate_adapters(factory, index, byref(interface)) != 0:
+                    break
+                description = DXGI_ADAPTER_DESC1()
+                try:
+                    check(method(interface, _GET_DESC1, POINTER(DXGI_ADAPTER_DESC1))(
+                        interface, byref(description)), 'IDXGIAdapter1::GetDesc1')
+                except BaseException:
+                    release(interface)
+                    raise
+                found.append((
+                    Adapter(
+                        index=index,
+                        description=description.Description,
+                        vendor_id=description.VendorId,
+                        device_id=description.DeviceId,
+                        luid=ctypes.string_at(byref(description.AdapterLuid), 8),
+                    ),
+                    interface,
+                ))
+                index += 1
+        except BaseException:
+            for _adapter, held in found:
+                release(held)
+            raise
         return found
     finally:
         release(factory)
@@ -323,7 +338,16 @@ class Device:
         both the OpenGL interop and the encoders accept for a colour surface. An
         NV12 surface a driver asks for gets the decoder binding instead, since
         that is the only one D3D11 allows for it.
+
+        Raises :class:`InteropError` for a size outside 1 to
+        :data:`LARGEST_TEXTURE_SIDE` each way.
         """
+        try:
+            width, height = bounds.frame_size(
+                width, height, most=(LARGEST_TEXTURE_SIDE, LARGEST_TEXTURE_SIDE),
+                error=EncoderError)
+        except EncoderError as refused:
+            raise InteropError(0, 'ID3D11Device::CreateTexture2D', str(refused)) from None
         if bind is None:
             bind = (D3D11_BIND_DECODER if format in (DXGI_FORMAT_NV12, DXGI_FORMAT_P010)
                     else D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE)

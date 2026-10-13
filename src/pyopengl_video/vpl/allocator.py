@@ -10,7 +10,9 @@ learns which Direct3D resource a picture is in.
 from __future__ import annotations
 
 import ctypes
+import functools
 import logging
+from collections.abc import Callable
 from ctypes import c_void_p
 from typing import Any
 
@@ -34,6 +36,24 @@ DXGI_FOR_FOURCC = {
 def aligned(value: int, to: int = ALIGNMENT) -> int:
     """`value` rounded up to a multiple of `to`."""
     return (int(value) + to - 1) // to * to
+
+
+def _answering(callback: Callable[..., int]) -> Callable[..., int]:
+    """Make an allocator callback answer the runtime whatever happens inside it.
+
+    An exception cannot cross the runtime's frames. ctypes prints one that
+    reaches it and returns whatever the result slot held, which the runtime
+    reads as a status; a callback that raises answers ``MFX_ERR_UNKNOWN``
+    instead, and the exception is logged.
+    """
+    @functools.wraps(callback)
+    def answering(*arguments: Any) -> int:
+        try:
+            return callback(*arguments)
+        except BaseException:
+            log.exception('the %s callback failed', callback.__name__)
+            return api.MFX_ERR_UNKNOWN
+    return answering
 
 
 class SurfaceAllocator:
@@ -82,6 +102,7 @@ class SurfaceAllocator:
 
     # ------------------------------------------------------- the callbacks
 
+    @_answering
     def allocate(self, _pthis: Any, request: Any, response: Any) -> int:
         """Make the surfaces the runtime asked for."""
         wanted = request.contents
@@ -93,7 +114,7 @@ class SurfaceAllocator:
         if format is None:
             log.debug('oneVPL asked for %d surfaces of %s, which has no D3D11 format',
                       count, api.fourcc_name(fourcc))
-            return -3                                  # MFX_ERR_UNSUPPORTED
+            return api.MFX_ERR_UNSUPPORTED
         # The video processor reads a decoded picture through a shader
         # resource view as well as the decoder's own binding.
         bind = None
@@ -116,7 +137,7 @@ class SurfaceAllocator:
             for texture in made:
                 self.owned.pop(ctypes.cast(texture.pointer, c_void_p).value or 0, None)
                 texture.close()
-            return -4                                  # MFX_ERR_MEMORY_ALLOC
+            return api.MFX_ERR_MEMORY_ALLOC
         response.contents.mids = identifiers
         response.contents.NumFrameActual = count
         self.latest = [int(identifiers[slot] or 0) for slot in range(count)]
@@ -126,25 +147,28 @@ class SurfaceAllocator:
 
     def lock(self, _pthis: Any, _mid: Any, _data: Any) -> int:
         """Refuse host access: every surface here lives in video memory."""
-        return -3                                      # MFX_ERR_UNSUPPORTED
+        return api.MFX_ERR_UNSUPPORTED
 
+    @_answering
     def get_handle(self, _pthis: Any, mid: Any, handle: Any) -> int:
         """Give the runtime the Direct3D texture an identifier stands for.
 
         It expects a pair -- the resource and the index of the subresource
         within it -- and every texture here has exactly one, so the second is
-        always zero.
+        always zero. A texture that has been closed holds no resource, and is
+        answered as not found.
         """
         identifier = int(mid) if mid else 0
         texture = self.owned.get(identifier) or self.external.get(identifier)
-        if texture is None:
-            log.debug('oneVPL asked for an unknown surface: 0x%x', identifier)
+        if texture is None or not texture.pointer:
+            log.debug('oneVPL asked for a surface that is not held: 0x%x', identifier)
             return api.MFX_ERR_NOT_FOUND
         pair = ctypes.cast(handle, ctypes.POINTER(c_void_p))
         pair[0] = ctypes.cast(texture.pointer, c_void_p)
         pair[1] = None
         return api.MFX_ERR_NONE
 
+    @_answering
     def free(self, _pthis: Any, response: Any) -> int:
         """Give back the surfaces from one allocation."""
         answer = response.contents

@@ -113,3 +113,28 @@ def test_a_handle_that_does_not_own_its_texture_keeps_it_on_close():
     handle.owns_texture = False
     handle.close()
     assert handle.texture == 42
+
+
+class _Export:
+    """Stands in for one function of a loaded library."""
+
+    argtypes = None
+    restype = None
+
+
+class _Library:
+    def __init__(self):
+        self.CreateDXGIFactory1 = _Export()
+        self.D3D11CreateDevice = _Export()
+
+
+@pytest.mark.parametrize('name, export, arguments', [
+    ('dxgi.dll', 'CreateDXGIFactory1', 2),
+    ('d3d11.dll', 'D3D11CreateDevice', 10),
+    ('D3D11.DLL', 'D3D11CreateDevice', 10),
+])
+def test_every_export_called_has_its_types_declared(name, export, arguments):
+    """An undeclared export takes a Python int as 32 bits and answers one."""
+    function = getattr(com.bind(_Library(), name), export)
+    assert len(function.argtypes) == arguments
+    assert function.restype is ctypes.c_int32

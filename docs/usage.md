@@ -115,6 +115,23 @@ All are keyword arguments to `open_encoder`. These are taken by every backend:
 | `tuning` | `'high_quality'` | What the preset is trading against: `'high_quality'`, `'low_latency'`, `'ultra_low_latency'`, `'lossless'`, `'ultra_high_quality'`. |
 | `rate_control` | `'vbr'` | `'vbr'`, `'cbr'`, or `'constqp'`. |
 
+`vpl` also takes:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `preset` | `'p4'` | `'p1'` (fastest) to `'p7'` (best quality). |
+| `rate_control` | `'vbr'` | `'vbr'`, `'cbr'`, or `'constqp'`. |
+| `qp` | `26` | The quantiser `'constqp'` codes every picture at, 0 to 51. The other modes do not read it. |
+| `adapter` | the OpenGL context's | Which GPU to encode on. One that is not Intel's is refused. |
+
+On `vpl`, `gop` is 1 to 65535, `bframes` 0 to 65534, and a width or height is
+at most 65520; a value outside its range is refused before anything is opened.
+Each input is submitted in a surface of its own, so an input the encoder has
+not finished reading is refused: cycle through `input_slots` of them. Close
+the encoder with its OpenGL context current. One that is collected unclosed
+gives back its session, warns with a `ResourceWarning`, and leaves its
+textures and framebuffers to the context.
+
 `vaapi` also takes:
 
 | Setting | Default | What it does |

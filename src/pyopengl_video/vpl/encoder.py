@@ -23,11 +23,12 @@ import ctypes
 import dataclasses
 import logging
 import time
+import warnings
 from collections.abc import Callable
 from ctypes import byref, c_void_p
 from typing import Any
 
-from pyopengl_video import codecs, obu
+from pyopengl_video import bounds, codecs, obu
 from pyopengl_video.encoder import (
     Encoder,
     EncoderError,
@@ -36,6 +37,7 @@ from pyopengl_video.encoder import (
     frame_rate_ratio,
 )
 from pyopengl_video.inputs import InputHandle
+from pyopengl_video.teardown import release_all
 from pyopengl_video.vpl import api
 from pyopengl_video.vpl.allocator import SurfaceAllocator, aligned
 from pyopengl_video.windows import d3d11, interop
@@ -47,8 +49,22 @@ log = logging.getLogger(__name__)
 #: than a slow frame: encoding one costs well under a millisecond.
 SYNC_TIMEOUT_MS = 5000
 
-#: How long to wait before offering a busy device the same frame again.
+#: How long to wait before offering a busy device the same frame again. A
+#: device still busy after :data:`SYNC_TIMEOUT_MS` has stopped answering.
 DEVICE_BUSY_WAIT = 0.001
+
+#: The quantisers constant-quantiser rate control takes, for 8-bit pictures.
+QP_RANGE = (0, 51)
+
+#: The quantiser ``rate_control='constqp'`` codes at when none is named.
+DEFAULT_QP = 26
+
+#: The largest width or height a 16-bit field holds once rounded up to
+#: :data:`ALIGNMENT`. The hardware's own limit is far below it.
+LARGEST_SIDE = bounds.FIELD_16 // 16 * 16
+
+#: The PCI vendor whose adapters have a oneVPL encoder.
+INTEL_VENDOR_ID = 0x8086
 
 #: Preset names, shared with the NVENC backend, mapped onto oneVPL's target
 #: usage: 1 is the best quality it will do and 7 the fastest.
@@ -178,13 +194,24 @@ class VPLEncoder(Encoder):
     preset -- ``'p1'`` (fastest) through ``'p7'`` (best quality), the same names
         the NVENC backend takes
     rate_control -- ``'vbr'``, ``'cbr'`` or ``'constqp'``
-    gop -- frames between key frames; defaults to two seconds' worth
-    bframes -- B-pictures between reference pictures
+    qp -- the quantiser ``'constqp'`` codes every picture at, 0 (largest
+        stream) to 51; the other modes do not read it
+    gop -- frames between key frames, 1 to 65535; defaults to two seconds' worth
+    bframes -- B-pictures between reference pictures, 0 to 65534
     adapter -- which GPU to encode on; by default the one the current OpenGL
-        context is running on, which is the only one it can read without a copy
+        context is running on, which is the only one it can read without a
+        copy. An adapter that is not Intel's is refused.
 
     An OpenGL context must be current when the encoder is built and for every
-    call afterwards: the surfaces belong to it.
+    call afterwards, :meth:`close` included: the surfaces belong to it. An
+    encoder that is collected without having been closed gives back its
+    session and its Direct3D objects, warns with a ``ResourceWarning``, and
+    leaves the OpenGL names to the context.
+
+    A setting that does not fit the field the runtime reads it from raises
+    :class:`~pyopengl_video.encoder.EncoderError` before anything is opened.
+    Each input is submitted in a surface of its own, and one the runtime has
+    not finished reading is refused: cycle through :attr:`input_slots` inputs.
     """
 
     codec = 'h264'
@@ -196,25 +223,40 @@ class VPLEncoder(Encoder):
     def __init__(self, width: int, height: int, *, codec: str = 'h264',
                  fps: float | tuple[int, int] = 60, bitrate: int | None = None,
                  preset: str = 'p4', rate_control: str = 'vbr',
-                 gop: int | None = None, bframes: int = 0,
+                 gop: int | None = None, bframes: int = 0, qp: int = DEFAULT_QP,
                  adapter: d3d11.Adapter | None = None):
+        # Set first, so that a constructor that raises leaves an object whose
+        # close() and destructor have nothing to do.
+        self._closed = True
+        api.require_supported_process()
         codec = codecs.canonical(codec)
         if codec not in CODECS:
             raise EncoderError(
                 f'the oneVPL backend encodes {", ".join(sorted(CODECS))}, not {codec!r}')
         self.codec = codec
         self._sequence_header = b''
-        self.size = (int(width), int(height))
-        self.frame_rate = frame_rate_ratio(fps)
-        self.bframes = int(bframes)
+        self.size = bounds.frame_size(width, height, most=(LARGEST_SIDE, LARGEST_SIDE),
+                                      error=EncoderError)
+        self.frame_rate = bounds.frame_rate(frame_rate_ratio(fps), error=EncoderError)
+        self.bframes = bounds.whole(bframes, 'bframes', 0, bounds.FIELD_16 - 1,
+                                    EncoderError)
         self.reorders_frames = self.bframes > 0
         rate_num, rate_den = self.frame_rate
-        self.gop = int(gop) if gop is not None else max(1, round(2 * rate_num / rate_den))
-        self.bitrate = int(bitrate) if bitrate is not None else default_bitrate(
-            self.size, self.frame_rate)
+        self.gop = bounds.whole(
+            gop if gop is not None
+            else min(bounds.FIELD_16, max(1, round(2 * rate_num / rate_den))),
+            'gop', 1, bounds.FIELD_16, EncoderError)
+        self.bitrate = bounds.whole(
+            bitrate if bitrate is not None
+            else max(1, default_bitrate(self.size, self.frame_rate)),
+            'bitrate', 1, bounds.FIELD_16 * bounds.FIELD_16 * 1000, EncoderError)
+        self.qp = bounds.whole(qp, 'qp', *QP_RANGE, EncoderError)
 
         self._closed = False
         self._initialised = False
+        #: Set when the runtime may still be writing the bitstream buffer, so
+        #: nothing more is submitted into it.
+        self._stopped = ''
         self._frames = 0
         self._inputs: list[VPLInput] = []
         self.session = c_void_p()
@@ -240,6 +282,10 @@ class VPLEncoder(Encoder):
     def _choose_adapter(adapter: d3d11.Adapter | None) -> d3d11.Adapter:
         """Which GPU to encode on, and refuse to guess if it cannot be known."""
         if adapter is not None:
+            if adapter.vendor_id != INTEL_VENDOR_ID:
+                raise EncoderError(
+                    f'{adapter} is not an Intel adapter, and the oneVPL encoder '
+                    'runs on those alone')
             return adapter
         found = interop.adapter_for_context()
         if found is None:
@@ -247,6 +293,11 @@ class VPLEncoder(Encoder):
                 'cannot tell which GPU this OpenGL context is on, so an encoder '
                 'here might not be able to read what the renderer draws; name an '
                 'adapter explicitly to go ahead anyway')
+        if found.vendor_id != INTEL_VENDOR_ID:
+            raise EncoderError(
+                f'the OpenGL context renders on {found}, and the oneVPL encoder '
+                'runs on Intel adapters: it would read surfaces the renderer '
+                'never wrote')
         return found
 
     def _open_session(self) -> None:
@@ -306,14 +357,17 @@ class VPLEncoder(Encoder):
         mfx.CodecProfile = settings.profile
         mfx.TargetUsage = target_usage
         mfx.RateControlMethod = mode
-        # Rate control counts in kilobits, in a 16-bit field: the multiplier is
-        # what lets a recording ask for more than 65 Mbit/s.
-        kilobits = max(1, self.bitrate // 1000)
-        multiplier = max(1, (kilobits + 65534) // 65535)
-        mfx.BRCParamMultiplier = multiplier
-        mfx.TargetKbps = kilobits // multiplier
-        mfx.MaxKbps = (mfx.TargetKbps if rate_control == 'cbr'
-                       else min(65535, mfx.TargetKbps * 3 // 2))
+        if mode == api.MFX_RATECONTROL_CQP:
+            mfx.set_quantisers(self.qp, self.qp, self.qp)
+        else:
+            # Rate control counts in kilobits, in a 16-bit field: the
+            # multiplier is what lets a recording ask for more than 65 Mbit/s.
+            kilobits = max(1, self.bitrate // 1000)
+            multiplier = max(1, (kilobits + 65534) // 65535)
+            mfx.BRCParamMultiplier = multiplier
+            mfx.TargetKbps = kilobits // multiplier
+            mfx.MaxKbps = (mfx.TargetKbps if rate_control == 'cbr'
+                           else min(65535, mfx.TargetKbps * 3 // 2))
         mfx.GopPicSize = self.gop
         mfx.GopRefDist = self.bframes + 1
         mfx.IdrInterval = settings.idr_interval
@@ -427,7 +481,7 @@ class VPLEncoder(Encoder):
     def encode(self, handle: Any, timestamp: int, duration: int = 0,
                force_idr: bool = False) -> list[Packet]:
         """Submit the picture in `handle`; return whatever came out."""
-        self._require_open()
+        self._require_running()
         if not any(kept is handle for kept in self._inputs):
             raise EncoderError('encode() wants an open handle from this encoder\'s '
                                'new_input()')
@@ -443,7 +497,8 @@ class VPLEncoder(Encoder):
         duration = self.frame_duration(duration)
 
         surface = handle.surface
-        surface.Data.TimeStamp = int(timestamp)
+        surface.Data.TimeStamp = bounds.whole(
+            timestamp, 'the timestamp', 0, api.MFX_TIMESTAMP_UNKNOWN - 1, EncoderError)
         surface.Data.FrameOrder = self._frames
         self._frames += 1
         control = self._control(force_idr)
@@ -452,12 +507,10 @@ class VPLEncoder(Encoder):
 
     def flush(self) -> list[Packet]:
         """End the stream, returning the pictures the encoder was still holding."""
-        self._require_open()
+        self._require_running()
         packets: list[Packet] = []
         while True:
-            rate_num, rate_den = self.frame_rate
-            packet = self._submit(None, None,
-                                  round(self.timescale * rate_den / rate_num))
+            packet = self._submit(None, None, self.frame_duration())
             if packet is None:
                 return packets
             packets.append(packet)
@@ -482,31 +535,40 @@ class VPLEncoder(Encoder):
         self._bitstream.DataOffset = 0
         self._bitstream.DataLength = 0
         sync_point = c_void_p()
+        deadline = time.monotonic() + SYNC_TIMEOUT_MS / 1000
         while True:
             status = self.api.MFXVideoENCODE_EncodeFrameAsync(
                 self.session, control, surface, byref(self._bitstream),
                 byref(sync_point))
-            if status == api.MFX_WRN_DEVICE_BUSY:
-                time.sleep(DEVICE_BUSY_WAIT)
-                continue
-            break
+            if status != api.MFX_WRN_DEVICE_BUSY:
+                break
+            if time.monotonic() >= deadline:
+                raise api.VPLError(
+                    status, 'MFXVideoENCODE_EncodeFrameAsync',
+                    f'the device was still busy after {SYNC_TIMEOUT_MS} ms')
+            time.sleep(DEVICE_BUSY_WAIT)
         if status == api.MFX_ERR_MORE_DATA:
             return None
         self.api.check(status, 'MFXVideoENCODE_EncodeFrameAsync')
         if not sync_point:
             return None
-        self.api.check(
-            self.api.MFXVideoCORE_SyncOperation(
-                self.session, sync_point, SYNC_TIMEOUT_MS),
-            'MFXVideoCORE_SyncOperation')
+        status = self.api.MFXVideoCORE_SyncOperation(
+            self.session, sync_point, SYNC_TIMEOUT_MS)
+        if status != api.MFX_ERR_NONE:
+            # Anything but success leaves the operation unfinished: the runtime
+            # may write the bitstream buffer at any time from here on.
+            self._stopped = (f'a picture was not coded within {SYNC_TIMEOUT_MS} ms '
+                             f'({api.STATUS_NAMES.get(status, status)})')
+            raise api.VPLError(status, 'MFXVideoCORE_SyncOperation', self._stopped)
         return self._packet(duration)
 
     def _packet(self, duration: int) -> Packet:
         """Copy the compressed picture out of the shared buffer."""
         bitstream = self._bitstream
-        data = ctypes.string_at(
-            ctypes.addressof(self._bitstream_buffer) + bitstream.DataOffset,
-            bitstream.DataLength)
+        offset, length = bounds.span(
+            bitstream.DataOffset, bitstream.DataLength,
+            ctypes.sizeof(self._bitstream_buffer), 'the coded picture', EncoderError)
+        data = bytes(memoryview(self._bitstream_buffer)[offset:offset + length])
         keyframe = bool(bitstream.FrameType
                         & (api.MFX_FRAMETYPE_I | api.MFX_FRAMETYPE_IDR))
         timestamp = int(bitstream.TimeStamp)
@@ -567,45 +629,70 @@ class VPLEncoder(Encoder):
         if self._closed:
             raise EncoderError('the encoder is closed')
 
+    def _require_running(self) -> None:
+        self._require_open()
+        if self._stopped:
+            raise EncoderError(f'the encoder has stopped: {self._stopped}; close it')
+
     def close(self) -> None:
-        """Release the session, the surfaces and the device. Safe to call twice."""
+        """Release the session, the surfaces and the device. Safe to call twice.
+
+        Every release is attempted whatever the others do, and the first
+        failure is raised once all have been: an OpenGL error here, such as no
+        context being current, leaves no session open behind it.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        release_all(self._close_encoding, self._close_session, self._close_inputs,
+                    self._close_allocator, self._close_interop, self._close_device)
+
+    def _close_encoding(self) -> None:
+        if self._initialised and self.session:
+            self._initialised = False
+            self.api.MFXVideoENCODE_Close(self.session)
+
+    def _close_inputs(self) -> None:
+        """Close every input, after the session: nothing holds a surface then."""
+        inputs, self._inputs = self._inputs, []
+        for shared in inputs:
+            shared.surface.Data.Locked = 0
+        release_all(*(shared.close for shared in inputs))
+
+    def _close_session(self) -> None:
+        session, self.session = self.session, c_void_p()
+        if session:
+            self.api.MFXClose(session)
+
+    def _close_allocator(self) -> None:
+        allocator, self.allocator = self.allocator, None
+        if allocator is not None:
+            allocator.close()
+
+    def _close_interop(self) -> None:
+        bridge, self.interop = self.interop, None
+        if bridge is not None:
+            bridge.close()
+
+    def _close_device(self) -> None:
+        device, self.device = self.device, None
+        if device is not None:
+            device.close()
+
+    def __del__(self) -> None:
+        # Collection runs on whichever thread, with whichever OpenGL context,
+        # the collector is in, so nothing here touches OpenGL: a name deleted
+        # in another context is that context's own object. The session goes
+        # first, since the runtime holds the addresses of the callbacks and the
+        # buffers this object is about to free.
         if getattr(self, '_closed', True):
             return
         self._closed = True
-        if self._initialised and self.session:
-            self.api.MFXVideoENCODE_Close(self.session)
-            self._initialised = False
-        # Closing an input deletes its OpenGL objects, which raises where no
-        # context is current -- a destructor running after the window is gone.
-        # The session and the device are released whatever the inputs do.
+        warnings.warn(f'{type(self).__name__} was collected without close(); its '
+                      'OpenGL textures and framebuffers are left to their context',
+                      ResourceWarning, stacklevel=2)
         try:
-            if self.session:
-                self.api.MFXClose(self.session)
-                self.session = c_void_p()
-            for shared in list(self._inputs):
-                shared.surface.Data.Locked = 0      # the session is closed: nothing holds it
-                shared.close()
-        finally:
-            self._inputs = []
-            try:
-                if self.allocator is not None:
-                    self.allocator.close()
-                    self.allocator = None
-            finally:
-                try:
-                    if self.interop is not None:
-                        self.interop.close()
-                        self.interop = None
-                finally:
-                    if self.device is not None:
-                        self.device.close()
-                        self.device = None
-
-    def __del__(self) -> None:
-        # A recording that ended in an exception should still give the driver
-        # its session back. A destructor has nowhere to raise to, so whatever
-        # went wrong is logged and dropped.
-        try:
-            self.close()
-        except Exception as error:            # noqa: BLE001  # pragma: no cover
-            log.debug('closing the encoder from its destructor failed: %r', error)
+            release_all(self._close_encoding, self._close_session,
+                        self._close_allocator, self._close_device)
+        except Exception:
+            log.debug('releasing a collected encoder failed', exc_info=True)

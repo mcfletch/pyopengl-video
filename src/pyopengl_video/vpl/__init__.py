@@ -22,7 +22,7 @@ import sys
 from typing import Any
 
 from pyopengl_video.backend import Backend, context_kind
-from pyopengl_video.vpl.api import LIBRARY_NAME
+from pyopengl_video.vpl.api import LIBRARY_NAME, SUPPORTED_POINTER_SIZE
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +52,9 @@ def probe() -> bool:
     if not SUPPORTED_PLATFORM:
         log.debug('the Direct3D interop this backend needs is Windows-only, not %s',
                   sys.platform)
+        return False
+    if not SUPPORTED_POINTER_SIZE:
+        log.debug('oneVPL is bound here for 64-bit processes')
         return False
     try:
         ctypes.CDLL(LIBRARY_NAME)

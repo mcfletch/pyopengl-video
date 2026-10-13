@@ -54,6 +54,8 @@ src/pyopengl_video/
     encoder.py      the Encoder interface, Packet, and the encoder registry
     decoder.py      the Decoder interface, Sample, DecodedFrame, the decoder registry
     inputs.py       InputHandle: the texture an encoder reads, and its framebuffer
+    bounds.py       range checks for what goes into a fixed-width field or a native length
+    teardown.py     release_all(): every release runs when one of them fails
     codecs.py       the codec names, and the spellings that reach them
     mp4.py          packets into an MP4 file, and MP4Reader back out of one
     annexb.py       AnnexBReader: access units of a raw .h264 or .h265 stream
@@ -94,6 +96,7 @@ tests/
     nvenc_abi.json  sizes and offsets recorded from NVIDIA's header
     nvdec_abi.json  the same for NVDEC and CUDA, in the Linux and Windows layouts
     vpl_abi.json    the same, from the oneVPL headers
+    vpl_runtime.py  stand-ins for the oneVPL runtime, Direct3D and WGL, for any platform
     va_abi.json     the same, from the libva headers, plus their constant values
     data/decode/    streams in each codec and the checksums of their decoded pictures
 tools/

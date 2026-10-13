@@ -60,9 +60,38 @@ def guid(text: str) -> GUID:
                 (ctypes.c_ubyte * 8)(*bytes.fromhex(fourth + rest)))
 
 
+#: The exports this package calls, by library: each one's argument types. Every
+#: one answers an HRESULT. A call through a function with no declared types
+#: passes a Python int as a 32-bit C int and reads a pointer result as one.
+PROTOTYPES: dict[str, dict[str, list[Any]]] = {
+    'dxgi.dll': {
+        'CreateDXGIFactory1': [POINTER(GUID), POINTER(c_void_p)],
+    },
+    'd3d11.dll': {
+        # adapter, driver type, software module, flags, feature levels and
+        # their count, SDK version, then the device, level and context made.
+        'D3D11CreateDevice': [c_void_p, c_uint32, c_void_p, c_uint32, c_void_p,
+                              c_uint32, c_uint32, POINTER(c_void_p),
+                              POINTER(c_uint32), POINTER(c_void_p)],
+    },
+}
+
+
+def bind(library: Any, name: str) -> Any:
+    """Give the exports of `library` this package calls their declared types.
+
+    name -- the library's file name, as :data:`PROTOTYPES` lists it
+    """
+    for export, argtypes in PROTOTYPES.get(name.lower(), {}).items():
+        function = getattr(library, export)
+        function.argtypes = argtypes
+        function.restype = c_int32
+    return library
+
+
 @cache
 def load(name: str) -> Any:
-    """Load a system library, once per process.
+    """Load a system library, once per process, with its exports' types declared.
 
     Raises :class:`InteropError` rather than ``OSError``, so a caller catching
     the package's own error type sees a missing library too.
@@ -70,7 +99,7 @@ def load(name: str) -> Any:
     if sys.platform != 'win32':          # pragma: no cover - not reachable on Windows
         raise InteropError(0, f'loading {name}', 'only Windows has this library')
     try:
-        return ctypes.WinDLL(name)
+        return bind(ctypes.WinDLL(name), name)
     except OSError as error:
         raise InteropError(0, f'loading {name}', str(error)) from error
 

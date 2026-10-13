@@ -52,6 +52,19 @@ def library_name() -> str:
 
 LIBRARY_NAME = library_name()
 
+#: The packing and the sizes declared here are those of a 64-bit build, which
+#: is the only one ``tests/vpl_abi.json`` records.
+SUPPORTED_POINTER_SIZE = ctypes.sizeof(c_void_p) == 8
+
+
+def require_supported_process() -> None:
+    """Raise :class:`~pyopengl_video.encoder.EncoderError` in a process the
+    declarations here do not describe."""
+    if not SUPPORTED_POINTER_SIZE:
+        raise EncoderError(
+            'oneVPL is bound here for 64-bit processes, and this one has '
+            f'{ctypes.sizeof(c_void_p) * 8}-bit pointers')
+
 
 def fourcc(text: str) -> int:
     """The four-character code the interface spells a format with."""
@@ -166,14 +179,18 @@ STATUS_NAMES = {
     5: 'MFX_WRN_INCOMPATIBLE_VIDEO_PARAM', 6: 'MFX_WRN_VALUE_NOT_CHANGED',
     7: 'MFX_WRN_OUT_OF_RANGE', 10: 'MFX_WRN_FILTER_SKIPPED',
 }
+MFX_ERR_UNKNOWN = -1
 MFX_ERR_UNSUPPORTED = -3
+MFX_ERR_MEMORY_ALLOC = -4
+MFX_ERR_NOT_FOUND = -9
 MFX_ERR_MORE_DATA = -10
 MFX_ERR_MORE_SURFACE = -11
 MFX_ERR_INCOMPATIBLE_VIDEO_PARAM = -14
 MFX_ERR_REALLOC_SURFACE = -22
-MFX_WRN_VIDEO_PARAM_CHANGED = 3
-MFX_ERR_NOT_FOUND = -9
+#: ``SyncOperation`` answers this when its wait ends before the operation does.
+MFX_WRN_IN_EXECUTION = 1
 MFX_WRN_DEVICE_BUSY = 2
+MFX_WRN_VIDEO_PARAM_CHANGED = 3
 MFX_WRN_PARTIAL_ACCELERATION = 4
 MFX_WRN_INCOMPATIBLE_VIDEO_PARAM = 5
 
@@ -257,6 +274,16 @@ class mfxInfoMFX(Structure):
         ('MaxKbps', u16), ('NumSlice', u16), ('NumRefFrame', u16),
         ('EncodedOrder', u16),
     ]
+
+    def set_quantisers(self, intra: int, predicted: int, bidirectional: int) -> None:
+        """Write the quantisers constant-quantiser rate control codes at.
+
+        The header puts ``QPI``, ``QPP`` and ``QPB`` in unions with
+        ``InitialDelayInKB``, ``TargetKbps`` and ``MaxKbps``: under
+        ``MFX_RATECONTROL_CQP`` those three fields are the quantisers.
+        """
+        self.InitialDelayInKB, self.TargetKbps, self.MaxKbps = (
+            intra, predicted, bidirectional)
 
 
 class mfxInfoVPP(Structure):
@@ -621,6 +648,7 @@ class VPL:
         MFXVideoENCODE_EncodeFrameAsync: Callable[..., int]
 
     def __init__(self, library_name: str = LIBRARY_NAME):
+        require_supported_process()
         # MFX_CDECL is __cdecl, which is what CDLL calls with on every platform.
         # The two conventions coincide on 64-bit Windows and differ on 32-bit.
         self.library = ctypes.CDLL(library_name)
