@@ -196,8 +196,28 @@ on Linux makes no native call.
 
 ### A. AV1 and VP9 parsing
 
-Review in progress when this was written; findings are added below as they
-arrive.
+200,000 mutated AV1 streams (4.2 million submitted pictures) and 160,000 VP9
+streams (3.7 million) through `AV1Decoding` and `VP9Decoding` over a stand-in
+session. Every tile offset and size submitted lay inside its buffer, and no
+invalid reference surface was submitted. VP9 raised nothing but `StreamError`
+and `DecoderError`.
+
+| Id | Where | Finding | Status |
+|---|---|---|---|
+| A1 | `av1_parse.py` `_tile_info` | The stated tile grid has no limit of 64 columns and rows: a 16384-wide frame gives 256 columns, written to an 8-bit field as 0. An inter frame at the start of a stream is parsed before any size limit applies: 1024x1024 tiles in a 2 MB sample had not returned after 150 s. | Open |
+| A2 | `av1_parse.py`, `av1_decode.py` | A frame size is never held to the sequence header's maximum (D6). | Open |
+| A3 | `av1_parse.py` `_color_config` | Profile 0 with the sRGB and identity triple is parsed as 4:4:4 and submitted under the Main profile. | Open |
+| A4 | `av1_decode.py` | A sequence header may be replaced with no key frame, and between a frame header and its tile group: a monochrome sequence over a 4:2:0 reference is submitted. | Open |
+| A5 | `bits.py`, `av1_parse.py` `parse_tile_group` | `BitReader` holds the whole OBU as one integer and each read shifts it, so reading tile sizes is quadratic in the sample: 40 s for a 16 MB frame with the legal 64x64 tiles. | Open |
+| A6 | `vp9_parse.py`, `vp9_decode.py` | An inter frame's profile is not compared with its key frame's (D8). | Open |
+| A7 | `vp9_decode.py` | A dimension of 65536 is written to a 16-bit field as 0 (D8). | Open |
+| A8 | `vp9_parse.py` `_tile_info` | `tile_cols_log2` can pass 6. | Open |
+| A9 | `vp9_parse.py` | A frame with no tile bytes, or a `tile_size` past the end of the frame, is submitted. | Open |
+| A10 | `av1_parse.py` | `context_update_tile_id` is not below the tile count (L2). | Open |
+| A11 | `av1_parse.py` `_film_grain_params` | Point counts above 14 and 10 raise `IndexError` at the ctypes array; point values that do not increase, a `film_grain_params_ref_idx` matching no reference, and unequal chroma point counts in 4:2:0 reach the driver (L2). | Open |
+| A12 | `av1_parse.py` | A frame sized from a slot never written raises `ValueError` or `ZeroDivisionError` (L3). | Open |
+| A13 | `bits.py` | A negative count or position is not refused; `leb128()` reads from an unaligned position; `read_leb128` accepts more than 32 bits. No call site in the package reaches these with a stream's value. | Open |
+| A14 | `av1.py` writer | `base_q_idx = 0` writes the syntax of a lossy frame; a zero frame-rate term divides by zero; `BitWriter.su` wraps. | Open |
 
 ### N. NVENC and NVDEC
 
