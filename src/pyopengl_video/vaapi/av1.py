@@ -44,7 +44,7 @@ __all__ = ['COLOUR_PRIMARIES_BT709', 'LEVELS', 'LEVEL_MAXIMUM', 'MATRIX_BT709',
            'OBU_SIZE_BYTES', 'ORDER_HINT_BITS', 'QINDEX_MAX', 'QINDEX_PER_QP',
            'REFERENCE_SLOT', 'SUPERBLOCK', 'TRANSFER_BT709', 'Frame',
            'GroupOfPictures', 'PackedFrameHeader', 'Sequence', 'base_q_idx',
-           'level_for', 'loop_filter_level']
+           'TIMING_MAX', 'level_for', 'loop_filter_level']
 
 #: Samples along a superblock's edge. The 128-sample superblock is left off.
 SUPERBLOCK = 64
@@ -70,6 +70,9 @@ QINDEX_PER_QP = 5
 COLOUR_PRIMARIES_BT709 = 1
 TRANSFER_BT709 = 1
 MATRIX_BT709 = 1
+
+#: The largest num_units_in_display_tick and time_scale, which are 32 bits each.
+TIMING_MAX = (1 << 32) - 1
 
 #: seq_level_idx for a stream no level holds: "maximum parameters".
 LEVEL_MAXIMUM = 31
@@ -98,6 +101,14 @@ def _superblocks(samples: int) -> int:
     return -(-samples // SUPERBLOCK)
 
 
+def _check_frame_rate(frame_rate: tuple[int, int]) -> None:
+    """Refuse a frame rate the sequence header's timing fields do not hold."""
+    if not all(1 <= term <= TIMING_MAX for term in frame_rate):
+        raise ValueError(
+            f'a frame rate of {frame_rate[0]}/{frame_rate[1]} cannot be coded: '
+            f'each term is from 1 to {TIMING_MAX}')
+
+
 def level_for(width: int, height: int, frame_rate: tuple[int, int],
               bitrate: int = 0) -> tuple[int, int]:
     """The lowest level covering this frame size, rate and bitrate, as (seq_level_idx, seq_tier).
@@ -106,7 +117,11 @@ def level_for(width: int, height: int, frame_rate: tuple[int, int],
     codes for a picture of that size. The high tier is taken where the bitrate
     is over the level's main tier and the level has one. A stream no level
     holds is :data:`LEVEL_MAXIMUM`.
+
+    A frame rate with a term that is not from 1 to 2**32 - 1, the widest the
+    sequence header's timing fields are, is a :class:`ValueError`.
     """
+    _check_frame_rate(frame_rate)
     coded_width = _superblocks(width) * SUPERBLOCK
     coded_height = _superblocks(height) * SUPERBLOCK
     samples = coded_width * coded_height
@@ -152,18 +167,35 @@ def _tile_log2(block: int, target: int) -> int:
     return k
 
 
+def _check_q_index(index: int) -> None:
+    """Refuse a quantiser index a lossy frame header does not state."""
+    if not 1 <= index <= QINDEX_MAX:
+        raise ValueError(
+            f'a base_q_idx of {index} is outside 1 to {QINDEX_MAX}, the indices of '
+            'a lossy frame')
+
+
 @dataclasses.dataclass(frozen=True)
 class Frame:
     """What one frame is coded as.
 
     key -- a key frame: decoding can start here
     number -- frames since the last key frame, 0 for the key frame itself
-    base_q_idx -- the quantiser index the frame header states
+    base_q_idx -- the quantiser index the frame header states, from 1 to
+        :data:`QINDEX_MAX`. Index 0 is lossless coding, whose frame header
+        has another syntax than the one :class:`Sequence` writes.
+
+    A value outside its range is a :class:`ValueError`.
     """
 
     key: bool
     number: int
     base_q_idx: int
+
+    def __post_init__(self) -> None:
+        _check_q_index(self.base_q_idx)
+        if self.number < 0:
+            raise ValueError(f'a frame number of {self.number} counts no frames')
 
     @property
     def frame_type(self) -> int:
@@ -227,7 +259,8 @@ class Sequence:
     """The sequence-level choices of one encoding session, and its headers.
 
     width/height -- the picture size in luma samples, both even
-    frame_rate -- an exact ``(numerator, denominator)``
+    frame_rate -- an exact ``(numerator, denominator)``, each from 1 to
+        2**32 - 1, the widest the sequence header's timing fields are
     bitrate -- bits per second, which the level must cover; zero leaves the
         bitrate out of the level
     tx_mode_select -- True where each block chooses its transform size
@@ -254,7 +287,10 @@ class Sequence:
         self.width = int(width)
         self.height = int(height)
         self.frame_rate = (int(frame_rate[0]), int(frame_rate[1]))
+        _check_frame_rate(self.frame_rate)
         self.bitrate = int(bitrate)
+        if self.bitrate < 0:
+            raise ValueError(f'a bitrate of {bitrate} bits a second is negative')
         self.level, self.tier = level_for(self.width, self.height, self.frame_rate,
                                           self.bitrate)
         self.tx_mode = TX_MODE_SELECT if tx_mode_select else TX_MODE_LARGEST
@@ -482,7 +518,8 @@ class GroupOfPictures:
     encoder in the order they arrived.
 
     gop -- frames between key frames; one makes every frame a key frame
-    base_q_idx -- the quantiser index each frame header states
+    base_q_idx -- the quantiser index each frame header states, from 1 to
+        :data:`QINDEX_MAX`
     """
 
     def __init__(self, gop: int, base_q_idx: int) -> None:
@@ -490,6 +527,7 @@ class GroupOfPictures:
             raise ValueError(f'a group of {gop} pictures holds none')
         self.gop = int(gop)
         self.base_q_idx = int(base_q_idx)
+        _check_q_index(self.base_q_idx)
         self._position = 0
 
     def __repr__(self) -> str:

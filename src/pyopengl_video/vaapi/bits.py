@@ -12,35 +12,66 @@ from pyopengl_video.vaapi.h264 import StreamError
 __all__ = ['BitReader', 'BitWriter', 'leb128', 'read_leb128']
 
 
+#: The largest value a base-128 field may hold (leb128(), 4.10.5 of the AV1
+#: Bitstream & Decoding Process Specification).
+LEB128_MAX = (1 << 32) - 1
+
+#: The most bytes a base-128 field takes.
+LEB128_BYTES = 8
+
+
 class BitReader:
     """Fixed-width fields read from `data`, most significant bit first.
 
-    position -- the next bit to read, counted from the start of `data`
+    position -- the next bit to read, counted from the start of `data`; from 0
+        to the length of `data` in bits
 
-    Reading past the end raises :class:`~pyopengl_video.vaapi.h264.StreamError`.
+    A field is read from the bytes it spans, so reading costs what is read
+    and not the length of `data`. Reading past the end, a negative count and a
+    position outside `data` each raise
+    :class:`~pyopengl_video.vaapi.h264.StreamError`.
     """
 
     def __init__(self, data: bytes, position: int = 0) -> None:
         self.data = data
-        self.position = position
-        self._value = int.from_bytes(data, 'big')
         self._bits = len(data) * 8
+        self._position = 0
+        self.position = position
+
+    @property
+    def position(self) -> int:
+        return self._position
+
+    @position.setter
+    def position(self, position: int) -> None:
+        if not 0 <= position <= self._bits:
+            raise StreamError(
+                f'bit {position} is outside the {self._bits} bits of the header')
+        self._position = position
 
     def f(self, count: int) -> int:
         """An unsigned field of `count` bits."""
-        end = self.position + count
+        if count < 0:
+            raise StreamError(f'a field of {count} bits was asked for')
+        start = self._position
+        end = start + count
         if end > self._bits:
             raise StreamError(
                 f'the header ends at bit {self._bits} and a field runs to bit {end}')
-        self.position = end
-        return (self._value >> (self._bits - end)) & ((1 << count) - 1)
+        self._position = end
+        last = (end + 7) >> 3
+        spanned = int.from_bytes(self.data[start >> 3:last], 'big')
+        return (spanned >> (last * 8 - end)) & ((1 << count) - 1)
 
     def flag(self) -> int:
         """One bit."""
         return self.f(1)
 
     def su(self, count: int) -> int:
-        """A two's complement field of `count` bits."""
+        """A two's complement field of `count` bits, which is at least its sign bit."""
+        if count < 1:
+            raise StreamError(
+                f'a signed field of {count} bits was asked for, which has no sign bit')
         value = self.f(count)
         return value - (1 << count) if value >> (count - 1) else value
 
@@ -50,35 +81,50 @@ class BitReader:
         return -value if self.flag() else value
 
     def leb128(self) -> int:
-        """A little-endian base-128 value, which must start on a byte."""
-        value, used = read_leb128(self.data, self.position // 8)
-        self.position += used * 8
+        """A little-endian base-128 value, which starts on a byte."""
+        if self._position & 7:
+            raise StreamError(
+                f'a size field is read at bit {self._position}, which is not the '
+                'start of a byte')
+        value, used = read_leb128(self.data, self._position >> 3)
+        self._position += used * 8
         return value
 
     @property
     def byte_position(self) -> int:
         """The byte holding the next bit to read."""
-        return self.position // 8
+        return self._position // 8
 
     def byte_align(self) -> None:
         """Skip to the start of the next byte, unless already at one."""
-        self.position = (self.position + 7) & ~7
+        self._position = (self._position + 7) & ~7
 
     @property
     def remaining(self) -> int:
         """How many bits are left."""
-        return self._bits - self.position
+        return self._bits - self._position
 
 
 def read_leb128(data: bytes, offset: int = 0) -> tuple[int, int]:
-    """The little-endian base-128 value at `offset`, and how many bytes it took."""
+    """The little-endian base-128 value at `offset`, and how many bytes it took.
+
+    A value takes at most eight bytes and is at most 32 bits (4.10.5); one
+    that is longer, larger, or runs past the end of `data` is a
+    :class:`~pyopengl_video.vaapi.h264.StreamError`.
+    """
+    if offset < 0:
+        raise StreamError(f'a size field is read at offset {offset}, before the data')
     value = 0
-    for index in range(8):
+    for index in range(LEB128_BYTES):
         if offset + index >= len(data):
             raise StreamError('a size field runs past the end of the data')
         byte = data[offset + index]
         value |= (byte & 0x7F) << (index * 7)
         if not byte & 0x80:
+            if value > LEB128_MAX:
+                raise StreamError(
+                    f'a size field holds {value}, which is more than the 32 bits '
+                    'one may hold')
             return value, index + 1
     raise StreamError('a size field is longer than the eight bytes one may take')
 
@@ -128,6 +174,8 @@ class BitWriter:
 
     def su(self, value: int, count: int) -> None:
         """Write `value` as a two's complement field of `count` bits."""
+        if count < 1 or not -(1 << (count - 1)) <= value < (1 << (count - 1)):
+            raise ValueError(f'{value} does not fit a signed field of {count} bits')
         self.f(value & ((1 << count) - 1), count)
 
     def byte_align(self) -> None:

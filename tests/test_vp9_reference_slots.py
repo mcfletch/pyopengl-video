@@ -12,13 +12,14 @@ import pytest
 
 from pyopengl_video.decoder import DecoderError, Sample
 from pyopengl_video.ivf import IVFReader
-from pyopengl_video.vaapi import api
+from pyopengl_video.vaapi import api, vp9_api, vp9_decode
 from pyopengl_video.vaapi.vp9_decode import VP9Decoding
 from pyopengl_video.vaapi.vp9_parse import (
     DecodingState,
     parse_uncompressed_header,
     split_superframe,
 )
+from tests import ivf_fuzz
 from tests.test_vaapi_decode_session import RecordingSession
 from tests.vp9_syntax import INTER, frame, show_existing, superframe
 
@@ -304,3 +305,46 @@ class TestFixtureStreams:
         assert len(session.shown) == 40
         assert {shown[0] for shown in session.shown} <= {
             entry[0] for entry in session.submitted}
+
+
+class TestEveryStoreReadsBack:
+    """Every fixture: each value stored in a buffer reads back as what was parsed.
+
+    ctypes keeps the low bits of a value that does not fit its field and
+    raises nothing, so a field that is too narrow for what the parser allows
+    shows only here.
+    """
+
+    @pytest.mark.parametrize('path', sorted(DATA.glob('vp9_*.ivf')), ids=lambda path: path.stem)
+    def test_a_fixture(self, path, decoding, monkeypatch):
+        differences = []
+        monkeypatch.setattr(vp9_decode, 'vp9_api', ivf_fuzz.recorded(
+            vp9_api, lambda name, value=None: differences.append((name, value))))
+        layer, session = decoding
+        state = DecodingState()
+        coded = []
+        with IVFReader(path) as stream:
+            for index in range(len(stream)):
+                unit = stream.sample(index)
+                for data in split_superframe(unit.data):
+                    header = parse_uncompressed_header(data, state)
+                    if not header.show_existing_frame:
+                        coded.append((header, data))
+                layer.decode(unit)
+        assert differences == []
+        assert len(session.buffers) == len(coded)
+        for buffers, (header, data) in zip(session.buffers, coded, strict=True):
+            parameters = buffers[api.VAPictureParameterBufferType]
+            assert (parameters.frame_width, parameters.frame_height) == header.size
+            assert (parameters.profile, parameters.bit_depth) == (
+                header.profile, header.colour.bit_depth)
+            assert (parameters.log2_tile_columns, parameters.log2_tile_rows) == (
+                header.tile_cols_log2, header.tile_rows_log2)
+            assert parameters.frame_header_length_in_bytes == header.uncompressed_size
+            assert parameters.first_partition_size == header.header_size_in_bytes
+            assert parameters.filter_level == header.loop_filter.level
+            assert list(parameters.mb_segment_tree_probs) == list(header.segmentation.tree_probs)
+            slice_ = buffers[api.VASliceParameterBufferType]
+            assert (slice_.slice_data_offset, slice_.slice_data_size) == (0, len(data))
+            assert buffers[api.VASliceDataBufferType] == data
+

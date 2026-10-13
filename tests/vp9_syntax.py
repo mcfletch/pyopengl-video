@@ -48,7 +48,7 @@ def frame(*, profile=0, frame_type=KEY, show_frame=1, error_resilient=0,
           high_precision=1, filter=None, refresh_context=1, parallel=0,
           context=0, level=0, sharpness=0, deltas=None, base_q=60,
           q_deltas=(0, 0, 0), segmentation=None, tile_columns=(), tile_rows=0,
-          compressed=4, tiles=8, sync=SYNC_CODE, marker=2):
+          compressed=4, tiles=8, tile_data=None, sync=SYNC_CODE, marker=2):
     """One frame: the uncompressed header these values state, then filler.
 
     found_ref -- which of the three references gives the size, or None for a
@@ -61,7 +61,10 @@ def frame(*, profile=0, frame_type=KEY, show_frame=1, error_resilient=0,
         temporal update), ``abs`` and ``features`` ({(segment, feature): value})
     tile_columns -- the increment bits to write
     compressed/tiles -- how many filler bytes stand for the compressed header
-        and the tile data
+        and for the last tile. Each tile before the last is its four-byte
+        size and one byte.
+    tile_data -- the bytes to put after the compressed header in place of
+        that, sizes included
     """
     writer = BitWriter()
     writer.f(marker, 2)
@@ -162,7 +165,23 @@ def frame(*, profile=0, frame_type=KEY, show_frame=1, error_resilient=0,
         writer.flag(tile_rows > 1)
     writer.f(compressed, 16)
     filler = bytes(1 + index % 255 for index in range(compressed))
-    return writer.bytes() + filler + b'\x55' * tiles
+    if tile_data is None:
+        count = tile_count(size[0], tile_columns, tile_rows)
+        tile_data = (b'\x00\x00\x00\x01\x55') * (count - 1) + b'\x55' * tiles
+    return writer.bytes() + filler + tile_data
+
+
+def tile_count(width, tile_columns=(), tile_rows=0):
+    """How many tiles a frame `width` wide has, for the tile bits :func:`frame` writes."""
+    sb64_cols = (width + 63) // 64
+    log2 = 0
+    while (64 << log2) < sb64_cols:
+        log2 += 1
+    for bit in tile_columns:
+        if not bit:
+            break
+        log2 += 1
+    return (1 << log2) << tile_rows
 
 
 def show_existing(slot, profile=0):

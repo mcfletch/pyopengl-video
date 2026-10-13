@@ -17,6 +17,14 @@ order hint, the segmentation, the loop filter deltas, the global motion and the
 film grain saved in each of the eight reference slots. :class:`FrameState`
 holds them, :func:`parse_frame_header` reads from it, and
 :meth:`FrameState.update` is the reference frame update process (7.20).
+
+The bytes read are a file's, and every count, size and index in them is held
+to the range the specification gives it where it is read: a header that
+breaks one raises :class:`~pyopengl_video.vaapi.h264.StreamError`, and so a
+header these functions return states nothing a driver's structures cannot
+hold. A header that reads from a reference slot holding no frame raises
+:class:`MissingReference`, which a decoder that has yet to meet a key frame
+takes as a frame to pass over.
 """
 from __future__ import annotations
 
@@ -29,11 +37,11 @@ from pyopengl_video.vaapi.h264 import StreamError
 
 __all__ = [
     'Cdef', 'ColorConfig', 'DecoderModelInfo', 'FilmGrain', 'FrameHeader',
-    'FrameState', 'LoopFilter', 'LoopRestoration', 'OperatingPoint',
-    'Quantization', 'Reader', 'SavedFrame', 'Segmentation', 'SequenceHeader',
-    'StreamError', 'Tile', 'TileGroup', 'TileInfo', 'TimingInfo',
+    'FrameState', 'LoopFilter', 'LoopRestoration', 'MissingReference',
+    'OperatingPoint', 'Quantization', 'Reader', 'SavedFrame', 'Segmentation',
+    'SequenceHeader', 'StreamError', 'Tile', 'TileGroup', 'TileInfo', 'TimingInfo',
     'colour_of', 'get_relative_dist', 'parse_frame_header', 'parse_sequence_header',
-    'parse_tile_group', 'warp_valid',
+    'parse_tile_group', 'same_sequence', 'warp_valid',
 ]
 
 # ----------------------------------------------------------------- constants
@@ -62,6 +70,17 @@ MAX_TILE_WIDTH = 4096
 MAX_TILE_AREA = 4096 * 2304
 MAX_TILE_ROWS = 64
 MAX_TILE_COLS = 64
+
+#: The largest seq_profile; 3 to 7 are reserved (6.4.1).
+MAX_PROFILE = 2
+
+#: The most bits a frame id takes (6.8.2).
+MAX_FRAME_ID_BITS = 16
+
+#: The most points a film grain scaling function has, for luma and for each
+#: chroma plane (6.8.20).
+MAX_LUMA_POINTS = 14
+MAX_CHROMA_POINTS = 10
 
 MAX_SEGMENTS = 8
 SEG_LVL_MAX = 8
@@ -190,6 +209,16 @@ def _tile_log2(block: int, target: int) -> int:
     while (block << k) < target:
         k += 1
     return k
+
+
+class MissingReference(StreamError):
+    """A header reads from a reference slot that holds no frame.
+
+    A stream joined after its key frame has such headers until the next one,
+    so a decoder that is waiting for a key frame passes the frame over.
+    Anywhere else it is the :class:`~pyopengl_video.vaapi.h264.StreamError`
+    it derives from.
+    """
 
 
 # ---------------------------------------------------------- sequence header
@@ -324,6 +353,31 @@ def _timing_info(reader: Reader) -> TimingInfo:
     return TimingInfo(ticks, scale, equal, reader.uvlc() if equal else 0)
 
 
+#: Chroma layouts by (subsampling_x, subsampling_y), for a message.
+SAMPLINGS = {(1, 1): '4:2:0', (1, 0): '4:2:2', (0, 0): '4:4:4', (0, 1): '4:4:0'}
+
+
+def _check_sampling(profile: int, bit_depth: int, matrix: int, sampling: tuple[int, int]) -> None:
+    """Refuse a chroma layout its profile does not have (6.4.1, 6.4.2).
+
+    Main profile is 4:2:0 and High is 4:4:4. Professional is 4:2:2 below 12
+    bits and any of the three at 12. The BT.709, sRGB and identity triple
+    states 4:4:4 whatever the profile, which is how a layout a profile lacks
+    comes to be stated.
+    """
+    name = SAMPLINGS[sampling]
+    allowed = {0: sampling == (1, 1), 1: sampling == (0, 0)}.get(
+        profile, bit_depth == 12 or sampling == (1, 0))
+    if not allowed:
+        raise StreamError(
+            f'the sequence header states {name} sampling at {bit_depth} bits under '
+            f'seq_profile {profile}, which has none')
+    if matrix == MC_IDENTITY and sampling != (0, 0):
+        raise StreamError(
+            f'the sequence header states the identity matrix with {name} sampling, '
+            'and identity is 4:4:4')
+
+
 def _color_config(reader: Reader, profile: int) -> ColorConfig:
     high_bitdepth = reader.flag()
     if profile == 2 and high_bitdepth:
@@ -355,15 +409,24 @@ def _color_config(reader: Reader, profile: int) -> ColorConfig:
             subsampling_x, subsampling_y = 1, 0
         if subsampling_x and subsampling_y:
             position = reader.f(2)
+    _check_sampling(profile, bit_depth, matrix, (subsampling_x, subsampling_y))
     return ColorConfig(bit_depth, 0, described, primaries, transfer, matrix,
                        color_range, subsampling_x, subsampling_y, position,
                        reader.flag())
 
 
 def parse_sequence_header(payload: bytes) -> SequenceHeader:
-    """Read a sequence header OBU's payload."""
+    """Read a sequence header OBU's payload.
+
+    Refused with a :class:`~pyopengl_video.vaapi.h264.StreamError`: a reserved
+    seq_profile, a chroma layout the profile does not have, and frame ids of
+    more than 16 bits.
+    """
     reader = Reader(payload)
     profile = reader.f(3)
+    if profile > MAX_PROFILE:
+        raise StreamError(
+            f'seq_profile is {profile}, and {MAX_PROFILE} is the largest there is')
     still_picture = reader.flag()
     reduced = reader.flag()
     timing: TimingInfo | None = None
@@ -404,6 +467,11 @@ def parse_sequence_header(payload: bytes) -> SequenceHeader:
     if frame_ids:
         delta_id_length = reader.f(4)
         additional_id_length = reader.f(3)
+        id_bits = additional_id_length + delta_id_length + 3
+        if id_bits > MAX_FRAME_ID_BITS:
+            raise StreamError(
+                f'the sequence header gives a frame id {id_bits} bits, and '
+                f'{MAX_FRAME_ID_BITS} are the most one has')
     superblock = reader.flag()
     filter_intra = reader.flag()
     intra_edge = reader.flag()
@@ -464,12 +532,26 @@ def colour_of(sequence: SequenceHeader) -> Colour:
     ).resolved(sequence.size[1])
 
 
+def same_sequence(first: SequenceHeader, second: SequenceHeader) -> bool:
+    """Whether two sequence headers are of one coded video sequence (7.5).
+
+    Within a sequence every sequence header is the same but for the
+    operating parameters of its operating points, which no frame is read with.
+    """
+    def parameters(sequence: SequenceHeader) -> SequenceHeader:
+        return dataclasses.replace(sequence, operating_points=tuple(
+            dataclasses.replace(point, decoder_buffer_delay=0, encoder_buffer_delay=0,
+                                low_delay_mode_flag=0)
+            for point in sequence.operating_points))
+    return parameters(first) == parameters(second)
+
+
 # ------------------------------------------------------------- frame header
 
 
 @dataclasses.dataclass
 class TileInfo:
-    """tile_info() (5.9.15).
+    """tile_info() (5.9.15): at most 64 tile columns and 64 tile rows (6.8.14).
 
     mi_col_starts, mi_row_starts -- MiColStarts and MiRowStarts, with the
         frame's MiCols and MiRows as the last entry
@@ -736,6 +818,11 @@ class FrameHeader:
         """The frame type in words, for a message."""
         return FRAME_TYPE_NAMES[self.frame_type]
 
+    @property
+    def described(self) -> str:
+        """The frame in words, for a message."""
+        return f'{self.kind} frame at order hint {self.order_hint}'
+
 
 @dataclasses.dataclass(frozen=True)
 class SavedFrame:
@@ -743,6 +830,11 @@ class SavedFrame:
 
     valid -- RefValid: a frame has been saved here since the last key frame
     showable_frame -- the frame may be output by show_existing_frame
+    order_hint -- RefOrderHint, which an error resilient header may state for
+        a slot that holds no frame
+
+    Of a slot that holds no frame, `order_hint` alone means anything, and
+    :meth:`FrameState.saved` is how the rest is read.
     """
 
     valid: bool = False
@@ -759,6 +851,7 @@ class SavedFrame:
     subsampling_x: int = 1
     subsampling_y: int = 1
     bit_depth: int = 8
+    mono_chrome: int = 0
     order_hint: int = 0
     order_hints: tuple[int, ...] = (0,) * (ALTREF_FRAME + 1)
     gm_params: GmParams = dataclasses.field(default_factory=_default_gm)
@@ -781,6 +874,17 @@ class FrameState:
     def reset(self) -> None:
         """Forget every saved frame, as before the first frame of a stream."""
         self.slots = [SavedFrame() for _ in range(NUM_REF_FRAMES)]
+
+    def saved(self, slot: int, what: str) -> SavedFrame:
+        """The frame saved in `slot`; :class:`MissingReference` where it holds none.
+
+        what -- what reads the slot, to open the message: "the inter frame at
+            order hint 4 refers to"
+        """
+        saved = self.slots[slot]
+        if not saved.valid:
+            raise MissingReference(f'{what} reference slot {slot}, which holds no frame')
+        return saved
 
     def invalidate(self, slot: int, order_hint: int | None = None) -> None:
         """Mark `slot` as holding no frame, with `order_hint` where one is given."""
@@ -809,7 +913,7 @@ class FrameState:
             mi_rows=header.mi_rows, frame_type=header.frame_type,
             showable_frame=header.showable_frame, subsampling_x=color.subsampling_x,
             subsampling_y=color.subsampling_y, bit_depth=color.bit_depth,
-            order_hint=header.order_hint, order_hints=header.order_hints,
+            mono_chrome=color.mono_chrome, order_hint=header.order_hint, order_hints=header.order_hints,
             gm_params=header.gm_params,
             loop_filter_ref_deltas=header.loop_filter.ref_deltas,
             loop_filter_mode_deltas=header.loop_filter.mode_deltas,
@@ -893,6 +997,21 @@ def _superres_params(reader: Reader, sequence: SequenceHeader, header: FrameHead
     header.mi_rows = 2 * ((header.frame_height + 7) >> 3)
 
 
+def _check_frame_size(sequence: SequenceHeader, header: FrameHeader) -> None:
+    """Refuse a frame of no samples, or larger than the sequence allows (6.8.4).
+
+    The sequence header's maximum is what a decoder sizes its surfaces from,
+    and it bounds the size a frame takes from a reference as it does the size
+    a frame states.
+    """
+    width, height = header.size
+    most_width, most_height = sequence.size
+    if not (1 <= header.frame_width <= width <= most_width and 1 <= height <= most_height):
+        raise StreamError(
+            f'the {header.described} is {width}x{height}, and its sequence header '
+            f'allows 1x1 to {most_width}x{most_height}')
+
+
 def _frame_size(reader: Reader, sequence: SequenceHeader, header: FrameHeader) -> None:
     if header.frame_size_override_flag:
         header.frame_width = reader.f(sequence.frame_width_bits_minus_1 + 1) + 1
@@ -900,6 +1019,7 @@ def _frame_size(reader: Reader, sequence: SequenceHeader, header: FrameHeader) -
     else:
         header.frame_width, header.frame_height = sequence.size
     _superres_params(reader, sequence, header)
+    _check_frame_size(sequence, header)
 
 
 def _render_size(reader: Reader, header: FrameHeader) -> None:
@@ -914,16 +1034,77 @@ def _frame_size_with_refs(reader: Reader, sequence: SequenceHeader,
                           header: FrameHeader, state: FrameState) -> None:
     for index in range(REFS_PER_FRAME):
         if reader.flag():
-            saved = state.slots[header.ref_frame_idx[index]]
+            saved = state.saved(header.ref_frame_idx[index],
+                                f'the {header.described} takes its size from')
             header.found_ref = 1
             header.frame_width = saved.upscaled_width
             header.frame_height = saved.frame_height
             header.render_width = saved.render_width
             header.render_height = saved.render_height
             _superres_params(reader, sequence, header)
+            _check_frame_size(sequence, header)
             return
     _frame_size(reader, sequence, header)
     _render_size(reader, header)
+
+
+def _check_references(header: FrameHeader, sequence: SequenceHeader,
+                      state: FrameState) -> None:
+    """Hold an inter frame's references to what 6.8.2 requires of them.
+
+    Each of the seven holds a frame, of the bit depth and the chroma layout of
+    this one.
+    """
+    color = sequence.color_config
+    layout = (color.bit_depth, color.subsampling_x, color.subsampling_y, color.mono_chrome)
+    for slot in header.ref_frame_idx:
+        saved = state.saved(slot, f'the {header.described} refers to')
+        if (saved.bit_depth, saved.subsampling_x, saved.subsampling_y,
+                saved.mono_chrome) != layout:
+            raise StreamError(
+                f'the {header.described} refers to reference slot {slot}, whose frame '
+                f'has {saved.bit_depth} bits a sample or another chroma layout than '
+                'its own')
+
+
+def _check_reference_sizes(header: FrameHeader, state: FrameState) -> None:
+    """Hold an inter frame to the scaling its references allow (6.8.6).
+
+    A frame is at least half and at most sixteen times each reference, in
+    both directions.
+    """
+    width, height = header.frame_width, header.frame_height
+    for slot in header.ref_frame_idx:
+        saved = state.saved(slot, f'the {header.described} refers to')
+        if not (2 * width >= saved.upscaled_width and 2 * height >= saved.frame_height
+                and width <= 16 * saved.upscaled_width
+                and height <= 16 * saved.frame_height):
+            raise StreamError(
+                f'the {header.described} is {width}x{height}, which is less than half '
+                f'or more than sixteen times the {saved.upscaled_width}x'
+                f'{saved.frame_height} of reference slot {slot}')
+
+
+def _stated_starts(reader: Reader, superblocks: int, largest: int, most: int,
+                   what: str) -> tuple[list[int], int]:
+    """Where each tile begins along one axis, from the sizes stated; and the largest.
+
+    superblocks -- the frame's extent in superblocks
+    largest -- the most superblocks one tile may span
+    most -- the most tiles there may be (6.8.14), past which nothing is read
+    """
+    starts: list[int] = []
+    start = widest = 0
+    while start < superblocks:
+        if len(starts) == most:
+            raise StreamError(
+                f'the frame states more than {most} tile {what}, and {most} are '
+                'the most a frame has')
+        starts.append(start)
+        size = reader.ns(min(superblocks - start, largest)) + 1
+        widest = max(widest, size)
+        start += size
+    return starts, widest
 
 
 def _tile_info(reader: Reader, sequence: SequenceHeader, header: FrameHeader) -> TileInfo:
@@ -931,6 +1112,10 @@ def _tile_info(reader: Reader, sequence: SequenceHeader, header: FrameHeader) ->
     round_up = (1 << shift) - 1
     sb_cols = (header.mi_cols + round_up) >> shift
     sb_rows = (header.mi_rows + round_up) >> shift
+    if sb_cols < 1 or sb_rows < 1:
+        raise StreamError(
+            f'the {header.described} is {header.frame_width}x{header.frame_height}, '
+            'which has no superblock to put in a tile')
     sb_size = shift + 2
     max_tile_width_sb = MAX_TILE_WIDTH >> sb_size
     max_tile_area_sb = MAX_TILE_AREA >> (2 * sb_size)
@@ -953,23 +1138,16 @@ def _tile_info(reader: Reader, sequence: SequenceHeader, header: FrameHeader) ->
         height_sb = (sb_rows + (1 << rows_log2) - 1) >> rows_log2
         row_starts = list(range(0, sb_rows, height_sb))
     else:
-        widest = 0
-        start = 0
-        while start < sb_cols:
-            col_starts.append(start)
-            size = reader.ns(min(sb_cols - start, max_tile_width_sb)) + 1
-            widest = max(widest, size)
-            start += size
+        col_starts, widest = _stated_starts(
+            reader, sb_cols, max_tile_width_sb, MAX_TILE_COLS, 'columns')
         cols_log2 = _tile_log2(1, len(col_starts))
         if min_log2_tiles > 0:
             max_tile_area_sb = (sb_rows * sb_cols) >> (min_log2_tiles + 1)
         else:
             max_tile_area_sb = sb_rows * sb_cols
         max_tile_height_sb = max(max_tile_area_sb // widest, 1)
-        start = 0
-        while start < sb_rows:
-            row_starts.append(start)
-            start += reader.ns(min(sb_rows - start, max_tile_height_sb)) + 1
+        row_starts, _ = _stated_starts(
+            reader, sb_rows, max_tile_height_sb, MAX_TILE_ROWS, 'rows')
         rows_log2 = _tile_log2(1, len(row_starts))
     info.tile_cols, info.tile_rows = len(col_starts), len(row_starts)
     info.tile_cols_log2, info.tile_rows_log2 = cols_log2, rows_log2
@@ -981,6 +1159,10 @@ def _tile_info(reader: Reader, sequence: SequenceHeader, header: FrameHeader) ->
     info.mi_row_starts = (*(start << shift for start in row_starts), header.mi_rows)
     if cols_log2 > 0 or rows_log2 > 0:
         info.context_update_tile_id = reader.f(cols_log2 + rows_log2)
+        if info.context_update_tile_id >= info.num_tiles:
+            raise StreamError(
+                f'context_update_tile_id is {info.context_update_tile_id} in a frame '
+                f'of {info.num_tiles} tiles')
         info.tile_size_bytes = reader.f(2) + 1
     return info
 
@@ -1137,14 +1319,13 @@ def _lr_params(reader: Reader, header: FrameHeader, sequence: SequenceHeader) ->
     return found
 
 
-def _skip_mode_params(reader: Reader, header: FrameHeader, sequence: SequenceHeader,
-                      state: FrameState) -> None:
+def _skip_mode_params(reader: Reader, header: FrameHeader, sequence: SequenceHeader) -> None:
     """skip_mode_params() (5.9.22): the two references skip mode predicts from."""
     bits = sequence.order_hint_bits
     allowed = False
     if not (header.frame_is_intra or not header.reference_select
             or not sequence.enable_order_hint):
-        hints = [state.slots[index].order_hint for index in header.ref_frame_idx]
+        hints = list(header.order_hints[LAST_FRAME:])
         forward = backward = -1
         forward_hint = backward_hint = 0
         for index, hint in enumerate(hints):
@@ -1271,19 +1452,34 @@ def _film_grain_params(reader: Reader, header: FrameHeader, sequence: SequenceHe
     update = reader.flag() if header.frame_type == INTER_FRAME else 1
     if not update:
         index = reader.f(3)
+        if index not in header.ref_frame_idx:
+            raise StreamError(
+                f'film_grain_params_ref_idx is {index}, which is none of the '
+                f'reference slots {header.ref_frame_idx} the frame refers to')
+        saved = state.saved(index, f'the {header.described} takes its film grain from')
         return dataclasses.replace(
-            state.slots[index].film_grain, apply_grain=1, grain_seed=seed,
+            saved.film_grain, apply_grain=1, grain_seed=seed,
             update_grain=0, film_grain_params_ref_idx=index)
     color = sequence.color_config
 
-    def points() -> tuple[tuple[int, ...], tuple[int, ...]]:
-        values, scalings = [], []
-        for _ in range(reader.f(4)):
-            values.append(reader.f(8))
+    def points(plane: str, most: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        count = reader.f(4)
+        if count > most:
+            raise StreamError(
+                f'num_{plane}_points is {count}, and {most} are the most there are')
+        values: list[int] = []
+        scalings: list[int] = []
+        for _ in range(count):
+            value = reader.f(8)
+            if values and value <= values[-1]:
+                raise StreamError(
+                    f'point_{plane}_value[{len(values)}] is {value} after '
+                    f'{values[-1]}, and the points are in increasing order')
+            values.append(value)
             scalings.append(reader.f(8))
         return tuple(values), tuple(scalings)
 
-    y_value, y_scaling = points()
+    y_value, y_scaling = points('y', MAX_LUMA_POINTS)
     from_luma = 0 if color.mono_chrome else reader.flag()
     cb_value: tuple[int, ...] = ()
     cb_scaling: tuple[int, ...] = ()
@@ -1291,8 +1487,12 @@ def _film_grain_params(reader: Reader, header: FrameHeader, sequence: SequenceHe
     cr_scaling: tuple[int, ...] = ()
     if not (color.mono_chrome or from_luma
             or (color.subsampling_x == 1 and color.subsampling_y == 1 and not y_value)):
-        cb_value, cb_scaling = points()
-        cr_value, cr_scaling = points()
+        cb_value, cb_scaling = points('cb', MAX_CHROMA_POINTS)
+        cr_value, cr_scaling = points('cr', MAX_CHROMA_POINTS)
+        if color.subsampling_x and color.subsampling_y and bool(cb_value) != bool(cr_value):
+            raise StreamError(
+                f'num_cb_points is {len(cb_value)} and num_cr_points is {len(cr_value)}: '
+                'a 4:2:0 frame has grain in both chroma planes or in neither')
     scaling = reader.f(2)
     lag = reader.f(2)
     luma_positions = 2 * lag * (lag + 1)
@@ -1349,7 +1549,11 @@ def _show_existing(reader: Reader, header: FrameHeader, sequence: SequenceHeader
     header.frame_presentation_time = _temporal_point_info(reader, sequence)
     if sequence.frame_id_numbers_present_flag:
         header.display_frame_id = reader.f(sequence.id_len)
-    saved = state.slots[header.frame_to_show_map_idx]
+    saved = state.saved(header.frame_to_show_map_idx, 'a frame header shows')
+    if not saved.showable_frame:
+        raise StreamError(
+            f'a frame header shows reference slot {header.frame_to_show_map_idx}, '
+            'whose frame is not marked showable')
     header.frame_type = saved.frame_type
     header.show_frame = 1
     header.refresh_frame_flags = ALL_FRAMES if saved.frame_type == KEY_FRAME else 0
@@ -1375,6 +1579,12 @@ def parse_frame_header(payload: bytes, sequence: SequenceHeader, state: FrameSta
         a frame id that does not match) is marked as holding no frame.
     temporal_id, spatial_id -- the OBU's layer, which selects the buffer
         removal times that are present
+
+    A header that reads from a slot holding no frame raises
+    :class:`MissingReference`: one that shows the slot, or an inter frame
+    that names it among its seven references. Anything else outside what the
+    specification allows raises the
+    :class:`~pyopengl_video.vaapi.h264.StreamError` that derives from.
     """
     reader = Reader(payload)
     header = FrameHeader(temporal_id=temporal_id, spatial_id=spatial_id)
@@ -1438,6 +1648,10 @@ def parse_frame_header(payload: bytes, sequence: SequenceHeader, state: FrameSta
         header.refresh_frame_flags = ALL_FRAMES
     else:
         header.refresh_frame_flags = reader.f(8)
+        if header.frame_type == INTRA_ONLY_FRAME and header.refresh_frame_flags == ALL_FRAMES:
+            raise StreamError(
+                'an intra-only frame replaces all eight reference slots, which a '
+                'key frame alone does')
     if ((not intra or header.refresh_frame_flags != ALL_FRAMES)
             and header.error_resilient_mode and sequence.enable_order_hint):
         hints = []
@@ -1466,11 +1680,13 @@ def parse_frame_header(payload: bytes, sequence: SequenceHeader, state: FrameSta
             if sequence.frame_id_numbers_present_flag:
                 reader.f(sequence.delta_frame_id_length_minus_2 + 2)    # delta_frame_id_minus_1
         header.ref_frame_idx = tuple(refs)
+        _check_references(header, sequence, state)
         if header.frame_size_override_flag and not header.error_resilient_mode:
             _frame_size_with_refs(reader, sequence, header, state)
         else:
             _frame_size(reader, sequence, header)
             _render_size(reader, header)
+        _check_reference_sizes(header, state)
         if not header.force_integer_mv:
             header.allow_high_precision_mv = reader.flag()
         header.is_filter_switchable = reader.flag()
@@ -1485,7 +1701,8 @@ def parse_frame_header(payload: bytes, sequence: SequenceHeader, state: FrameSta
         header.disable_frame_end_update_cdf = reader.flag()
     # load_previous(), or None for setup_past_independence().
     previous = (None if header.primary_ref_frame == PRIMARY_REF_NONE
-                else state.slots[header.ref_frame_idx[header.primary_ref_frame]])
+                else state.saved(header.ref_frame_idx[header.primary_ref_frame],
+                                 f'the {header.described} loads its state from'))
     header.tile_info = _tile_info(reader, sequence, header)
     header.quantization = _quantization_params(reader, color)
     header.segmentation = _segmentation_params(reader, header, previous)
@@ -1508,7 +1725,7 @@ def parse_frame_header(payload: bytes, sequence: SequenceHeader, state: FrameSta
         header.tx_mode = TX_MODE_SELECT if reader.flag() else TX_MODE_LARGEST
     if not intra:
         header.reference_select = reader.flag()
-    _skip_mode_params(reader, header, sequence, state)
+    _skip_mode_params(reader, header, sequence)
     if not (intra or header.error_resilient_mode or not sequence.enable_warped_motion):
         header.allow_warped_motion = reader.flag()
     header.reduced_tx_set = reader.flag()
@@ -1545,6 +1762,10 @@ def parse_tile_group(data: bytes, header: FrameHeader, start: int = 0) -> TileGr
 
     start -- 0 for a tile group OBU's payload; for a frame OBU, the byte after
         the frame header and its padding
+
+    Every tile returned lies inside `data` and is at least a byte. The size
+    fields alone are read, so a tile group costs its count of tiles and not
+    its length.
     """
     info = header.tile_info
     reader = Reader(data, start * 8)
@@ -1564,8 +1785,12 @@ def parse_tile_group(data: bytes, header: FrameHeader, start: int = 0) -> TileGr
         if number == last:
             size = len(data) - position
         else:
-            reader.position = position * 8
-            size = reader.le(info.tile_size_bytes) + 1
+            # tile_size_minus_1, which is le(TileSizeBytes).
+            field = data[position:position + info.tile_size_bytes]
+            if len(field) != info.tile_size_bytes:
+                raise StreamError(
+                    f'the size of tile {number} runs past the end of its tile group')
+            size = int.from_bytes(field, 'little') + 1
             position += info.tile_size_bytes
         if size <= 0 or position + size > len(data):
             raise StreamError(

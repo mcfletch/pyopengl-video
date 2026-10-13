@@ -41,12 +41,17 @@ class Sequence:
     Screen content tools, every compound and warped tool, CDEF and loop
     restoration are off, so a frame header has none of their syntax. Order
     hints are 7 bits.
+
+    twelve_bit, subsampling -- what a profile 2 sequence with high_bitdepth
+        states; `subsampling` is written at 12 bits alone
     """
 
     profile: int = 0
     size: tuple[int, int] = (64, 48)
     size_bits: int = 8
     high_bitdepth: int = 0
+    twelve_bit: int = 0
+    subsampling: tuple[int, int] = (1, 1)
     mono_chrome: int = 0
     film_grain: int = 0
     superres: int = 0
@@ -88,6 +93,8 @@ class Sequence:
         writer.flag(0)                          # enable_cdef
         writer.flag(0)                          # enable_restoration
         writer.flag(self.high_bitdepth)
+        if self.profile == 2 and self.high_bitdepth:
+            writer.flag(self.twelve_bit)
         if self.profile != 1:
             writer.flag(self.mono_chrome)
         writer.flag(self.colour is not None)
@@ -98,7 +105,12 @@ class Sequence:
             writer.flag(self.color_range)
         elif self.colour != (1, 13, 0):
             writer.flag(self.color_range)
-            if self.profile == 0:
+            if self.profile == 2 and self.high_bitdepth and self.twelve_bit:
+                writer.flag(self.subsampling[0])
+                if self.subsampling[0]:
+                    writer.flag(self.subsampling[1])
+            if self.profile == 0 or (self.profile == 2 and self.twelve_bit
+                                     and self.subsampling == (1, 1)):
                 writer.f(0, 2)                  # chroma_sample_position
         if not self.mono_chrome:
             writer.flag(0)                      # separate_uv_delta_q
@@ -122,7 +134,8 @@ def frame_header(sequence=DEFAULT, *, frame_type=KEY_FRAME, show_frame=1,
                  primary_ref_frame=PRIMARY_REF_NONE, refresh=0xFF, ref_order_hints=None,
                  short_signaling=None, refs=(0,) * 7, size=None, found_ref=None,
                  superres_denom=None, base_q_idx=20, segments=None, segmentation=None,
-                 loop_filter=(0, 0), ref_deltas=None, mode_deltas=None, grain=None):
+                 loop_filter=(0, 0), ref_deltas=None, mode_deltas=None, grain=None,
+                 tile_info=None):
     """An uncompressed header as bytes, with its length in bits.
 
     size -- a frame size, which sets frame_size_override_flag
@@ -135,7 +148,12 @@ def frame_header(sequence=DEFAULT, *, frame_type=KEY_FRAME, show_frame=1,
         frame has a primary reference frame
     ref_deltas, mode_deltas -- {index: value} updates to the loop filter deltas
     grain -- None for no grain; ``'new'`` for one luma point; a slot number to
-        take the parameters of that reference
+        take the parameters of that reference; or a dictionary of the points
+        to write as (value, scaling) pairs under ``y``, ``cb`` and ``cr``,
+        with ``from_luma`` for chroma_scaling_from_luma
+    tile_info -- None for one uniformly spaced tile; or a function that is
+        given the writer and writes tile_info() from
+        uniform_tile_spacing_flag on
     """
     writer = BitWriter()
     intra = frame_type in (KEY_FRAME, INTRA_ONLY_FRAME)
@@ -206,7 +224,10 @@ def frame_header(sequence=DEFAULT, *, frame_type=KEY_FRAME, show_frame=1,
         writer.f(2, 2)                          # interpolation_filter
         writer.flag(0)                          # is_motion_mode_switchable
     writer.flag(1)                              # disable_frame_end_update_cdf
-    writer.flag(1)                              # uniform_tile_spacing_flag
+    if tile_info is None:
+        writer.flag(1)                          # uniform_tile_spacing_flag
+    else:
+        tile_info(writer)
     writer.f(base_q_idx, 8)
     writer.flag(0)                              # DeltaQYDc
     if not sequence.mono_chrome:
@@ -265,7 +286,9 @@ def frame_header(sequence=DEFAULT, *, frame_type=KEY_FRAME, show_frame=1,
             writer.f(0x1234, 16)                # grain_seed
             if frame_type == INTER_FRAME:
                 writer.flag(grain == 'new')     # update_grain
-            if grain != 'new':
+            if isinstance(grain, dict):
+                _grain_points(writer, sequence, grain)
+            elif grain != 'new':
                 writer.f(grain, 3)              # film_grain_params_ref_idx
             else:
                 writer.f(1, 4)                  # num_y_points
@@ -285,6 +308,101 @@ def frame_header(sequence=DEFAULT, *, frame_type=KEY_FRAME, show_frame=1,
                 writer.flag(1)                  # overlap_flag
                 writer.flag(0)                  # clip_to_restricted_range
     return writer.bytes(), len(writer)
+
+
+def _grain_points(writer, sequence, grain):
+    """Write film_grain_params() from num_y_points on, for the points in `grain`."""
+    luma = grain.get('y', ())
+    from_luma = grain.get('from_luma', 0)
+    chroma = [grain.get('cb', ()), grain.get('cr', ())]
+
+    def points(found):
+        writer.f(len(found), 4)
+        for value, scaling in found:
+            writer.f(value, 8)
+            writer.f(scaling, 8)
+
+    points(luma)
+    if not sequence.mono_chrome:
+        writer.flag(from_luma)                  # chroma_scaling_from_luma
+    if sequence.mono_chrome or from_luma or not luma:
+        chroma = [(), ()]
+    else:
+        for found in chroma:
+            points(found)
+    writer.f(0, 2)                              # grain_scaling_minus_8
+    writer.f(0, 2)                              # ar_coeff_lag
+    for found in chroma:
+        if from_luma or found:
+            # At lag 0 a chroma plane has one coefficient, and only where
+            # there are luma points.
+            for _ in range(1 if luma else 0):
+                writer.f(128, 8)
+    writer.f(0, 2)                              # ar_coeff_shift_minus_6
+    writer.f(0, 2)                              # grain_scale_shift
+    for found in chroma:
+        if found:
+            writer.f(128, 8)                    # cb_mult or cr_mult
+            writer.f(192, 8)                    # cb_luma_mult or cr_luma_mult
+            writer.f(256, 9)                    # cb_offset or cr_offset
+    writer.flag(0)                              # overlap_flag
+    writer.flag(0)                              # clip_to_restricted_range
+
+
+def ns(writer, value, count):
+    """Write `value` as ns(`count`): one of `count` values, the low ones a bit shorter."""
+    width = count.bit_length()
+    spare = (1 << width) - count
+    if value < spare:
+        writer.f(value, width - 1)
+    else:
+        writer.f((value + spare) >> 1, width - 1)
+        writer.f((value + spare) & 1, 1)
+
+
+def stated_tiles(columns, rows, *, sb_cols, sb_rows, context_update_tile_id=0,
+                 tile_size_bytes=1, widest=64, tallest=None):
+    """A `tile_info` for :func:`frame_header`: tile sizes stated one by one.
+
+    columns, rows -- each tile column's width and each tile row's height, in
+        superblocks
+    sb_cols, sb_rows -- the frame's size in superblocks
+    widest, tallest -- maxTileWidthSb and maxTileHeightSb as tile_info()
+        derives them for the frame; `tallest` is the frame's height where
+        nothing is given
+    """
+    def write(writer):
+        writer.flag(0)                          # uniform_tile_spacing_flag
+        for sizes, total, most in ((columns, sb_cols, widest),
+                                   (rows, sb_rows, tallest or sb_rows)):
+            start = 0
+            for size in sizes:
+                ns(writer, size - 1, min(total - start, most))
+                start += size
+        bits = (len(columns) - 1).bit_length() + (len(rows) - 1).bit_length()
+        if bits:
+            writer.f(context_update_tile_id, bits)
+            writer.f(tile_size_bytes - 1, 2)
+    return write
+
+
+def uniform_tiles(column_increments, row_increments, *, bits=0, context_update_tile_id=0,
+                  tile_size_bytes=1):
+    """A `tile_info` for :func:`frame_header`: uniformly spaced tiles.
+
+    column_increments, row_increments -- the increment_tile_cols_log2 and
+        increment_tile_rows_log2 flags to write
+    bits -- TileColsLog2 + TileRowsLog2 as those flags leave them, which is
+        how wide context_update_tile_id is
+    """
+    def write(writer):
+        writer.flag(1)                          # uniform_tile_spacing_flag
+        for flag in (*column_increments, *row_increments):
+            writer.flag(flag)
+        if bits:
+            writer.f(context_update_tile_id, bits)
+            writer.f(tile_size_bytes - 1, 2)
+    return write
 
 
 def show_existing(slot):

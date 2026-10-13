@@ -18,11 +18,15 @@ from pyopengl_video.vaapi.av1_parse import (
     ALTREF_FRAME,
     KEY_FRAME,
     LAST_FRAME,
+    MAX_TILE_COLS,
+    MAX_TILE_ROWS,
     NUM_REF_FRAMES,
     REFS_PER_FRAME,
+    SAMPLINGS,
     FilmGrain,
     FrameHeader,
     FrameState,
+    MissingReference,
     SequenceHeader,
     StreamError,
     Tile,
@@ -30,6 +34,7 @@ from pyopengl_video.vaapi.av1_parse import (
     parse_frame_header,
     parse_sequence_header,
     parse_tile_group,
+    same_sequence,
     warp_valid,
 )
 from pyopengl_video.vaapi.control import Buffer, DecodeControl, DecodeSession, Format
@@ -44,6 +49,11 @@ PROFILE_NAMES = {0: 'Main', 1: 'High', 2: 'Professional'}
 #: blocks and is even).
 BLOCK = 8
 
+#: How many tile widths, and how many tile heights, libva's picture parameters
+#: hold. A frame has at most 64 tiles along an axis, and the size of the 64th
+#: is not stated: it is what is left of the frame.
+STATED_TILE_SIZES = MAX_TILE_COLS - 1
+
 
 def format_for(sequence: SequenceHeader) -> Format:
     """The surfaces a sequence decodes into; refuses what is not decoded here."""
@@ -53,6 +63,11 @@ def format_for(sequence: SequenceHeader) -> Format:
         raise DecoderError(
             f'the stream is AV1 {name} profile, and VA-API decoding here covers '
             'Main profile (4:2:0 or monochrome, at 8 or 10 bits)')
+    sampling = (color.subsampling_x, color.subsampling_y)
+    if not color.mono_chrome and sampling != (1, 1):
+        raise DecoderError(
+            f'the stream is AV1 {name} profile with {SAMPLINGS[sampling]} sampling, '
+            'and the surfaces of that profile are 4:2:0 or monochrome')
     width, height = sequence.size
     # Every slot may hold a frame of its own, and a frame with film grain is
     # two surfaces: the one later frames predict from and the one shown.
@@ -166,10 +181,14 @@ def picture_parameters(sequence: SequenceHeader, header: FrameHeader,
     _film_grain(grain, parameters.film_grain_info)
 
     tiles = header.tile_info
+    if tiles.tile_cols > MAX_TILE_COLS or tiles.tile_rows > MAX_TILE_ROWS:
+        raise DecoderError(
+            f'the frame has {tiles.tile_cols} tile columns and {tiles.tile_rows} tile '
+            f'rows, and a driver is told of at most {MAX_TILE_COLS} and {MAX_TILE_ROWS}')
     parameters.tile_cols, parameters.tile_rows = tiles.tile_cols, tiles.tile_rows
     for sizes, field in ((tiles.width_in_sbs_minus_1, parameters.width_in_sbs_minus_1),
                          (tiles.height_in_sbs_minus_1, parameters.height_in_sbs_minus_1)):
-        for index, size in enumerate(sizes[:len(field)]):
+        for index, size in enumerate(sizes[:STATED_TILE_SIZES]):
             field[index] = size
     parameters.context_update_tile_id = tiles.context_update_tile_id
 
@@ -284,16 +303,24 @@ class _Picture:
 class _Current:
     """The frame being gathered from its tile groups.
 
-    surface -- None for a frame that is passed over, whose tile groups are
-        read and not decoded
+    sequence -- the sequence header the frame's header was read under, which
+        its tile groups are decoded under too
+    surface -- where the frame is reconstructed
+    display -- where it is written with film grain added, for a frame that
+        applies grain
+    batches -- the buffers to submit: the picture parameters, then each tile
+        group's
     """
 
-    def __init__(self, header: FrameHeader, sample: Sample) -> None:
+    def __init__(self, header: FrameHeader, sequence: SequenceHeader, sample: Sample,
+                 surface: int, display: int | None,
+                 parameters: av1_api.VADecPictureParameterBufferAV1) -> None:
         self.header = header
+        self.sequence = sequence
         self.sample = sample
-        self.surface: int | None = None
-        self.display: int | None = None
-        self.batches: list[list[Buffer]] = []
+        self.surface = surface
+        self.display = display
+        self.batches: list[list[Buffer]] = [[(api.VAPictureParameterBufferType, parameters)]]
         self.next_tile = 0
 
 
@@ -317,8 +344,17 @@ class AV1Decoding(DecodeControl):
     references are another size (reference scaling), frames in a temporal or
     spatial layer above the base, and tile list OBUs (large scale tile).
 
+    A sequence header that differs from the one before starts a new sequence,
+    which begins at a key frame that is shown (7.5): any other frame after it
+    is a :class:`~pyopengl_video.vaapi.h264.StreamError` while a reference
+    slot holds a frame of the sequence before, and so is one that arrives
+    while a frame is being gathered.
+
     After :meth:`reset`, and at the start, frames that refer to a frame never
     decoded are passed over until a key frame has been shown.
+
+    A :meth:`decode` that raises leaves no frame being gathered: the tile
+    groups of the frame it was reading are not decoded when they arrive.
     """
 
     codec = codecs.AV1
@@ -327,10 +363,20 @@ class AV1Decoding(DecodeControl):
         super().__init__(session, output_slots)
         self._sequence: SequenceHeader | None = None
         self._sequence_bytes = b''
+        #: The sequence header the frames in the reference slots were decoded
+        #: under.
+        self._slots_sequence: SequenceHeader | None = None
         self._state = FrameState()
         self._slots: list[_Picture | None] = [None] * NUM_REF_FRAMES
         self._format: Format | None = None
+        #: The frame whose tile groups are being gathered, its picture
+        #: parameters built.
         self._current: _Current | None = None
+        #: The surfaces acquired for a frame whose picture parameters are not
+        #: built yet, which :meth:`held` counts.
+        self._acquired: list[int] = []
+        #: Whether the tile groups arriving belong to a frame passed over.
+        self._passing = False
         self._recovering = True
 
     # ------------------------------------------------------------ headers
@@ -343,10 +389,18 @@ class AV1Decoding(DecodeControl):
     def _sequence_header(self, payload: bytes) -> None:
         if payload == self._sequence_bytes:
             return
-        self._sequence = parse_sequence_header(payload)
+        sequence = parse_sequence_header(payload)
+        held = self._sequence
+        if (self._current is not None and held is not None
+                and not same_sequence(held, sequence)):
+            raise StreamError(
+                'a sequence header that changes the sequence arrived inside a '
+                f'frame, between the header of the {self._current.header.described} '
+                'and its last tile group')
+        self._sequence = sequence
         self._sequence_bytes = payload
-        self.size = self._sequence.size
-        self.colour = colour_of(self._sequence)
+        self.size = sequence.size
+        self.colour = colour_of(sequence)
 
     def _in_operating_point(self, unit: obu.Obu) -> bool:
         """Whether the operating point decoded includes the unit's layer (5.3.1)."""
@@ -358,31 +412,58 @@ class AV1Decoding(DecodeControl):
     # ----------------------------------------------------------- decoding
 
     def decode(self, sample: Sample) -> None:
-        for unit in obu.split(sample.data):
-            kind = unit.kind
-            if kind == obu.SEQUENCE_HEADER:
-                self._sequence_header(unit.payload)
-            elif kind == obu.TEMPORAL_DELIMITER:
-                self._current = None
-            elif not self._in_operating_point(unit):
-                continue
-            elif kind in (obu.FRAME_HEADER, obu.REDUNDANT_FRAME_HEADER):
-                # A header that arrives while a frame is being gathered is a
-                # copy of that frame's header (5.9.1).
-                if self._current is None:
-                    self._begin(unit, sample)
-            elif kind == obu.FRAME:
-                header = self._begin(unit, sample)
-                self._tile_group(unit.payload, (header.header_bits + 7) // 8)
-            elif kind == obu.TILE_GROUP:
-                self._tile_group(unit.payload, 0)
-            elif kind == obu.TILE_LIST:
-                raise DecoderError(
-                    'the stream carries a tile list OBU (large scale tile), which '
-                    'this decoder does not decode')
+        try:
+            for unit in obu.split(sample.data):
+                self._unit(unit, sample)
+        except BaseException:
+            # The frame being gathered is not one a later tile group may
+            # finish: its header, or one of its tile groups, was refused.
+            self._current = None
+            self._passing = False
+            raise
 
-    def _begin(self, unit: obu.Obu, sample: Sample) -> FrameHeader:
-        """Read a frame's header: show the frame it names, or start gathering one."""
+    def _unit(self, unit: obu.Obu, sample: Sample) -> None:
+        kind = unit.kind
+        if kind == obu.SEQUENCE_HEADER:
+            self._sequence_header(unit.payload)
+        elif kind == obu.TEMPORAL_DELIMITER:
+            self._current = None
+            self._passing = False
+        elif not self._in_operating_point(unit):
+            return
+        elif kind == obu.FRAME_HEADER:
+            # A header that arrives while a frame is being gathered is a
+            # copy of that frame's header (5.9.1).
+            if self._current is None:
+                self._begin(unit, sample)
+        elif kind == obu.REDUNDANT_FRAME_HEADER:
+            if self._current is None and not self._passing:
+                self._begin(unit, sample)
+        elif kind == obu.FRAME:
+            header = self._begin(unit, sample)
+            if header is not None:
+                self._tile_group(unit.payload, (header.header_bits + 7) // 8)
+        elif kind == obu.TILE_GROUP:
+            if not self._passing:
+                self._tile_group(unit.payload, 0)
+        elif kind == obu.TILE_LIST:
+            raise DecoderError(
+                'the stream carries a tile list OBU (large scale tile), which '
+                'this decoder does not decode')
+
+    def _begin(self, unit: obu.Obu, sample: Sample) -> FrameHeader | None:
+        """Read a frame's header: show the frame it names, or start gathering one.
+
+        None for a frame that is passed over: one that refers to a frame never
+        decoded, before the first key frame has been shown. Its tile groups
+        are passed over as they arrive.
+
+        The frame is gathered once its surfaces are held and its picture
+        parameters are built, and not before: a header that is refused on the
+        way leaves no frame for a tile group to be added to.
+        """
+        self._current = None
+        self._passing = False
         sequence = self._sequence
         if sequence is None:
             raise StreamError('a frame arrived before any sequence header')
@@ -391,49 +472,84 @@ class AV1Decoding(DecodeControl):
                 f'the stream is scalable: it has a frame in temporal layer '
                 f'{unit.temporal_id}, spatial layer {unit.spatial_id}, and this '
                 'decoder takes streams with the base layer alone')
-        header = parse_frame_header(unit.payload, sequence, self._state,
-                                    temporal_id=unit.temporal_id,
-                                    spatial_id=unit.spatial_id)
-        if header.show_existing_frame:
-            self._show_existing(header, sample)
-            return header
-        current = self._current = _Current(header, sample)
-        if not self._decodable(header):
-            return header
-        self._activate(sequence, header)
-        current.surface = self.session.acquire()
-        if header.film_grain.apply_grain:
-            current.display = self.session.acquire()
-        current.batches.append([(
-            api.VAPictureParameterBufferType,
-            picture_parameters(
+        try:
+            header = parse_frame_header(unit.payload, sequence, self._state,
+                                        temporal_id=unit.temporal_id,
+                                        spatial_id=unit.spatial_id)
+            self._check_sequence_start(sequence, header)
+            if header.show_existing_frame:
+                self._show_existing(header, sequence, sample)
+                return header
+            self._check_references(header)
+        except MissingReference:
+            if not self._recovering:
+                raise
+            self._passing = True
+            return None
+        try:
+            self._activate(sequence, header)
+            self._check_fits(header)
+            surface = self._acquire()
+            display = self._acquire() if header.film_grain.apply_grain else None
+            parameters = picture_parameters(
                 sequence, header,
                 [held.surface if held is not None else None for held in self._slots],
-                current.surface, current.display))])
+                surface, display)
+        finally:
+            self._acquired = []
+        self._current = _Current(header, sequence, sample, surface, display, parameters)
         return header
 
-    def _decodable(self, header: FrameHeader) -> bool:
-        """Whether the frame can be decoded; refuses what is not decoded here.
+    def _acquire(self) -> int:
+        """A surface to decode into, held from here until its frame is gathered or refused."""
+        surface = self.session.acquire()
+        self._acquired.append(surface)
+        return surface
 
-        False for a frame to pass over: one that refers to a frame never
-        decoded, before the first key frame has been shown.
+    def _check_sequence_start(self, sequence: SequenceHeader, header: FrameHeader) -> None:
+        """Refuse a sequence that begins anywhere but at a key frame that is shown (7.5).
+
+        Such a key frame replaces every reference slot, so no frame of the
+        new sequence predicts from one of the sequence before. With no slot
+        holding a frame there is nothing of the sequence before to predict
+        from, and any frame may begin.
         """
-        what = f'{header.kind} frame at order hint {header.order_hint}'
+        before = self._slots_sequence
+        if before is None or before is sequence or same_sequence(before, sequence):
+            return
+        starts = (header.frame_type == KEY_FRAME and header.show_frame
+                  and not header.show_existing_frame)
+        if not starts and any(held is not None for held in self._slots):
+            what = ('header that shows a reference slot' if header.show_existing_frame
+                    else header.described)
+            raise StreamError(
+                f'the sequence header changed before a {what}, and a new sequence '
+                'begins at a key frame that is shown')
+
+    def _check_references(self, header: FrameHeader) -> None:
+        """Refuse an inter frame whose references are not there or not its size."""
         if header.frame_is_intra:
-            return True
+            return
         for name, slot in enumerate(header.ref_frame_idx, LAST_FRAME):
             held = self._slots[slot]
-            if held is None or not self._state.slots[slot].valid:
-                if self._recovering:
-                    return False
-                raise StreamError(
-                    f'the {what} refers to reference slot {slot}, which holds no frame')
+            if held is None:
+                raise MissingReference(
+                    f'the {header.described} refers to reference slot {slot}, which '
+                    'holds no frame')
             if held.size != header.size:
                 raise DecoderError(
-                    f'the {what} is {header.size[0]}x{header.size[1]} and its '
-                    f'reference {name} is {held.size[0]}x{held.size[1]}: the stream '
+                    f'the {header.described} is {header.size[0]}x{header.size[1]} and '
+                    f'its reference {name} is {held.size[0]}x{held.size[1]}: the stream '
                     'uses reference scaling, which this decoder does not decode')
-        return True
+
+    def _check_fits(self, header: FrameHeader) -> None:
+        """Refuse a frame larger than the surfaces it would be decoded into."""
+        width, height = header.size
+        coded = self._format.coded_size if self._format is not None else (0, 0)
+        if width > coded[0] or height > coded[1]:
+            raise StreamError(
+                f'the {header.described} is {width}x{height}, and the surfaces of its '
+                f'sequence are {coded[0]}x{coded[1]}')
 
     def _activate(self, sequence: SequenceHeader, header: FrameHeader) -> None:
         """Make sure the surfaces suit the sequence this frame belongs to.
@@ -469,27 +585,23 @@ class AV1Decoding(DecodeControl):
                 f'a tile group begins at tile {group.tg_start} where tile '
                 f'{current.next_tile} was due')
         current.next_tile = group.tg_end + 1
-        if current.surface is not None:
-            batch: list[Buffer] = [(api.VASliceParameterBufferType, tile_parameters(tile))
-                                   for tile in group.tiles]
-            batch.append((api.VASliceDataBufferType, data))
-            current.batches.append(batch)
+        batch: list[Buffer] = [(api.VASliceParameterBufferType, tile_parameters(tile))
+                               for tile in group.tiles]
+        batch.append((api.VASliceDataBufferType, data))
+        current.batches.append(batch)
         if current.next_tile == header.tile_info.num_tiles:
+            self._current = None
             self._finish(current)
 
     def _finish(self, current: _Current) -> None:
         """Decode the gathered frame, save it in the slots it refreshes, show it."""
-        self._current = None
         header = current.header
-        if current.surface is None:
-            return
-        assert self._sequence is not None
-        self.session.submit(current.surface, current.batches,
-                            f'{header.kind} frame at order hint {header.order_hint}')
+        self.session.submit(current.surface, current.batches, header.described)
         picture = _Picture(
             current.surface,
             current.surface if current.display is None else current.display, header.size)
-        self._state.update(header, self._sequence)
+        self._state.update(header, current.sequence)
+        self._slots_sequence = current.sequence
         for slot in range(NUM_REF_FRAMES):
             if (header.refresh_frame_flags >> slot) & 1:
                 self._slots[slot] = picture
@@ -498,7 +610,8 @@ class AV1Decoding(DecodeControl):
                 self._recovering = False
             self._show(picture, current.sample)
 
-    def _show_existing(self, header: FrameHeader, sample: Sample) -> None:
+    def _show_existing(self, header: FrameHeader, sequence: SequenceHeader,
+                       sample: Sample) -> None:
         """Show the frame in a reference slot again (7.21).
 
         A key frame shown this way starts a new sequence of references: every
@@ -506,13 +619,10 @@ class AV1Decoding(DecodeControl):
         """
         slot = header.frame_to_show_map_idx
         picture = self._slots[slot]
-        if picture is None or not self._state.slots[slot].valid:
-            if self._recovering:
-                return
-            raise StreamError(
+        if picture is None:
+            raise MissingReference(
                 f'a frame header shows reference slot {slot}, which holds no frame')
-        assert self._sequence is not None
-        self._state.update(header, self._sequence)
+        self._state.update(header, sequence)
         if header.frame_type == KEY_FRAME:
             self._slots = [picture] * NUM_REF_FRAMES
             self._recovering = False
@@ -530,9 +640,11 @@ class AV1Decoding(DecodeControl):
     def flush(self) -> None:
         """Nothing is held back: every frame is shown as the stream shows it."""
         self._current = None
+        self._passing = False
 
     def reset(self) -> None:
         self._current = None
+        self._passing = False
         self._slots = [None] * NUM_REF_FRAMES
         self._state.reset()
         self._recovering = True
@@ -542,8 +654,10 @@ class AV1Decoding(DecodeControl):
         for picture in self._slots:
             if picture is not None:
                 found.update((picture.surface, picture.display))
+        found.update(self._acquired)
         current = self._current
         if current is not None:
-            found.update(surface for surface in (current.surface, current.display)
-                         if surface is not None)
+            found.add(current.surface)
+            if current.display is not None:
+                found.add(current.display)
         return found

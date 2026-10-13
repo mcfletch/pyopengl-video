@@ -77,9 +77,9 @@ size rebuilds them. That part is sound.
 | D3 | `convert.py` fragment shader | `texelFetch(luma, …)` is undefined outside the texture. `visible` is not checked against `texture_size`, and `draw(size=…)` larger than `visible` fetches at negative coordinates. | Fixed |
 | D4 | `h264_parse.py`, `hevc_parse.py` cropping | A cropping window larger than the picture gives a negative visible size, which reaches `session.output` (`visible=(0, 0, -136, -136)`). | Fixed |
 | D5 | `nvdec/decoder.py` `Sequence.of` | `display_area` from NVIDIA's parser is not checked to lie inside the coded size before it becomes `visible`. | Open |
-| D6 | `vaapi/av1_decode.py`, `av1_parse.py` | An AV1 frame header may state a frame size larger than the sequence header's maximum. Surfaces are 64x48 and the driver is told 4096x2304. | Open |
+| D6 | `vaapi/av1_decode.py`, `av1_parse.py` | An AV1 frame header may state a frame size larger than the sequence header's maximum. Surfaces are 64x48 and the driver is told 4096x2304. | Fixed |
 | D7 | `vaapi/hevc_decode.py` | A later slice segment of a picture may name a PPS whose SPS is another size; it is appended to the picture under way. | Fixed |
-| D8 | `vaapi/vp9_decode.py` | A non-key frame may state another profile than its key frame; a 65536-wide key frame is written to a 16-bit field as 0. | Open |
+| D8 | `vaapi/vp9_decode.py` | A non-key frame may state another profile than its key frame; a 65536-wide key frame is written to a 16-bit field as 0. | Fixed |
 | D9 | `vaapi/encoder.py` `register` | A caller's texture is exported at the encoder's size without asking OpenGL what size it is: a 16x16 texture is described to libva as 4096x4096. | Fixed |
 | D10 | `mp4.py`, `ivf.py` | The stated width and height are never held to 1 or more; (0, 0) passes `Backend.supports`. | Fixed |
 
@@ -231,9 +231,9 @@ control layers' own.
 
 | Id | Where | Finding | Status |
 |---|---|---|---|
-| L1 | `av1_decode.py` | `self._current` is published with a surface before its picture parameters are built. When building raises, the next lone tile group is submitted with no picture parameter buffer. | Open |
-| L2 | `av1_parse.py`, `av1_decode.py` | Film grain point counts are read as 4 bits and written into arrays of 14 and 10; the tile grid has no 64x64 limit on the non-uniform path; `context_update_tile_id` is not below the tile count. | Open |
-| L3 | `av1_parse.py` `_tile_info` | `ZeroDivisionError` and `ValueError` for a reference slot never written. | Open |
+| L1 | `av1_decode.py` | `self._current` is published with a surface before its picture parameters are built. When building raises, the next lone tile group is submitted with no picture parameter buffer. | Fixed |
+| L2 | `av1_parse.py`, `av1_decode.py` | Film grain point counts are read as 4 bits and written into arrays of 14 and 10; the tile grid has no 64x64 limit on the non-uniform path; `context_update_tile_id` is not below the tile count. | Fixed |
+| L3 | `av1_parse.py` `_tile_info` | `ZeroDivisionError` and `ValueError` for a reference slot never written. | Fixed |
 | L4 | every `*_decode.py` | A parsed value is assigned to a ctypes field with nothing reading it back. | Open |
 
 ### W. Windows and oneVPL
@@ -277,20 +277,40 @@ and `DecoderError`.
 
 | Id | Where | Finding | Status |
 |---|---|---|---|
-| A1 | `av1_parse.py` `_tile_info` | The stated tile grid has no limit of 64 columns and rows: a 16384-wide frame gives 256 columns, written to an 8-bit field as 0. An inter frame at the start of a stream is parsed before any size limit applies: 1024x1024 tiles in a 2 MB sample had not returned after 150 s. | Open |
-| A2 | `av1_parse.py`, `av1_decode.py` | A frame size is never held to the sequence header's maximum (D6). | Open |
-| A3 | `av1_parse.py` `_color_config` | Profile 0 with the sRGB and identity triple is parsed as 4:4:4 and submitted under the Main profile. | Open |
-| A4 | `av1_decode.py` | A sequence header may be replaced with no key frame, and between a frame header and its tile group: a monochrome sequence over a 4:2:0 reference is submitted. | Open |
-| A5 | `bits.py`, `av1_parse.py` `parse_tile_group` | `BitReader` holds the whole OBU as one integer and each read shifts it, so reading tile sizes is quadratic in the sample: 40 s for a 16 MB frame with the legal 64x64 tiles. | Open |
-| A6 | `vp9_parse.py`, `vp9_decode.py` | An inter frame's profile is not compared with its key frame's (D8). | Open |
-| A7 | `vp9_decode.py` | A dimension of 65536 is written to a 16-bit field as 0 (D8). | Open |
-| A8 | `vp9_parse.py` `_tile_info` | `tile_cols_log2` can pass 6. | Open |
-| A9 | `vp9_parse.py` | A frame with no tile bytes, or a `tile_size` past the end of the frame, is submitted. | Open |
-| A10 | `av1_parse.py` | `context_update_tile_id` is not below the tile count (L2). | Open |
-| A11 | `av1_parse.py` `_film_grain_params` | Point counts above 14 and 10 raise `IndexError` at the ctypes array; point values that do not increase, a `film_grain_params_ref_idx` matching no reference, and unequal chroma point counts in 4:2:0 reach the driver (L2). | Open |
-| A12 | `av1_parse.py` | A frame sized from a slot never written raises `ValueError` or `ZeroDivisionError` (L3). | Open |
-| A13 | `bits.py` | A negative count or position is not refused; `leb128()` reads from an unaligned position; `read_leb128` accepts more than 32 bits. No call site in the package reaches these with a stream's value. | Open |
-| A14 | `av1.py` writer | `base_q_idx = 0` writes the syntax of a lossy frame; a zero frame-rate term divides by zero; `BitWriter.su` wraps. | Open |
+| A1 | `av1_parse.py` `_tile_info` | The stated tile grid has no limit of 64 columns and rows: a 16384-wide frame gives 256 columns, written to an 8-bit field as 0. An inter frame at the start of a stream is parsed before any size limit applies: 1024x1024 tiles in a 2 MB sample had not returned after 150 s. | Fixed |
+| A2 | `av1_parse.py`, `av1_decode.py` | A frame size is never held to the sequence header's maximum (D6). | Fixed |
+| A3 | `av1_parse.py` `_color_config` | Profile 0 with the sRGB and identity triple is parsed as 4:4:4 and submitted under the Main profile. | Fixed |
+| A4 | `av1_decode.py` | A sequence header may be replaced with no key frame, and between a frame header and its tile group: a monochrome sequence over a 4:2:0 reference is submitted. | Fixed |
+| A5 | `bits.py`, `av1_parse.py` `parse_tile_group` | `BitReader` holds the whole OBU as one integer and each read shifts it, so reading tile sizes is quadratic in the sample: 40 s for a 16 MB frame with the legal 64x64 tiles. | Fixed |
+| A6 | `vp9_parse.py`, `vp9_decode.py` | An inter frame's profile is not compared with its key frame's (D8). | Fixed |
+| A7 | `vp9_decode.py` | A dimension of 65536 is written to a 16-bit field as 0 (D8). | Fixed |
+| A8 | `vp9_parse.py` `_tile_info` | `tile_cols_log2` can pass 6. | Fixed |
+| A9 | `vp9_parse.py` | A frame with no tile bytes, or a `tile_size` past the end of the frame, is submitted. | Fixed |
+| A10 | `av1_parse.py` | `context_update_tile_id` is not below the tile count (L2). | Fixed |
+| A11 | `av1_parse.py` `_film_grain_params` | Point counts above 14 and 10 raise `IndexError` at the ctypes array; point values that do not increase, a `film_grain_params_ref_idx` matching no reference, and unequal chroma point counts in 4:2:0 reach the driver (L2). | Fixed |
+| A12 | `av1_parse.py` | A frame sized from a slot never written raises `ValueError` or `ZeroDivisionError` (L3). | Fixed |
+| A13 | `bits.py` | A negative count or position is not refused; `leb128()` reads from an unaligned position; `read_leb128` accepts more than 32 bits. No call site in the package reaches these with a stream's value. | Fixed |
+| A14 | `av1.py` writer | `base_q_idx = 0` writes the syntax of a lossy frame; a zero frame-rate term divides by zero; `BitWriter.su` wraps. | Fixed |
+
+What the fixes decided, for a maintainer to weigh:
+
+- A changed AV1 sequence header must be followed by a shown key frame while any
+  reference slot holds a frame, and is refused between a frame header and its
+  tile groups. Headers are compared as parsed, leaving out the operating
+  parameters, which the specification lets differ within a sequence.
+- An AV1 inter frame's references must match it in bit depth, sampling and
+  monochrome and lie within the 2x and 16x scaling limits; an intra-only frame
+  that refreshes all eight slots, a `show_existing_frame` of a frame not marked
+  showable, a `seq_profile` above 2 and a frame id over 16 bits are refused.
+- `BitReader` reads each field from the bytes it spans, so a read costs the
+  same wherever it falls in the sample.
+- libva's AV1 tile-size arrays hold 63 entries. With the legal 64 tiles the
+  last size is not stored, on the understanding that a driver takes the last
+  tile as what is left of the frame; that wants checking against a driver.
+
+`tests/test_fuzz_av1.py` and `tests/test_fuzz_vp9.py` run 2,500 and 4,000
+seeded mutations in the suite. 40,000 more of each on other seeds, about
+870,000 pictures a codec, found nothing.
 
 ### N. NVENC and NVDEC
 

@@ -14,6 +14,11 @@ resilient frame sets all of it back to the defaults. :class:`DecodingState`
 is what carries over, and :func:`parse_uncompressed_header` reads one frame's
 header against it.
 
+The bytes read are a file's. A header that states something outside what the
+specification allows raises :class:`~pyopengl_video.vaapi.h264.StreamError`:
+a profile its samples are not of, more than 64 tile columns, a tile that runs
+past the frame.
+
 The section numbers are those of the VP9 Bitstream and Decoding Process
 Specification, version 0.6.
 """
@@ -99,6 +104,12 @@ DEFAULT_MODE_DELTAS = (0, 0)
 #: A tile is at least this many 64x64 superblocks wide, and at most that many.
 MIN_TILE_WIDTH_B64 = 4
 MAX_TILE_WIDTH_B64 = 64
+
+#: The largest tile_cols_log2 (7.2.11): a frame has at most 64 tile columns.
+MAX_TILE_COLS_LOG2 = 6
+
+#: How many bytes the size of a tile is stated in (6.4).
+TILE_SIZE_BYTES = 4
 
 _NO_FEATURES = ((0,) * SEG_LVL_MAX,) * MAX_SEGMENTS
 
@@ -380,6 +391,9 @@ def parse_uncompressed_header(data: bytes, state: DecodingState) -> FrameHeader:
     `state` gives what the header leaves unstated and is brought up to date:
     the loop filter deltas and segmentation features now in force, and the
     frame in each reference slot it replaces.
+
+    `data` is the whole frame: the sizes of its tiles are walked, and a frame
+    whose tiles do not fit it is refused with its header.
     """
     reader = BitReader(data)
     profile, show_existing_frame = _opening(reader)
@@ -421,6 +435,7 @@ def parse_uncompressed_header(data: bytes, state: DecodingState) -> FrameHeader:
                 biases.append(reader.flag())
             values['ref_frame_idx'] = tuple(slots)
             values['ref_frame_sign_bias'] = tuple(biases)
+            _check_profile(profile, state.colour)
             size = _frame_size_with_refs(reader, state, slots)
             render = _render_size(reader, size)
             values['allow_high_precision_mv'] = reader.flag()
@@ -441,7 +456,8 @@ def parse_uncompressed_header(data: bytes, state: DecodingState) -> FrameHeader:
     values['quantisation'] = Quantisation(
         reader.f(8), _delta_q(reader), _delta_q(reader), _delta_q(reader))
     values['segmentation'] = _segmentation(reader, state)
-    values['tile_cols_log2'], values['tile_rows_log2'] = _tile_info(reader, size[0])
+    cols_log2, rows_log2 = _tile_info(reader, size[0])
+    values['tile_cols_log2'], values['tile_rows_log2'] = cols_log2, rows_log2
     compressed = values['header_size_in_bytes'] = reader.f(16)
     if not compressed:
         raise StreamError('the frame states a compressed header of no bytes')
@@ -451,9 +467,53 @@ def parse_uncompressed_header(data: bytes, state: DecodingState) -> FrameHeader:
         raise StreamError(
             f'the frame is {len(data)} bytes and its headers alone take '
             f'{reader.byte_position + compressed}')
+    _check_tiles(data, reader.byte_position + compressed, 1 << (cols_log2 + rows_log2))
     header = FrameHeader(**values)              # type: ignore[arg-type]  # each value has its field's type
     state.refresh(header)
     return header
+
+
+def _check_profile(profile: int, colour: ColourConfig) -> None:
+    """Refuse an inter frame whose profile is not that of the samples it inherits (7.2).
+
+    An inter frame states a profile and no samples: those are its
+    references'. Profiles 2 and 3 are the ones above 8 bits, and profiles 1
+    and 3 the ones that are not 4:2:0, so the samples say which profile the
+    frame that stated them had.
+    """
+    high = colour.bit_depth > 8
+    other = (colour.subsampling_x, colour.subsampling_y) != (1, 1)
+    stated = high << 1 | other
+    if profile != stated:
+        raise StreamError(
+            f'a profile {profile} frame predicts from frames of profile {stated}, '
+            f'which have {colour.bit_depth} bits a sample')
+
+
+def _check_tiles(data: bytes, position: int, count: int) -> None:
+    """Refuse a frame whose tiles do not fit it (decode_tiles(), 6.4).
+
+    position -- where the tile data begins, after the compressed header
+    count -- how many tiles the frame has
+
+    Every tile but the last states its size in four bytes, and the last takes
+    what is left. Each is at least the byte its decoder is started with
+    (9.2.1). The driver reads these sizes itself, from the frame it is given.
+    """
+    for number in range(count - 1):
+        field = data[position:position + TILE_SIZE_BYTES]
+        if len(field) != TILE_SIZE_BYTES:
+            raise StreamError(
+                f'the frame ends inside the size of tile {number} of {count}')
+        size = int.from_bytes(field, 'big')
+        position += TILE_SIZE_BYTES
+        if not 1 <= size <= len(data) - position:
+            raise StreamError(
+                f'tile {number} of {count} states {size} bytes, and the frame has '
+                f'{len(data) - position} after it')
+        position += size
+    if position >= len(data):
+        raise StreamError(f'the frame has no byte left for the last tile of its {count}')
 
 
 def _sync_code(reader: BitReader) -> None:
@@ -596,6 +656,9 @@ def _tile_info(reader: BitReader, width: int) -> tuple[int, int]:
     columns = smallest
     while columns < largest and reader.flag():
         columns += 1
+    if columns > MAX_TILE_COLS_LOG2:
+        raise StreamError(
+            f'tile_cols_log2 is {columns}, and {MAX_TILE_COLS_LOG2} is the most')
     rows = reader.flag()
     if rows:
         rows += reader.flag()

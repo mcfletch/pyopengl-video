@@ -15,7 +15,7 @@ import pytest
 from pyopengl_video import obu as obus
 from pyopengl_video.decoder import DecoderError, Sample
 from pyopengl_video.ivf import IVFReader
-from pyopengl_video.vaapi import api, av1_api
+from pyopengl_video.vaapi import api, av1_api, av1_decode
 from pyopengl_video.vaapi.av1_decode import (
     AV1Decoding,
     colour_of,
@@ -32,6 +32,7 @@ from pyopengl_video.vaapi.av1_parse import (
     Tile,
     parse_frame_header,
 )
+from tests import ivf_fuzz
 from tests.av1_syntax import (
     Sequence,
     frame,
@@ -322,9 +323,11 @@ class TestPictureParameters:
 
     def test_a_shear_that_is_no_valid_warp_is_marked(self):
         sequence = Sequence()
-        data, _ = frame_header(sequence, frame_type=INTER_FRAME, order_hint=1)
         parsed = sequence.parsed()
-        header = parse_frame_header(data, parsed, FrameState())
+        state = FrameState()
+        state.update(parse_frame_header(frame_header(sequence)[0], parsed, state), parsed)
+        data, _ = frame_header(sequence, frame_type=INTER_FRAME, order_hint=1)
+        header = parse_frame_header(data, parsed, state)
         header.gm_params = (*header.gm_params[:7], (0, 0, 1 << 16, 1 << 14, 0, 1 << 16))
         parameters = picture_parameters(parsed, header, (None,) * 8, 1)
         assert [warp.invalid for warp in parameters.wm] == [0, 0, 0, 0, 0, 0, 1]
@@ -824,3 +827,75 @@ class TestFixturesThroughTheLayer:
             assert entry.current_display_picture not in list(entry.ref_frame_map)
         assert {surface for surface, _, _ in session.shown} <= {
             entry.current_display_picture for entry in grained}
+
+
+class TestEveryStoreReadsBack:
+    """Every fixture: each value stored in a buffer reads back as what was parsed.
+
+    ctypes keeps the low bits of a value that does not fit its field and
+    raises nothing, so a field that is too narrow for what the parser allows
+    shows only here.
+    """
+
+    @pytest.mark.parametrize('path', sorted(DATA.glob('av1_*.ivf')), ids=lambda path: path.stem)
+    def test_a_fixture(self, path, monkeypatch):
+        differences = []
+        monkeypatch.setattr(av1_decode, 'av1_api', ivf_fuzz.recorded(
+            av1_api, lambda name, value=None: differences.append((name, value))))
+        control, session = layer()
+        samples = samples_of(path.stem)
+        for found in samples:
+            control.decode(found)
+        assert differences == []
+        assert len(session.shown) == len(samples)
+        coded = [(header, sequence) for header, sequence in stream_headers(path.stem)
+                 if not header.show_existing_frame]
+        assert len(session.submitted) == len(coded)
+        for (_, batches, _), (header, sequence) in zip(session.submitted, coded, strict=True):
+            parameters = batches[0][0][1]
+            assert (parameters.frame_width_minus1 + 1,
+                    parameters.frame_height_minus1 + 1) == header.size
+            assert max(header.size) <= max(sequence.size)
+            tiles = header.tile_info
+            assert (parameters.tile_cols, parameters.tile_rows) == (
+                tiles.tile_cols, tiles.tile_rows)
+            assert list(parameters.width_in_sbs_minus_1[:tiles.tile_cols]) == list(
+                tiles.width_in_sbs_minus_1)
+            assert list(parameters.height_in_sbs_minus_1[:tiles.tile_rows]) == list(
+                tiles.height_in_sbs_minus_1)
+            assert parameters.context_update_tile_id == tiles.context_update_tile_id
+            assert list(parameters.ref_frame_idx) == list(header.ref_frame_idx)
+            assert (parameters.order_hint, parameters.primary_ref_frame) == (
+                header.order_hint, header.primary_ref_frame)
+            assert parameters.base_qindex == header.quantization.base_q_idx
+            assert list(parameters.ref_deltas) == list(header.loop_filter.ref_deltas)
+            grain = parameters.film_grain_info
+            assert (grain.num_y_points, grain.num_cb_points, grain.num_cr_points) == (
+                header.film_grain.num_y_points, header.film_grain.num_cb_points,
+                header.film_grain.num_cr_points)
+            assert [list(warp.wmmat)[:6] for warp in parameters.wm] == [
+                list(model) for model in header.gm_params[1:]]
+            slices = [slice_ for batch in batches[1:] for _, slice_ in batch[:-1]]
+            assert len(slices) == tiles.num_tiles
+            for batch in batches[1:]:
+                *tiles_of, (_, data) = batch
+                assert all(1 <= tile.slice_data_size
+                           and tile.slice_data_offset + tile.slice_data_size <= len(data)
+                           for _, tile in tiles_of)
+
+    def test_a_store_that_does_not_fit_is_found(self):
+        """The check itself: 256 in eight bits, and 4 in a field of two."""
+        differences = []
+        recorded = ivf_fuzz.recorded(
+            av1_api, lambda name, value=None: differences.append((name, value)))
+        parameters = recorded.VADecPictureParameterBufferAV1()
+        parameters.tile_cols = 64
+        parameters.tile_cols = 256
+        parameters.pic_info_fields.bits.frame_type = 4
+        parameters.ref_frame_idx[3] = 300
+        parameters.film_grain_info.point_y_value[2] = 255
+        assert [name.split(' ')[0] for name, _ in differences] == [
+            'VADecPictureParameterBufferAV1.tile_cols',
+            'VADecPictureParameterBufferAV1.pic_info_fields.bits.frame_type',
+            'VADecPictureParameterBufferAV1.ref_frame_idx[3]']
+        assert differences[0][1] == (256, 0)

@@ -805,12 +805,12 @@ class TestHandBuiltHeaders:
         sequence = Sequence()
         state, parsed = state_with(sequence, {})
         data, length = frame_header(sequence, frame_type=INTER_FRAME, order_hint=2,
-                                    refresh=0, size=(30, 20))
+                                    refresh=0, size=(40, 28))
         header = parse_frame_header(data, parsed, state)
         assert header.header_bits == length
         assert header.found_ref == 0
-        assert header.size == (30, 20)
-        assert (header.mi_cols, header.mi_rows) == (8, 6)
+        assert header.size == (40, 28)
+        assert (header.mi_cols, header.mi_rows) == (10, 8)
 
     def test_super_resolution_narrows_the_coded_width(self):
         sequence = Sequence(superres=1)

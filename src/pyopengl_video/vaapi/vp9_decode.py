@@ -12,6 +12,7 @@ import logging
 from collections.abc import Sequence
 
 from pyopengl_video import codecs
+from pyopengl_video.bounds import FIELD_16
 from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecoderError, Sample
 from pyopengl_video.vaapi import api, vp9_api
@@ -51,6 +52,19 @@ SAMPLINGS = {(1, 1): '4:2:0', (1, 0): '4:2:2', (0, 1): '4:4:0', (0, 0): '4:4:4'}
 MAX_LOOP_FILTER = 63
 MAX_Q_INDEX = 255
 
+
+def _check_size(header: FrameHeader) -> None:
+    """Refuse a frame larger than the 16 bits libva is told each dimension in.
+
+    A VP9 frame is up to 65536 samples a side, and 65536 written to such a
+    field reads back as 0.
+    """
+    if header.width > FIELD_16 or header.height > FIELD_16:
+        raise DecoderError(
+            f'the VP9 frame is {header.width}x{header.height}, and VA-API is told '
+            f'of frames up to {FIELD_16} samples a side')
+
+
 def profile_for(header: FrameHeader) -> int:
     """The libva profile a frame decodes under; refuses what is not decoded here."""
     colour = header.colour
@@ -74,7 +88,11 @@ def picture_parameters(header: FrameHeader, slots: Sequence[int | None],
 
     slots -- the surface in each of the eight reference slots before this
         frame replaces any, None where a slot is empty
+
+    A frame of more than 65535 samples a side is a
+    :class:`~pyopengl_video.decoder.DecoderError`.
     """
+    _check_size(header)
     parameters = vp9_api.VADecPictureParameterBufferVP9()
     parameters.frame_width, parameters.frame_height = header.size
     for index, surface in enumerate(slots):
@@ -224,7 +242,11 @@ class VP9Decoding(DecodeControl):
     after a :meth:`reset`, are dropped. A key frame may change the size, the
     profile or the bit depth. Any other frame whose size differs from the key
     frame's (reference scaling) is refused, and so is every frame after it
-    until the next key frame.
+    until the next key frame. A frame that states another profile than its
+    key frame's is refused the same way.
+
+    A frame of more than 65535 samples a side is refused: libva is told each
+    dimension in 16 bits.
     """
 
     codec = codecs.VP9
@@ -232,8 +254,9 @@ class VP9Decoding(DecodeControl):
     def __init__(self, session: DecodeSession, output_slots: int) -> None:
         super().__init__(session, output_slots)
         self._format: Format | None = None
-        #: The size and sample layout the key frame stated.
-        self._sequence: tuple[tuple[int, int], tuple[int, int, int]] = ((0, 0), (8, 1, 1))
+        #: The size, the sample layout and the profile the key frame stated.
+        self._sequence: tuple[tuple[int, int], tuple[int, int, int], int] = (
+            (0, 0), (8, 1, 1), 0)
         self._restart()
 
     def _restart(self) -> None:
@@ -300,6 +323,7 @@ class VP9Decoding(DecodeControl):
     def _begin_sequence(self, header: FrameHeader) -> None:
         """Make the surfaces suit a key frame, and take its size and colour."""
         profile = profile_for(header)
+        _check_size(header)
         width, height = header.size
         wanted = Format(
             profile=profile, coded_size=((width + 7) & ~7, (height + 7) & ~7),
@@ -311,13 +335,13 @@ class VP9Decoding(DecodeControl):
             self._slots = [None] * NUM_REF_FRAMES
             self.session.activate(wanted)
             self._format = wanted
-        self._sequence = (header.size, header.colour.layout)
+        self._sequence = (header.size, header.colour.layout, header.profile)
         self.size = header.size
         self.colour = colour_of(header)
 
     def _check_sequence(self, header: FrameHeader) -> None:
-        """Refuse a frame that leaves the size or the sample layout of its key frame."""
-        size, layout = self._sequence
+        """Refuse a frame that leaves the size, the samples or the profile of its key frame."""
+        size, layout, profile = self._sequence
         if header.size != size:
             raise DecoderError(
                 f'a VP9 frame is {header.width}x{header.height} where its key frame '
@@ -328,6 +352,11 @@ class VP9Decoding(DecodeControl):
                 f'a VP9 frame has {header.colour.bit_depth} bits a sample where its '
                 f'key frame had {layout[0]}: the stream changes its samples '
                 'without a key frame, which this decoder does not decode')
+        if header.profile != profile:
+            raise DecoderError(
+                f'a VP9 frame states profile {header.profile} where its key frame '
+                f'stated profile {profile}: the stream changes profile without a '
+                'key frame, which this decoder does not decode')
 
     def _show(self, stored: _Stored, sample: Sample) -> None:
         width, height = stored.size
