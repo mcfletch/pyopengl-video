@@ -17,6 +17,11 @@ A backend whose hardware converts to RGB itself hands over an ``'rgba'`` frame,
 and :meth:`NV12Converter.convert` copies that with the same crop and flip, no
 matrix involved.
 
+Luma is read texel by texel, and a texel fetch outside its texture is
+undefined, so :meth:`NV12Converter.draw` refuses a visible rectangle that
+leaves the texture and an output larger than the rectangle, and the shader
+holds every luma coordinate to the rectangle and to the texture besides.
+
 The output is ``GL_SRGB8_ALPHA8``: the values are stored as computed, and a
 sampler reading the texture linearises them as it does any 8-bit colour image.
 The program is GLSL 3.30, and runs in a core or a compatibility context.
@@ -24,6 +29,7 @@ The program is GLSL 3.30, and runs in a core or a compatibility context.
 from __future__ import annotations
 
 import ctypes
+import functools
 
 from OpenGL.GL import (
     GL_BLEND,
@@ -93,12 +99,15 @@ from OpenGL.GL import (
     glViewport,
 )
 
+from pyopengl_video import bounds
 from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecodedFrame, DecoderError
+from pyopengl_video.glcontext import Owner
 from pyopengl_video.glstate import preserved_state
+from pyopengl_video.teardown import release_all
 
-__all__ = ['LAYOUT_DEPTHS', 'NV12Converter', 'create_output_texture',
-           'generate_mipmaps']
+__all__ = ['LAYOUT_DEPTHS', 'NV12Converter', 'checked_rectangle',
+           'create_output_texture', 'generate_mipmaps']
 
 #: Bits a sample for each two-plane layout a decoded frame may have.
 LAYOUT_DEPTHS = {'nv12': 8, 'p010': 10}
@@ -139,7 +148,13 @@ void main() {
     // The output's row 0 is the picture's bottom, the surface's row 0 its top.
     vec2 source = vec2(visible.x + gl_FragCoord.x,
                        visible.y + visible.w - gl_FragCoord.y);
-    float y = texelFetch(luma, ivec2(floor(source)), 0).r;
+    // A fetch outside the texture is undefined, so the texel is held to the
+    // visible rectangle and then to the texture, whatever the uniforms say.
+    ivec2 first = ivec2(visible.xy);
+    ivec2 last = max(first + ivec2(visible.zw) - 1, first);
+    ivec2 texel = min(max(ivec2(floor(source)), first), last);
+    texel = clamp(texel, ivec2(0), max(textureSize(luma, 0) - 1, ivec2(0)));
+    float y = texelFetch(luma, texel, 0).r;
     vec2 low = visible.xy * 0.5 + 0.5;
     vec2 high = (visible.xy + visible.zw) * 0.5 - 0.5;
     vec2 site = clamp(source * 0.5 + chroma_offset, low, high);
@@ -215,6 +230,41 @@ def _program(fragment: str = FRAGMENT_SHADER) -> int:
     return program
 
 
+def checked_rectangle(visible: tuple[int, int, int, int], size: tuple[int, int] | None,
+                      texture_size: tuple[int, int] | None,
+                      ) -> tuple[tuple[int, int, int, int], tuple[int, int]]:
+    """A visible rectangle and an output size the pass reads only the picture for.
+
+    visible -- ``(x, y, width, height)`` in luma texels
+    size -- the output size, or None for the rectangle's own
+    texture_size -- the luma texture's size, or None where it is not known
+
+    Returns the rectangle and the size as whole numbers. Raises
+    :class:`~pyopengl_video.decoder.DecoderError` for a rectangle that is
+    empty, starts before the texture or ends after it, and for a size that is
+    empty or larger than the rectangle: the pass reads one luma texel for each
+    output texel, so a larger output reads past the picture.
+    """
+    described = f'the visible rectangle {tuple(visible)}'
+    if len(visible) != 4:
+        raise DecoderError(f'{described} is not an (x, y, width, height)')
+    most = texture_size if texture_size is not None else (bounds.FIELD_16, bounds.FIELD_16)
+    x = bounds.whole(visible[0], f'the left of {described}', 0, most[0] - 1, DecoderError)
+    y = bounds.whole(visible[1], f'the top of {described}', 0, most[1] - 1, DecoderError)
+    width = bounds.whole(visible[2], f'the width of {described}', 1, most[0] - x,
+                         DecoderError)
+    height = bounds.whole(visible[3], f'the height of {described}', 1, most[1] - y,
+                          DecoderError)
+    if size is None:
+        return (x, y, width, height), (width, height)
+    drawn = f'the output size {tuple(size)} of a {width}x{height} picture'
+    if len(size) != 2:
+        raise DecoderError(f'{drawn} is not a (width, height)')
+    return (x, y, width, height), (
+        bounds.whole(size[0], f'the width of {drawn}', 1, width, DecoderError),
+        bounds.whole(size[1], f'the height of {drawn}', 1, height, DecoderError))
+
+
 class NV12Converter:
     """Draws decoded frames into RGBA textures: NV12 or P010 planes, or a picture already RGBA.
 
@@ -222,9 +272,15 @@ class NV12Converter:
     program, an empty vertex array and one framebuffer per output texture it
     has drawn into; :meth:`close` gives them back. The GL state the pass
     changes is restored before :meth:`draw` returns, on every path out.
+
+    Those objects belong to the context it was built in. :meth:`close` and
+    :meth:`forget` raise :class:`~pyopengl_video.decoder.DecoderError` and
+    delete nothing with another context current, or none, and work once its
+    own is current again.
     """
 
     def __init__(self) -> None:
+        self._owner = Owner.current()
         self._program = _program()
         self._copy_program = _program(COPY_FRAGMENT_SHADER)
         self._copy_uniforms = {name: glGetUniformLocation(self._copy_program, name)
@@ -251,23 +307,39 @@ class NV12Converter:
             raise DecoderError(f'a {frame.layout} frame has no conversion')
         luma, chroma = frame.planes
         self.draw(luma, chroma, visible=frame.visible, colour=frame.colour,
-                  target=target, depth=LAYOUT_DEPTHS[frame.layout])
+                  target=target, depth=LAYOUT_DEPTHS[frame.layout],
+                  texture_size=frame.texture_size)
 
     def draw(self, luma: int, chroma: int, *, visible: tuple[int, int, int, int],
              colour: Colour, target: int, size: tuple[int, int] | None = None,
-             depth: int = 8) -> None:
+             depth: int = 8, texture_size: tuple[int, int] | None = None) -> None:
         """Draw the `visible` part of two planes into `target`.
 
         luma/chroma -- ``GL_R8`` and ``GL_RG8`` textures, first row at the
             top; ``GL_R16`` and ``GL_RG16`` for a `depth` above 8, the samples
             in the high bits
-        visible -- ``(x, y, width, height)`` of the picture in the luma texture
+        visible -- ``(x, y, width, height)`` of the picture in the luma
+            texture, in whole texels: not empty, and inside `texture_size`
+            where that is given
         colour -- the stream's colour description
         target -- an RGBA texture, usually from :func:`create_output_texture`
-        size -- the target's size; the visible size by default
+        size -- how much of the target is drawn, from its lower left, one
+            output texel for each luma texel; the visible size by default and
+            no larger. A smaller size draws the lower left of the picture.
         depth -- bits a sample
+        texture_size -- the luma texture's ``(width, height)``, which
+            `visible` is checked against
+
+        Raises :class:`~pyopengl_video.decoder.DecoderError` for a rectangle
+        or a size outside those limits, before anything is drawn.
         """
-        width, height = size or visible[2:]
+        visible, size = checked_rectangle(visible, size, texture_size)
+        self._pass(luma, chroma, visible, colour, target, size, depth)
+
+    def _pass(self, luma: int, chroma: int, visible: tuple[int, int, int, int],
+              colour: Colour, target: int, size: tuple[int, int], depth: int) -> None:
+        """Draw, with the rectangle and the size taken as they are given."""
+        width, height = size
         framebuffer = self._framebuffer(target)
         colour = colour.resolved(visible[3])
         with preserved_state(DISABLED_FOR_THE_PASS, units=2):
@@ -345,21 +417,39 @@ class NV12Converter:
 
     def forget(self, target: int) -> None:
         """Delete the framebuffer kept for `target`, before the texture is deleted."""
-        framebuffer = self._framebuffers.pop(target, None)
-        if framebuffer is not None:
-            glDeleteFramebuffers(1, [framebuffer])
+        if target not in self._framebuffers:
+            return
+        self._owner.require('the conversion pass', DecoderError)
+        glDeleteFramebuffers(1, [self._framebuffers.pop(target)])
 
     def close(self) -> None:
-        """Give back the program, the vertex array and the framebuffers."""
-        for target in list(self._framebuffers):
-            self.forget(target)
-        if self._vertex_array:
-            glDeleteVertexArrays(1, [self._vertex_array])
-            self._vertex_array = 0
-        for name in ('_program', '_copy_program'):
-            if getattr(self, name):
-                glDeleteProgram(getattr(self, name))
-                setattr(self, name, 0)
+        """Give back the programs, the vertex array and the framebuffers.
+
+        Safe to call twice. Every one is given back whatever the others do.
+        """
+        if not (self._framebuffers or self._vertex_array or self._program
+                or self._copy_program):
+            return
+        self._owner.require('the conversion pass', DecoderError)
+        release_all(*(functools.partial(self.forget, target)
+                      for target in list(self._framebuffers)),
+                    self._delete_vertex_array, self._delete_program,
+                    self._delete_copy_program)
+
+    def _delete_vertex_array(self) -> None:
+        vertex_array, self._vertex_array = self._vertex_array, 0
+        if vertex_array:
+            glDeleteVertexArrays(1, [vertex_array])
+
+    def _delete_program(self) -> None:
+        program, self._program = self._program, 0
+        if program:
+            glDeleteProgram(program)
+
+    def _delete_copy_program(self) -> None:
+        program, self._copy_program = self._copy_program, 0
+        if program:
+            glDeleteProgram(program)
 
 
 def generate_mipmaps(texture: int) -> None:

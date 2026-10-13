@@ -216,7 +216,7 @@ class HEVCEncoding(EncodeControl):
             self.structure = GroupOfPictures(
                 gop=settings.gop, references=self.references,
                 bidirectional=self.bidirectional)
-        except ValueError as error:
+        except (ValueError, ArithmeticError) as error:
             raise EncoderError(f'HEVC cannot code this: {error}') from error
         self.coded_size = self.sets.coded_size
         self._surfaces: dict[int, int] = {}

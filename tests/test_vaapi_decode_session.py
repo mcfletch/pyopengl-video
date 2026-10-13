@@ -299,3 +299,238 @@ def test_a_reset_drops_what_was_held_and_decoding_resumes_at_a_key_frame():
         layer.flush()
         later = sorted(stream.presentation_time(index) for index in range(key, len(stream)))
     assert [timestamp for _, timestamp, _ in session.shown[shown_before:]] == later
+
+
+# ------------------------------------------- what a stream can do to it
+
+
+REFUSED_SIZE = (4096, 4096)
+
+
+def refusing_pool(device, format, count):
+    """A pool factory standing in for a device that refuses one picture size."""
+    if format.coded_size == REFUSED_SIZE:
+        raise DecoderError('the device refuses this size')
+    return FakePool(device, format, count)
+
+
+class TestAFormatTheDeviceRefuses:
+    """The stream changes to a size the device refuses, then back."""
+
+    @pytest.fixture
+    def refused(self, session):
+        session._make_pool = refusing_pool  # noqa: SLF001 - the factory the session was given
+        session.activate(FORMAT)
+        old = session.pool
+        with pytest.raises(DecoderError, match='refuses this size'):
+            session.activate(Format(profile=7, coded_size=REFUSED_SIZE, surfaces=3))
+        return session, old
+
+    def test_the_session_holds_no_pool_and_the_old_one_is_closed(self, refused):
+        session, old = refused
+        assert old.closed
+        assert session.pool is None
+
+    def test_nothing_is_acquired_submitted_or_shown_without_a_pool(self, refused):
+        session, _ = refused
+        with pytest.raises(DecoderError, match='could not be made'):
+            session.acquire()
+        with pytest.raises(DecoderError, match='could not be made'):
+            session.submit(100, [], 'a picture')
+        with pytest.raises(DecoderError, match='could not be made'):
+            show(session, 100)
+
+    def test_the_first_format_again_makes_a_new_pool(self, refused):
+        session, old = refused
+        session.activate(FORMAT)
+        assert session.pool is not old
+        assert not session.pool.closed
+        assert session.acquire() == 100
+
+
+class TestSurfacesOfAnotherPool:
+    def test_showing_a_surface_the_pool_does_not_hold_is_a_decoder_error(self, session):
+        session.activate(FORMAT)
+        with pytest.raises(DecoderError, match='surface 400'):
+            show(session, 400)
+        assert session.take() == []
+
+    def test_submitting_to_a_surface_the_pool_does_not_hold_is_a_decoder_error(self, session):
+        session.activate(FORMAT)
+        with pytest.raises(DecoderError, match='surface 400'):
+            session.submit(400, [], 'a picture')
+
+
+class TestHowManySurfaces:
+    def make(self, monkeypatch):
+        made = []
+
+        def counting(device, format, count):
+            made.append(count)
+            return FakePool(device, format, count)
+        monkeypatch.setattr(decoder_module, 'glFenceSync', lambda *_arguments: None)
+        session = decoder_module._Session(FakeDevice(), output_slots=2, make_pool=counting)  # noqa: SLF001 - the class under test
+        return session, made
+
+    @pytest.mark.parametrize('surfaces', [100_001, decoder_module.MAX_FORMAT_SURFACES + 1, 0, -1])
+    def test_a_count_no_codec_needs_is_refused_before_a_pool_is_made(self, monkeypatch, surfaces):
+        session, made = self.make(monkeypatch)
+        with pytest.raises(DecoderError, match='surfaces'):
+            session.activate(Format(profile=7, coded_size=(64, 48), surfaces=surfaces))
+        assert made == []
+        assert session.pool is None
+
+    def test_the_most_any_codec_asks_for_is_accepted(self, monkeypatch):
+        session, made = self.make(monkeypatch)
+        session.activate(Format(profile=7, coded_size=(64, 48),
+                                surfaces=decoder_module.MAX_FORMAT_SURFACES))
+        assert made == [decoder_module.MAX_FORMAT_SURFACES + 2]
+
+
+class TestClosingWhenAReleaseFails:
+    def test_every_pool_is_closed_and_every_frame_released(self, session):
+        session.activate(FORMAT)
+        show(session, 100)
+        frame, = session.take()
+        first = session.pool
+        session.activate(Format(profile=7, coded_size=(128, 96), surfaces=3))
+        second = session.pool
+
+        def failing():
+            raise DecoderError('the textures belong to another context')
+        first.close = failing
+        with pytest.raises(DecoderError, match='another context'):
+            session.close()
+        assert frame.released
+        assert second.closed
+        assert session.pool is None
+
+    def test_a_pool_that_would_not_close_is_closed_by_the_next_close(self, session):
+        session.activate(FORMAT)
+        pool = session.pool
+        closing = pool.close
+
+        def failing():
+            raise DecoderError('the textures belong to another context')
+        pool.close = failing
+        with pytest.raises(DecoderError):
+            session.close()
+        pool.close = closing
+        session.close()
+        assert pool.closed
+
+
+class TestTranslatingErrors:
+    @pytest.mark.parametrize('raised', [
+        IndexError('list index out of range'), MemoryError(), AssertionError('no picture'),
+        ZeroDivisionError('division by zero'), KeyError(400), OverflowError('too large'),
+        TypeError('not a number'), OSError(5, 'the device went away'),
+    ])
+    def test_anything_a_stream_or_a_driver_causes_is_a_decoder_error(self, raised):
+        @decoder_module.as_decoder_error
+        def method():
+            raise raised
+        with pytest.raises(DecoderError) as caught:
+            method()
+        assert caught.value.__cause__ is raised
+        assert type(raised).__name__ in str(caught.value)
+
+    def test_a_decoder_error_passes_through_as_it_is(self):
+        original = DecoderError('refused')
+
+        @decoder_module.as_decoder_error
+        def method():
+            raise original
+        with pytest.raises(DecoderError) as caught:
+            method()
+        assert caught.value is original
+
+    @pytest.mark.parametrize('kind', [KeyboardInterrupt, SystemExit, GeneratorExit])
+    def test_an_interruption_is_not_an_error_of_the_stream(self, kind):
+        @decoder_module.as_decoder_error
+        def method():
+            raise kind
+        with pytest.raises(kind):
+            method()
+
+
+class Recording:
+    def __init__(self, failing=False):
+        self.closed = 0
+        self.failing = failing
+
+    def close(self):
+        self.closed += 1
+        if self.failing:
+            raise RuntimeError('the session would not close')
+
+
+class TestClosingTheDecoder:
+    def decoder(self, **parts):
+        made = object.__new__(decoder_module.VAAPIDecoder)
+        made._closed = False  # noqa: SLF001 - a decoder built without a device
+        for name, value in parts.items():
+            setattr(made, name, value)
+        return made
+
+    def test_the_device_is_closed_when_the_session_will_not_close(self):
+        session, device = Recording(failing=True), Recording()
+        decoder = self.decoder(_session=session, _device=device)
+        with pytest.raises(DecoderError, match='would not close'):
+            decoder.close()
+        assert device.closed == 1
+
+    def test_a_decoder_that_never_finished_opening_closes(self):
+        self.decoder().close()
+
+    def test_a_closed_decoder_refuses_to_decode(self):
+        decoder = self.decoder(_session=Recording(), _device=Recording())
+        decoder.close()
+        with pytest.raises(DecoderError, match='closed'):
+            decoder.flush()
+
+
+@pytest.mark.parametrize('slots', [0, -1, decoder_module.MAX_OUTPUT_SLOTS + 1, 2.5, 'four'])
+def test_output_slots_outside_their_range_are_refused_before_a_device_is_opened(
+        monkeypatch, slots):
+    def refuse(*_arguments):
+        raise AssertionError('a device was opened for a setting that should be refused')
+    monkeypatch.setattr(decoder_module.Device, 'first', refuse)
+    with pytest.raises(DecoderError, match='output_slots'):
+        decoder_module.VAAPIDecoder('h264', output_slots=slots)
+
+
+class TestAPoolThatWillNotCloseWhole:
+    """Its OpenGL context is not current, so its textures stay until it is."""
+
+    def refusing(self, pool):
+        closing = pool.close
+
+        def refuse():
+            raise DecoderError('another OpenGL context is current')
+        pool.close = refuse
+        return closing
+
+    def test_a_replaced_pool_is_kept_for_the_sessions_close(self, session):
+        session.activate(FORMAT)
+        old = session.pool
+        closing = self.refusing(old)
+        with pytest.raises(DecoderError, match='another OpenGL context'):
+            session.activate(Format(profile=7, coded_size=(128, 96), surfaces=3))
+        assert session.pool is None
+        old.close = closing
+        session.close()
+        assert old.closed
+
+    def test_a_retired_pool_whose_last_frame_comes_back_is_kept_too(self, session):
+        session.activate(FORMAT)
+        old = session.pool
+        show(session, session.acquire())
+        frame, = session.take()
+        session.activate(Format(profile=7, coded_size=(128, 96), surfaces=3))
+        closing = self.refusing(old)
+        with pytest.raises(DecoderError, match='another OpenGL context'):
+            frame.release()
+        old.close = closing
+        session.close()
+        assert old.closed

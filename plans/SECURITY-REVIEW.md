@@ -53,8 +53,9 @@ crash was found, in the Annex-B reader (C3).
 
 ## Status
 
-Each finding has an identifier. **Fixed** names the commit subject that fixed
-it; **Open** findings are listed again under *Still open* with what each needs.
+Each finding has an identifier. **Fixed** findings have a test that holds them, and the commit that
+fixed each names its identifiers; **Open** findings are listed again under
+*Still open* where they need something this container lacks.
 
 ### D. A size a container states that the stream does not have
 
@@ -70,13 +71,13 @@ size rebuilds them. That part is sound.
 |---|---|---|---|
 | D1 | `playback.py` `Player._new_texture` | Output textures are made at `movie.size`, the container's stated size, and `NV12Converter.draw` sets the viewport to the decoded picture's size. A 120x68 stream in an MP4 stating 640x480 gives a 640x480 texture with the picture in one corner and the other 1.2 MB never written (texture storage is undefined until written); stating 16x16 crops the picture; stating 0x0 raises a bare `GLError`. A stated 8192x8192 allocates 256 MB a texture for a thumbnail-sized stream. Reproduced on NVDEC. | Open |
 | D2 | `playback.py` | A stream that changes size at a key frame keeps the output textures of the old size, for the same reason. | Open |
-| D3 | `convert.py` fragment shader | `texelFetch(luma, …)` is undefined outside the texture. `visible` is not checked against `texture_size`, and `draw(size=…)` larger than `visible` fetches at negative coordinates. | Open |
+| D3 | `convert.py` fragment shader | `texelFetch(luma, …)` is undefined outside the texture. `visible` is not checked against `texture_size`, and `draw(size=…)` larger than `visible` fetches at negative coordinates. | Fixed |
 | D4 | `h264_parse.py`, `hevc_parse.py` cropping | A cropping window larger than the picture gives a negative visible size, which reaches `session.output` (`visible=(0, 0, -136, -136)`). | Open |
 | D5 | `nvdec/decoder.py` `Sequence.of` | `display_area` from NVIDIA's parser is not checked to lie inside the coded size before it becomes `visible`. | Open |
 | D6 | `vaapi/av1_decode.py`, `av1_parse.py` | An AV1 frame header may state a frame size larger than the sequence header's maximum. Surfaces are 64x48 and the driver is told 4096x2304. | Open |
 | D7 | `vaapi/hevc_decode.py` | A later slice segment of a picture may name a PPS whose SPS is another size; it is appended to the picture under way. | Open |
 | D8 | `vaapi/vp9_decode.py` | A non-key frame may state another profile than its key frame; a 65536-wide key frame is written to a 16-bit field as 0. | Open |
-| D9 | `vaapi/encoder.py` `register` | A caller's texture is exported at the encoder's size without asking OpenGL what size it is: a 16x16 texture is described to libva as 4096x4096. | Open |
+| D9 | `vaapi/encoder.py` `register` | A caller's texture is exported at the encoder's size without asking OpenGL what size it is: a 16x16 texture is described to libva as 4096x4096. | Fixed |
 | D10 | `mp4.py`, `ivf.py` | The stated width and height are never held to 1 or more; (0, 0) passes `Backend.supports`. | Open |
 
 ### C. Containers (`mp4.py`, `ivf.py`, `annexb.py`, `obu.py`, `playback.py`)
@@ -134,18 +135,34 @@ each, is in *Appendix A*.
 
 | Id | Where | Finding | Status |
 |---|---|---|---|
-| V1 | `vaapi/decoder.py` `_Session.activate` | The old pool is retired before the new one is made; when making it fails, `self.pool` is the destroyed pool, and the next picture is submitted to a destroyed context and surfaces. Stream-triggerable: a size the device refuses, then the first size again. | Open |
-| V2 | `linux/dmabuf.py`, `inputs.py`, `convert.py` | OpenGL objects are deleted by name in whichever context is current. Reproduced on EGL: releasing an imported texture with another context current deleted that context's texture of the same name. | Open |
-| V3 | `vaapi/encoder.py` | A failed submission leaves the slot counters advanced: the next picture reuses the coded buffer and source surface of the one in flight. | Open |
-| V4 | `vaapi/encoder.py`, `vaapi/decoder.py`, `linux/dmabuf.py` | `close()` sets `_closed` and stops at the first exception; the display and the render-node descriptor are never released. | Open |
-| V5 | `vaapi/encoder.py` `_collect` | The coded buffer is read on the driver's word: no bound on a segment's size, no limit on the chain, no status bit tested, so an overflowed picture is a truncated packet. | Open |
-| V6 | `vaapi/device.py` | A failed `vaInitialize` never calls `vaTerminate`: 927 bytes a failed open, which is every open on a machine with libva and no driver. | Open |
-| V7 | `linux/dmabuf.py`, `inputs.py` | `import_texture` and `create_rgba_texture` leave `GL_TEXTURE_2D` bound to 0; the EGL image leaks if texture creation raises. | Open |
-| V8 | `vaapi/device.py` `picture` | `vaRenderPicture` failing leaves a begun picture with no `vaEndPicture`. | Open |
-| V9 | `vaapi/encoder.py`, `vaapi/decoder.py`, `control.py` | Dimensions, bit rate, group length and frame rate are not validated before ctypes: `VARectangle(…, 70000, 70000)` stores 4464; a frame rate of `(90000, 3003)` is packed as 24464/3003; a bit rate of -1 is 4294967295. `ValueError` and `ZeroDivisionError` escape `H264Encoding` and `AV1Encoding`. | Open |
-| V10 | `tests/test_va_abi.py` | The coverage test skips `_`-prefixed names and every `Union`; bit-field positions are recorded for three unions only. | Open |
-| V11 | `inputs.py` | `glTexImage2D(…, None)` reads from a bound pixel-unpack buffer. | Open |
+| V1 | `vaapi/decoder.py` `_Session.activate` | The old pool is retired before the new one is made; when making it fails, `self.pool` is the destroyed pool, and the next picture is submitted to a destroyed context and surfaces. Stream-triggerable: a size the device refuses, then the first size again. | Fixed |
+| V2 | `linux/dmabuf.py`, `inputs.py`, `convert.py` | OpenGL objects are deleted by name in whichever context is current. Reproduced on EGL: releasing an imported texture with another context current deleted that context's texture of the same name. | Fixed |
+| V3 | `vaapi/encoder.py` | A failed submission leaves the slot counters advanced: the next picture reuses the coded buffer and source surface of the one in flight. | Fixed |
+| V4 | `vaapi/encoder.py`, `vaapi/decoder.py`, `linux/dmabuf.py` | `close()` sets `_closed` and stops at the first exception; the display and the render-node descriptor are never released. | Fixed |
+| V5 | `vaapi/encoder.py` `_collect` | The coded buffer is read on the driver's word: no bound on a segment's size, no limit on the chain, no status bit tested, so an overflowed picture is a truncated packet. | Fixed |
+| V6 | `vaapi/device.py` | A failed `vaInitialize` never calls `vaTerminate`: 927 bytes a failed open, which is every open on a machine with libva and no driver. | Fixed |
+| V7 | `linux/dmabuf.py`, `inputs.py` | `import_texture` and `create_rgba_texture` leave `GL_TEXTURE_2D` bound to 0; the EGL image leaks if texture creation raises. | Fixed |
+| V8 | `vaapi/device.py` `picture` | `vaRenderPicture` failing leaves a begun picture with no `vaEndPicture`. | Fixed |
+| V9 | `vaapi/encoder.py`, `vaapi/decoder.py`, `control.py` | Dimensions, bit rate, group length and frame rate are not validated before ctypes: `VARectangle(…, 70000, 70000)` stores 4464; a frame rate of `(90000, 3003)` is packed as 24464/3003; a bit rate of -1 is 4294967295. `ValueError` and `ZeroDivisionError` escape `H264Encoding` and `AV1Encoding`. | Fixed |
+| V10 | `tests/test_va_abi.py` | The coverage test skips `_`-prefixed names and every `Union`; bit-field positions are recorded for three unions only. | Fixed |
+| V11 | `inputs.py` | `glTexImage2D(…, None)` reads from a bound pixel-unpack buffer. | Fixed |
 | V12 | `vaapi/decoder.py` | Decode surfaces are imported as textures with no clear; a picture whose slices do not cover it shows whatever the driver left. Unconfirmed without a driver. | Open |
+
+What the fixes decided, for a maintainer to weigh:
+
+- An object that owns OpenGL names records the context it was made in
+  (`glcontext.Owner`) and refuses to delete them in any other, a context that
+  shares objects with it included: EGL has no query for which contexts share.
+  Everything that is not OpenGL is released first, and closing again in the
+  right context finishes.
+- A decoder asks for at most 18 surfaces for its own pictures (AV1 with film
+  grain: nine frames of two surfaces), and `output_slots` is 1 to 64.
+- An encoder whose submission fails after the driver has the picture stops:
+  `encode` is refused, `flush` and `close` work.
+- After a format a device refuses, the session holds no pool and refuses every
+  picture until a format is activated.
+- `tests/va_abi.json` records every union, nested member and bit-field image,
+  from the libva 2.20 headers.
 
 Sound: all 31 libva entry points carry `argtypes` and `restype`; every
 structure handed to the driver is built fresh for the call; every exported

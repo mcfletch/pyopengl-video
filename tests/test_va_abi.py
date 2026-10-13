@@ -8,6 +8,7 @@ driver, no GPU and no compiler -- ``tools/record_va_abi.py`` does the compiling,
 once, wherever the headers are.
 """
 import ctypes
+import importlib.util
 import json
 from pathlib import Path
 
@@ -21,6 +22,39 @@ MODULES = (api, hevc_api, av1_api, vp9_api)
 #: Written by ``tools/record_va_abi.py`` from the libva headers.
 RECORDED = Path(__file__).parent / 'va_abi.json'
 ABI = json.loads(RECORDED.read_text())
+
+
+def _recorder():
+    """``tools/record_va_abi.py``: how a member is reached, and its image made."""
+    path = Path(__file__).parent.parent / 'tools' / 'record_va_abi.py'
+    spec = importlib.util.spec_from_file_location('record_va_abi', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+RECORDER = _recorder()
+
+
+def aggregates():
+    """Every structure and union the binding modules declare, by class."""
+    return {
+        value for module in MODULES for value in vars(module).values()
+        if isinstance(value, type) and issubclass(value, (ctypes.Structure, ctypes.Union))
+        and value.__module__ == module.__name__
+    }
+
+
+def inside(kind):
+    """The structure and union classes `kind` is made of, itself included."""
+    found = {kind}
+    for entry in kind._fields_:
+        field = entry[1]
+        if issubclass(field, ctypes.Array):
+            field = field._type_
+        if issubclass(field, (ctypes.Structure, ctypes.Union)):
+            found |= inside(field)
+    return found
 
 
 def declared(name):
@@ -54,16 +88,89 @@ def test_each_constant_has_the_value_the_headers_give_it(name):
     assert declared(name) == ABI['constants'][name]
 
 
-def test_every_declared_structure_is_recorded():
-    """A structure added to the binding and not re-recorded is unchecked."""
-    found = {
-        name for module in MODULES for name, value in vars(module).items()
-        if isinstance(value, type) and issubclass(value, ctypes.Structure)
-        and not name.startswith('_')
-    }
-    assert found <= set(ABI['sizes']), (
-        f'not in tests/va_abi.json: {sorted(found - set(ABI["sizes"]))}; '
-        'run tools/record_va_abi.py')
+@pytest.mark.parametrize('name', sorted(ABI['nested']))
+def test_every_member_of_an_unnamed_structure_sits_where_the_headers_put_it(name):
+    structure = declared(name)
+    for member, offset in ABI['nested'][name].items():
+        assert RECORDER.offset_of(structure, member) == offset, f'{name}.{member}'
+
+
+@pytest.mark.parametrize('name', sorted(ABI['bits']))
+def test_every_bit_field_covers_the_bits_the_headers_give_it(name):
+    """One member set to all ones: the same bytes change as in the C structure."""
+    structure = declared(name)
+    for member, image in ABI['bits'][name].items():
+        assert RECORDER.bit_image(structure, member) == image, f'{name}.{member}'
+
+
+def test_every_declared_structure_and_union_is_recorded():
+    """One added to the binding and not re-recorded is unchecked.
+
+    A class the headers name is recorded under that name. One they leave
+    unnamed, which the binding spells with a leading underscore, is recorded
+    through each named structure that holds it.
+    """
+    covered = set()
+    for name in ABI['sizes']:
+        covered |= inside(declared(name))
+    missing = sorted(kind.__name__ for kind in aggregates() - covered)
+    assert not missing, (
+        f'not in tests/va_abi.json, by name or inside a recorded structure: '
+        f'{missing}; run tools/record_va_abi.py')
+
+
+def test_every_member_of_every_recorded_structure_is_recorded():
+    """A field added to a recorded structure, at any depth, is unchecked until re-recorded."""
+    missing = []
+    for name in ABI['sizes']:
+        structure = declared(name)
+        for member, bit_field in RECORDER.members(structure):
+            recorded = (ABI['bits'].get(name, {}) if bit_field
+                        else {*ABI['offsets'][name], *ABI['nested'].get(name, {})})
+            if member not in recorded:
+                missing.append(f'{name}.{member}')
+    assert not missing, f'not in tests/va_abi.json: {missing}; run tools/record_va_abi.py'
+
+
+def _libva():
+    """The binding over libva, or None on a machine that has no libva to load."""
+    try:
+        return api.VA.instance()
+    except OSError:
+        return None
+
+
+LIBVA = _libva()
+
+
+@pytest.mark.skipif(LIBVA is None, reason='libva does not load on this machine')
+class TestEveryFunctionIsDeclared:
+    """ctypes assumes ``int`` arguments and an ``int`` result for a function nobody declared."""
+
+    @pytest.fixture
+    def va(self):
+        return LIBVA
+
+    def test_every_entry_point_the_binding_names_is_bound(self, va):
+        named = {name for name in api.VA.__annotations__ if name.startswith('va')}
+        assert named, 'the binding names no entry points'
+        assert named <= set(vars(va)), sorted(named - set(vars(va)))
+
+    def test_every_bound_function_has_its_argument_and_result_types(self, va):
+        functions = {name: value for name, value in vars(va).items()
+                     if isinstance(value, ctypes._CFuncPtr)}  # noqa: SLF001 - the base class of every foreign function, which ctypes does not export
+        assert functions, 'no foreign function was found on the binding'
+        undeclared = sorted(name for name, function in functions.items()
+                            if function.argtypes is None)
+        assert not undeclared, f'no argtypes: {undeclared}'
+        # A restype of c_int is ctypes' default and also what a VAStatus is,
+        # so the functions that return something else are named.
+        results = {name: function.restype for name, function in functions.items()}
+        assert results['vaGetDisplayDRM'] is ctypes.c_void_p
+        assert results['vaErrorStr'] is ctypes.c_char_p
+        assert results['vaQueryVendorString'] is ctypes.c_char_p
+        assert all(result is not None or name in ('vaSetInfoCallback', 'vaSetErrorCallback')
+                   for name, result in results.items())
 
 
 class TestFlexibleArrayMembers:

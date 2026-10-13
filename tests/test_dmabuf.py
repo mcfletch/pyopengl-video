@@ -12,21 +12,36 @@ from OpenGL import error
 from OpenGL.GL import (
     GL_COLOR_ATTACHMENT0,
     GL_FRAMEBUFFER,
+    GL_NEAREST,
+    GL_R8,
+    GL_RED,
     GL_RGBA,
     GL_TEXTURE_2D,
+    GL_TEXTURE_BINDING_2D,
+    GL_TEXTURE_MIN_FILTER,
     GL_UNSIGNED_BYTE,
     glBindFramebuffer,
+    glBindTexture,
     glDeleteFramebuffers,
+    glDeleteTextures,
     glFinish,
     glFramebufferTexture2D,
     glGenFramebuffers,
+    glGenTextures,
+    glGetIntegerv,
+    glIsTexture,
     glReadPixels,
+    glTexImage2D,
+    glTexParameteri,
 )
 from OpenGL.GLES2.OES import EGL_image
 
 from pyopengl_video.linux import dmabuf
 from pyopengl_video.vaapi import api
 from tests.conftest import gradient_frame
+
+#: The `contexts` fixture: a second OpenGL context beside the suite's.
+pytest_plugins = ('tests.other_context',)
 
 SIZE = (320, 240)
 
@@ -385,6 +400,179 @@ class TestImport:
     @pytest.mark.usefixtures('exportable')
     def test_releasing_nothing_is_harmless(self):
         dmabuf.release_imported_texture(0, None)
+
+
+class TestTheTextureDescribed:
+    """An export states a size, and OpenGL is asked whether the texture has it."""
+
+    @pytest.mark.usefixtures('exportable')
+    def test_a_texture_of_another_size_than_stated_is_refused(self, upload_texture):
+        texture = upload_texture(gradient_frame(16, 16))
+        with pytest.raises(dmabuf.DMABufError, match='16x16.*4096x4096'):
+            dmabuf.export_texture(texture, 4096, 4096)
+
+    @pytest.mark.usefixtures('exportable')
+    def test_a_texture_of_another_format_than_stated_is_refused(self):
+        texture = int(glGenTextures(1))
+        glBindTexture(GL_TEXTURE_2D, texture)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, 16, 16, 0, GL_RED, GL_UNSIGNED_BYTE, None)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        try:
+            with pytest.raises(dmabuf.DMABufError, match='GL_RGBA8'):
+                dmabuf.export_texture(texture, 16, 16)
+        finally:
+            glDeleteTextures([texture])
+
+    @pytest.mark.usefixtures('exportable')
+    def test_a_refused_texture_leaves_no_descriptor_open(self, upload_texture):
+        texture = upload_texture(gradient_frame(16, 16))
+        before = set(os.listdir('/proc/self/fd'))
+        with pytest.raises(dmabuf.DMABufError):
+            dmabuf.export_texture(texture, 32, 32)
+        assert set(os.listdir('/proc/self/fd')) == before
+
+    @pytest.mark.usefixtures('exportable')
+    def test_asking_leaves_the_texture_binding_as_it_was(self, upload_texture):
+        texture = upload_texture(gradient_frame(*SIZE))
+        bound = upload_texture(gradient_frame(8, 8))
+        glBindTexture(GL_TEXTURE_2D, bound)
+        image = dmabuf.export_texture(texture, *SIZE)
+        try:
+            assert int(glGetIntegerv(GL_TEXTURE_BINDING_2D)) == bound
+        finally:
+            glBindTexture(GL_TEXTURE_2D, 0)
+            image.close()
+
+
+class TestBindings:
+    @pytest.mark.usefixtures('exportable')
+    def test_an_import_leaves_the_texture_binding_as_it_was(self, upload_texture):
+        if not dmabuf.import_available():
+            pytest.skip('this EGL display cannot import a DMA-BUF')
+        image = dmabuf.export_texture(upload_texture(gradient_frame(*SIZE)), *SIZE)
+        bound = upload_texture(gradient_frame(8, 8))
+        glBindTexture(GL_TEXTURE_2D, bound)
+        try:
+            texture, egl_image = dmabuf.import_texture(
+                image.fourcc, image.width, image.height, image.modifier, image.planes)
+            assert int(glGetIntegerv(GL_TEXTURE_BINDING_2D)) == bound
+            dmabuf.release_imported_texture(texture, egl_image)
+        finally:
+            glBindTexture(GL_TEXTURE_2D, 0)
+            image.close()
+
+    def test_a_refused_import_leaves_the_texture_binding_as_it_was(
+            self, refusing_import, upload_texture):
+        bound = upload_texture(gradient_frame(8, 8))
+        glBindTexture(GL_TEXTURE_2D, bound)
+        try:
+            with pytest.raises(dmabuf.DMABufError):
+                refusing_import()
+            assert int(glGetIntegerv(GL_TEXTURE_BINDING_2D)) == bound
+        finally:
+            glBindTexture(GL_TEXTURE_2D, 0)
+
+    def test_an_image_is_given_back_when_no_texture_can_be_made_for_it(
+            self, refusing_import, monkeypatch):
+        """Any failure after the image is made releases it, not only the last call's."""
+        import OpenGL.GL  # noqa: PLC0415 - the module the import reads its entry points from
+
+        def refuse(_count):
+            raise error.GLError(err=1285, baseOperation='glGenTextures')
+        monkeypatch.setattr(OpenGL.GL, 'glGenTextures', refuse)
+        with pytest.raises(dmabuf.DMABufError):
+            refusing_import()
+        assert len(refusing_import.destroyed) == 1
+
+
+class TestAnotherContextCurrent:
+    """An OpenGL name is deleted in the context that made it, or not at all."""
+
+    @pytest.fixture
+    def imported(self, exportable, upload_texture):  # noqa: ARG002 - requested to skip where the context cannot export
+        if not dmabuf.import_available():
+            pytest.skip('this EGL display cannot import a DMA-BUF')
+        image = dmabuf.export_texture(upload_texture(gradient_frame(*SIZE)), *SIZE)
+        texture, egl_image = dmabuf.import_texture(
+            image.fourcc, image.width, image.height, image.modifier, image.planes)
+        yield texture, egl_image
+        dmabuf.release_imported_texture(texture, egl_image)
+        image.close()
+
+    def test_an_imported_texture_is_not_deleted_from_another_context(self, imported, contexts):
+        texture, egl_image = imported
+        contexts.use(contexts.second)
+        victim = contexts.texture_named(texture)
+        with pytest.raises(dmabuf.DMABufError, match='another OpenGL context'):
+            dmabuf.release_imported_texture(texture, egl_image)
+        assert glIsTexture(victim), "the other context's texture of the same name was deleted"
+        contexts.use(contexts.first)
+        assert glIsTexture(texture)
+        dmabuf.release_imported_texture(texture, egl_image)
+        assert not glIsTexture(texture)
+
+    def test_an_imported_texture_is_not_deleted_with_no_context_current(self, imported, contexts):
+        texture, egl_image = imported
+        contexts.use(None)
+        with pytest.raises(dmabuf.DMABufError, match='no OpenGL context'):
+            dmabuf.release_imported_texture(texture, egl_image)
+        contexts.use(contexts.first)
+        assert glIsTexture(texture)
+
+    def test_releasing_an_imported_texture_twice_deletes_one_texture(self, imported):
+        texture, egl_image = imported
+        dmabuf.release_imported_texture(texture, egl_image)
+        reused = int(glGenTextures(1))
+        glBindTexture(GL_TEXTURE_2D, reused)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        try:
+            dmabuf.release_imported_texture(texture, egl_image)
+            assert glIsTexture(reused)
+        finally:
+            glDeleteTextures([reused])
+
+    @pytest.mark.usefixtures('exportable')
+    @pytest.mark.parametrize('current', ['second', None])
+    def test_an_export_closes_its_descriptors_and_keeps_its_image(
+            self, upload_texture, contexts, current):
+        image = dmabuf.export_texture(upload_texture(gradient_frame(*SIZE)), *SIZE)
+        fd = image.planes[0].fd
+        contexts.use(getattr(contexts, current) if current else None)
+        with pytest.raises(dmabuf.DMABufError, match='OpenGL context'):
+            image.close()
+        assert image.planes == ()
+        with pytest.raises(OSError):
+            os.fstat(fd)
+        contexts.use(contexts.first)
+        image.close()
+        image.close()
+
+
+class TestClosingAnExport:
+    def exported(self, fds):
+        planes = tuple(dmabuf.Plane(fd=fd, offset=0, stride=64) for fd in fds)
+        return dmabuf.ExportedImage('a display', 'an image', api.DRM_FORMAT_ABGR8888,
+                                    16, 16, 0, planes)
+
+    def test_every_descriptor_is_closed_when_closing_one_fails(self, monkeypatch):
+        closed, destroyed = [], []
+
+        def close(fd):
+            closed.append(fd)
+            if fd == 7:
+                raise OSError(9, 'Bad file descriptor')
+        monkeypatch.setattr(dmabuf.os, 'close', close)
+        monkeypatch.setattr(dmabuf, '_destroy', lambda _display, image: destroyed.append(image))
+        image = self.exported((7, 8))
+        with pytest.raises(OSError):
+            image.close()
+        assert closed == [7, 8]
+        assert destroyed == ['an image']
+        assert image.planes == ()
+        image.close()
+        assert closed == [7, 8]
+        assert destroyed == ['an image']
 
 
 class TestPlanes:

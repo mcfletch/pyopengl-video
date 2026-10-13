@@ -222,6 +222,10 @@ VA_SOURCE_RANGE_FULL = 2
 #: The low byte of a coded buffer's status holds the quantiser the picture was
 #: coded at, which is worth logging when a stream comes out the wrong size.
 VA_CODED_BUF_STATUS_PICTURE_AVE_QP_MASK = 0xff
+#: The picture did not fit the coded buffer, so what the buffer holds is cut short.
+VA_CODED_BUF_STATUS_SLICE_OVERFLOW_MASK = 0x200
+#: The driver reports the bitstream it wrote as bad.
+VA_CODED_BUF_STATUS_BAD_BITSTREAM = 0x8000
 
 
 # ------------------------------------------------------------------ structures

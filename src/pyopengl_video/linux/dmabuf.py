@@ -25,12 +25,15 @@ from __future__ import annotations
 
 import ctypes
 import dataclasses
+import functools
 import logging
 import os
 from collections.abc import Callable
 from types import ModuleType
 from typing import Any, TypeVar
 
+from pyopengl_video.glcontext import Owner
+from pyopengl_video.teardown import release_all
 from pyopengl_video.vaapi.api import DRM_FORMAT_MOD_INVALID, fourcc_name
 
 T = TypeVar('T')
@@ -54,6 +57,13 @@ EGL_WIDTH = 0x3057
 EGL_HEIGHT = 0x3056
 EGL_LINUX_DRM_FOURCC_EXT = 0x3271
 EGL_NONE = 0x3038
+
+#: ``GL_RGBA8`` and ``GL_RGBA``, the internal formats an exported texture may
+#: report. A texture made with the unsized ``GL_RGBA`` reports that, and the
+#: format code of its export says how many bits a channel the driver gave it.
+GL_RGBA8 = 0x8058
+GL_RGBA = 0x1908
+RGBA_FORMATS = (GL_RGBA8, GL_RGBA)
 
 #: Extensions that have to be on the display for either direction to work.
 EXPORT_EXTENSIONS = ('EGL_KHR_image_base', 'EGL_MESA_image_dma_buf_export')
@@ -111,15 +121,19 @@ class ExportedImage:
         nothing reports that.
     planes -- one per plane of the format
 
+    owner -- the OpenGL context the texture was exported in; the one current
+        when this is made, unless given
+
     Closing it closes the descriptors and destroys the EGLImage. The exported
     buffer is the texture's own memory, so the texture must outlive this.
     """
 
     def __init__(self, display: object, image: object, fourcc: int,
                  width: int, height: int, modifier: int,
-                 planes: tuple[Plane, ...]) -> None:
+                 planes: tuple[Plane, ...], owner: Owner | None = None) -> None:
         self._display = display
         self._image = image
+        self._owner = Owner.current() if owner is None else owner
         self.fourcc = fourcc
         self.width = width
         self.height = height
@@ -132,17 +146,46 @@ class ExportedImage:
                 f'{len(self.planes)} plane(s)>')
 
     def close(self) -> None:
-        """Close the descriptors and give the EGLImage back. Safe to call twice."""
-        for plane in self.planes:
-            if plane.fd >= 0:
-                os.close(plane.fd)
-        self.planes = ()
-        if self._image is not None:
-            from OpenGL.EGL.KHR.image_base import (  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
-                eglDestroyImageKHR,
-            )
-            eglDestroyImageKHR(self._display, self._image)
-            self._image = None
+        """Close the descriptors and give the EGLImage back. Safe to call twice.
+
+        The descriptors are closed whichever OpenGL context is current. The
+        image is given back on the display it was made on, with the context
+        the texture was exported in current; with another current, or none,
+        it is kept, :class:`DMABufError` says so once the descriptors are
+        closed, and closing again in the right context gives it back.
+        """
+        release_all(self._close_descriptors, self._destroy_image)
+
+    def _close_descriptors(self) -> None:
+        planes, self.planes = self.planes, ()
+        release_all(*(functools.partial(os.close, plane.fd)
+                      for plane in planes if plane.fd >= 0))
+
+    def _destroy_image(self) -> None:
+        if self._image is None:
+            return
+        self._owner.require('an exported texture', DMABufError)
+        image, self._image = self._image, None
+        _destroy(self._display, image)
+
+
+class ImportedImage:
+    """The EGLImage an imported texture shows, and where both were made.
+
+    texture -- the texture's name, 0 once it has been released
+    image -- the EGLImage, None once it has been released
+    owner -- the OpenGL context the texture was made in, and its display
+    """
+
+    __slots__ = ('image', 'owner', 'texture')
+
+    def __init__(self, texture: int, image: object, owner: Owner) -> None:
+        self.texture = texture
+        self.image = image
+        self.owner = owner
+
+    def __repr__(self) -> str:
+        return f'<{type(self).__name__} texture {self.texture} of {self.owner!r}>'
 
 
 #: Why nothing here can run without an EGL library, said once.
@@ -244,15 +287,58 @@ def import_available() -> bool:
     return all(name in extensions for name in IMPORT_EXTENSIONS)
 
 
+def _require_described(texture: int, width: int, height: int) -> None:
+    """Raise :class:`DMABufError` unless `texture` is RGBA and `width` by `height`.
+
+    The importer of the buffer is told the size, and sizes its reads by it,
+    so the size is OpenGL's answer and not the caller's statement alone.
+    """
+    from OpenGL.GL import (  # noqa: PLC0415 - OpenGL.GL stays off the probe path
+        GL_TEXTURE_2D,
+        GL_TEXTURE_BINDING_2D,
+        GL_TEXTURE_HEIGHT,
+        GL_TEXTURE_INTERNAL_FORMAT,
+        GL_TEXTURE_WIDTH,
+        glBindTexture,
+        glGetIntegerv,
+        glGetTexLevelParameteriv,
+    )
+    try:
+        previous = int(glGetIntegerv(GL_TEXTURE_BINDING_2D))
+        glBindTexture(GL_TEXTURE_2D, int(texture))
+        try:
+            found_width, found_height, found_format = (
+                int(glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, parameter))
+                for parameter in (GL_TEXTURE_WIDTH, GL_TEXTURE_HEIGHT,
+                                  GL_TEXTURE_INTERNAL_FORMAT))
+        finally:
+            glBindTexture(GL_TEXTURE_2D, previous)
+    except Exception as error:
+        raise DMABufError(
+            f'OpenGL would not say what size texture {texture} is, so it '
+            f'cannot be exported: {error}') from error
+    if (found_width, found_height) != (int(width), int(height)):
+        raise DMABufError(
+            f'texture {texture} is {found_width}x{found_height}, and it was to '
+            f'be exported as {width}x{height}; the two must be the same')
+    if found_format not in RGBA_FORMATS:
+        raise DMABufError(
+            f'texture {texture} has the internal format {found_format:#x}, and '
+            f'a texture is exported from GL_RGBA8 ({GL_RGBA8:#x})')
+
+
 def export_texture(texture: int, width: int, height: int) -> ExportedImage:
     """Name `texture` as a DMA-BUF another driver can read.
+
+    width/height -- the texture's size, which OpenGL is asked to confirm
 
     The texture keeps its contents and stays usable in OpenGL; what comes back
     is a second name for the same memory. It must not be deleted while the
     exported image is open.
 
     Raises :class:`DMABufError` when the context cannot export, which
-    :func:`unavailable_because` explains.
+    :func:`unavailable_because` explains, and when the texture is not
+    ``GL_RGBA8`` of the size stated.
     """
     EGL = _require_egl()
     from OpenGL.EGL.KHR.image_base import (  # noqa: PLC0415 - OpenGL.EGL needs an EGL library
@@ -267,6 +353,7 @@ def export_texture(texture: int, width: int, height: int) -> ExportedImage:
     reason = unavailable_because()
     if reason:
         raise DMABufError(reason)
+    owner = Owner.current()
     display = EGL.eglGetCurrentDisplay()
     context = EGL.eglGetCurrentContext()
 
@@ -285,6 +372,7 @@ def export_texture(texture: int, width: int, height: int) -> ExportedImage:
     offsets = (EGL.EGLint * 4)()
     # The image is this function's until both queries have answered.
     try:
+        _require_described(texture, width, height)
         _require(
             'eglExportDMABUFImageQueryMESA would not describe the texture, so '
             'it cannot be exported',
@@ -292,9 +380,15 @@ def export_texture(texture: int, width: int, height: int) -> ExportedImage:
             ctypes.byref(plane_count),
             ctypes.cast(modifiers, ctypes.POINTER(ctypes.c_uint64)))
         count = int(plane_count.value)
+        # The arrays below are what the driver writes a descriptor for each
+        # plane into, so its count is held to their length before it does.
+        if not 0 < count <= len(fds):
+            raise DMABufError(
+                f'the texture was described as {count} planes, and a format '
+                f'here has from 1 to {len(fds)}')
         _require('eglExportDMABUFImageMESA would not export the texture',
                  eglExportDMABUFImageMESA, display, image, fds, strides, offsets)
-    except DMABufError:
+    except BaseException:
         _destroy(display, image)
         raise
 
@@ -302,7 +396,7 @@ def export_texture(texture: int, width: int, height: int) -> ExportedImage:
                          stride=int(strides[index]))
                    for index in range(count))
     return ExportedImage(display, image, int(fourcc.value), int(width),
-                         int(height), int(modifiers[0]), planes)
+                         int(height), int(modifiers[0]), planes, owner)
 
 
 def _destroy(display: object, image: object) -> None:
@@ -313,12 +407,13 @@ def _destroy(display: object, image: object) -> None:
 
 
 def import_texture(fourcc: int, width: int, height: int, modifier: int,
-                   planes: tuple[Plane, ...]) -> tuple[int, object]:
+                   planes: tuple[Plane, ...]) -> tuple[int, ImportedImage]:
     """Give a buffer another driver allocated a name in OpenGL.
 
-    Returns the texture and the EGLImage it was made from; the image has to
-    stay alive as long as the texture does, and
-    :func:`release_imported_texture` gives both back.
+    Returns the texture and the :class:`ImportedImage` it shows; the image
+    has to stay alive as long as the texture does, and
+    :func:`release_imported_texture` gives both back. The texture binding in
+    force when this is called is put back.
 
     The descriptors in `planes` are not taken over: EGL duplicates what it
     needs, and the caller closes its own.
@@ -331,12 +426,15 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
         GL_CLAMP_TO_EDGE,
         GL_LINEAR,
         GL_TEXTURE_2D,
+        GL_TEXTURE_BINDING_2D,
         GL_TEXTURE_MAG_FILTER,
         GL_TEXTURE_MIN_FILTER,
         GL_TEXTURE_WRAP_S,
         GL_TEXTURE_WRAP_T,
         glBindTexture,
+        glDeleteTextures,
         glGenTextures,
+        glGetIntegerv,
         glTexParameteri,
     )
     from OpenGL.GLES2.OES.EGL_image import (  # noqa: PLC0415 - OpenGL.GL stays off the probe path
@@ -347,6 +445,11 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
         raise DMABufError(
             'this EGL display does not offer EGL_EXT_image_dma_buf_import, so '
             "a buffer the encoder allocated cannot be given an OpenGL name")
+    if len(planes) > len(_IMPORT_ATTRIBUTES):
+        raise DMABufError(
+            f'a buffer of {len(planes)} planes cannot be imported; a format '
+            f'here has at most {len(_IMPORT_ATTRIBUTES)}')
+    owner = Owner.current()
     display = EGL.eglGetCurrentDisplay()
 
     values = [EGL_WIDTH, int(width), EGL_HEIGHT, int(height),
@@ -374,35 +477,69 @@ def import_texture(fourcc: int, width: int, height: int, modifier: int,
         eglCreateImageKHR, display, EGL.EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
         None, attributes)
 
-    texture = int(glGenTextures(1))
-    glBindTexture(GL_TEXTURE_2D, texture)
-    for parameter, value in (
-        (GL_TEXTURE_MIN_FILTER, GL_LINEAR), (GL_TEXTURE_MAG_FILTER, GL_LINEAR),
-        (GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE), (GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE),
-    ):
-        glTexParameteri(GL_TEXTURE_2D, parameter, value)
     # Which of the two calls checks the layout is the driver's choice: Mesa
     # answers above, and NVIDIA accepts the image and refuses it here. A caller
     # is owed the same exception either way, and neither the image nor the
     # texture is theirs until both calls have succeeded.
+    texture = 0
     try:
-        glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image)
-    except Exception as error:
-        glBindTexture(GL_TEXTURE_2D, 0)
-        release_imported_texture(texture, image)
+        previous = int(glGetIntegerv(GL_TEXTURE_BINDING_2D))
+        texture = int(glGenTextures(1))
+        glBindTexture(GL_TEXTURE_2D, texture)
+        try:
+            for parameter, value in (
+                (GL_TEXTURE_MIN_FILTER, GL_LINEAR), (GL_TEXTURE_MAG_FILTER, GL_LINEAR),
+                (GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE), (GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE),
+            ):
+                glTexParameteri(GL_TEXTURE_2D, parameter, value)
+            glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image)
+        finally:
+            glBindTexture(GL_TEXTURE_2D, previous)
+    except BaseException as error:
+        release_all(functools.partial(_destroy, display, image),
+                    functools.partial(_delete_texture, glDeleteTextures, texture))
+        if not isinstance(error, Exception):
+            raise
         raise DMABufError(
             f'this EGL display would not give a {width}x{height} buffer of '
             f'{len(planes)} plane(s) with {layout} an OpenGL name: '
             f'{error}') from error
-    glBindTexture(GL_TEXTURE_2D, 0)
-    return texture, image
+    return texture, ImportedImage(texture, image, owner)
 
 
-def release_imported_texture(texture: int, image: object) -> None:
-    """Give back what :func:`import_texture` returned."""
+def _delete_texture(delete: Callable[[list[int]], object], texture: int) -> None:
+    if texture:
+        delete([texture])
+
+
+def release_imported_texture(texture: int, image: ImportedImage | None) -> None:
+    """Give back what :func:`import_texture` returned. Safe to call twice.
+
+    texture -- the texture; read only where `image` is None, since the image
+        records which texture it still has to give back
+
+    The texture is deleted in the context that made it. With another context
+    current, or none, nothing is released and :class:`DMABufError` says so:
+    the name belongs to something else there.
+    """
     from OpenGL.GL import glDeleteTextures  # noqa: PLC0415 - OpenGL.GL stays off the probe path
 
-    if texture:
-        glDeleteTextures([int(texture)])
-    if image is not None:
-        _destroy(_require_egl().eglGetCurrentDisplay(), image)
+    if image is None:
+        _delete_texture(glDeleteTextures, int(texture))
+        return
+    if not image.texture and image.image is None:
+        return
+    image.owner.require('an imported texture', DMABufError)
+    release_all(functools.partial(_forget_texture, glDeleteTextures, image),
+                functools.partial(_forget_image, image))
+
+
+def _forget_texture(delete: Callable[[list[int]], object], image: ImportedImage) -> None:
+    texture, image.texture = image.texture, 0
+    _delete_texture(delete, texture)
+
+
+def _forget_image(image: ImportedImage) -> None:
+    handle, image.image = image.image, None
+    if handle is not None:
+        _destroy(image.owner.display, handle)

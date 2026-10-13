@@ -102,12 +102,12 @@ class AV1Encoding(EncodeControl):
                 width, height, settings.frame_rate, settings.bitrate,
                 tx_mode_select=(not limits_stated or bool(
                     limits.bits.tx_mode_support & TX_MODE_SELECT_SUPPORTED)))
-        except ValueError as error:
+            self.structure = GroupOfPictures(settings.gop, base_q_idx(settings.qp))
+        except (ValueError, ArithmeticError) as error:
             raise EncoderError(f'AV1 cannot code this picture: {error}') from error
         # The surfaces are the picture's own size. A driver that codes whole
         # blocks pads the picture out to them itself.
         self.coded_size = (self.stream.width, self.stream.height)
-        self.structure = GroupOfPictures(settings.gop, base_q_idx(settings.qp))
         self._reference: int | None = None
         self._coded_header = b''
 

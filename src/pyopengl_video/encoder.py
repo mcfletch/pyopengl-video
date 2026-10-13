@@ -28,7 +28,12 @@ from typing import Any
 
 from pyopengl_video.backend import Backend, VideoError, available
 from pyopengl_video.backend import explanations as backend_explanations
-from pyopengl_video.inputs import InputHandle, create_framebuffer, create_rgba_texture
+from pyopengl_video.inputs import (
+    InputHandle,
+    create_framebuffer,
+    create_rgba_texture,
+    delete_texture,
+)
 
 __all__ = ['BACKENDS', 'Backend', 'Encoder', 'EncoderError', 'EncoderUnavailable',
            'Packet', 'available_backends', 'default_bitrate', 'explanations',
@@ -136,9 +141,18 @@ class Encoder(ABC):
         whose input must be allocated by the driver override this.
         """
         texture = create_rgba_texture(*self.size)
-        handle = self.register(texture)
-        handle.framebuffer = create_framebuffer(texture, handle.target)
+        try:
+            handle = self.register(texture)
+        except BaseException:
+            delete_texture(texture)
+            raise
+        # From here the handle deletes the texture, when it is closed.
         handle.owns_texture = True
+        try:
+            handle.framebuffer = create_framebuffer(texture, handle.target)
+        except BaseException:
+            handle.close()
+            raise
         return handle
 
     @abstractmethod

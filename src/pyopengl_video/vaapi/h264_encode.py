@@ -8,6 +8,7 @@ pictures each one predicts from. Nothing here holds a driver.
 from __future__ import annotations
 
 from pyopengl_video import codecs
+from pyopengl_video.encoder import EncoderError
 from pyopengl_video.mp4 import split_annexb
 from pyopengl_video.vaapi import api
 from pyopengl_video.vaapi.control import (
@@ -27,7 +28,7 @@ from pyopengl_video.vaapi.h264 import (
     annexb,
 )
 
-__all__ = ['H264Encoding', 'PACKED_HEADERS_WRITTEN']
+__all__ = ['H264Encoding', 'MAX_REFERENCES', 'PACKED_HEADERS_WRITTEN']
 
 #: The packed headers this layer supplies, and so the only ones it asks the
 #: driver to expect. Asking for one is a promise to write it every picture that
@@ -43,6 +44,10 @@ PACKED_HEADERS_WRITTEN = (api.VA_ENC_PACKED_HEADER_SEQUENCE
 
 NAL_SPS = 7
 NAL_PPS = 8
+
+#: The most pictures kept to predict from: ``max_num_ref_frames`` is at most
+#: 16 at every level (A.3.1), whatever a driver states it could search.
+MAX_REFERENCES = 16
 
 
 class H264Encoding(EncodeControl):
@@ -72,17 +77,20 @@ class H264Encoding(EncodeControl):
         # which is exactly what a stream of I and P pictures needs; asking for
         # more is refused by the driver rather than quietly reduced.
         reference_frames = stated.get(api.VAConfigAttribEncMaxRefFrames, 1)
-        self.max_num_ref_frames = max(1, reference_frames & 0xFFFF)
+        self.max_num_ref_frames = max(1, min(reference_frames & 0xFFFF, MAX_REFERENCES))
         self.references = self.max_num_ref_frames
         width, height = settings.size
-        self.sets = ParameterSets(
-            width=width, height=height, frame_rate=settings.frame_rate,
-            max_num_ref_frames=self.max_num_ref_frames, init_qp=settings.qp,
-            bitrate=settings.bitrate, transform_8x8=True)
+        try:
+            self.sets = ParameterSets(
+                width=width, height=height, frame_rate=settings.frame_rate,
+                max_num_ref_frames=self.max_num_ref_frames, init_qp=settings.qp,
+                bitrate=settings.bitrate, transform_8x8=True)
+            self.structure = GroupOfPictures(
+                gop=settings.gop, max_num_ref_frames=self.max_num_ref_frames,
+                log2_max_frame_num=self.sets.log2_max_frame_num)
+        except (ValueError, ArithmeticError) as error:
+            raise EncoderError(f'H.264 cannot code this: {error}') from error
         self.coded_size = self.sets.coded_size
-        self.structure = GroupOfPictures(
-            gop=settings.gop, max_num_ref_frames=self.max_num_ref_frames,
-            log2_max_frame_num=self.sets.log2_max_frame_num)
         self._references: list[tuple[int, int, int]] = []
         self._coded_sets: dict[int, bytes] = {}
 

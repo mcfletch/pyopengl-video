@@ -39,7 +39,7 @@ from OpenGL.GL import (
     glFinish,
 )
 
-from pyopengl_video import inputs
+from pyopengl_video import bounds, inputs
 from pyopengl_video.encoder import (
     Encoder,
     EncoderError,
@@ -48,21 +48,26 @@ from pyopengl_video.encoder import (
     frame_rate_ratio,
 )
 from pyopengl_video.linux import dmabuf
+from pyopengl_video.teardown import release_all
 from pyopengl_video.vaapi import api
 from pyopengl_video.vaapi.codecs import ENCODERS, support_for
 from pyopengl_video.vaapi.control import (
+    LARGEST_BITRATE,
+    LARGEST_SIDE,
+    QP_RANGE,
     Buffer,
     CodedPicture,
     EncodeControl,
     EncodeSettings,
 )
-from pyopengl_video.vaapi.device import Device
+from pyopengl_video.vaapi.device import Device, abandon, worded
 from pyopengl_video.vaapi.h264 import COLOUR_PRIMARIES_BT709, MATRIX_BT709, TRANSFER_BT709
 
 log = logging.getLogger(__name__)
 
 __all__ = ['VAAPIEncoder', 'InputHandle', 'RATE_CONTROL_MODES',
-           'PIPELINE_DEPTH', 'colour_pipeline', 'as_encoder_error']
+           'MAX_CODED_SEGMENTS', 'MAX_REFERENCES', 'PIPELINE_DEPTH',
+           'colour_pipeline', 'as_encoder_error']
 
 #: How many pictures are in flight at once. One means :meth:`encode` returns the
 #: previous picture's packet, which is what keeps the GPU from being waited on
@@ -75,6 +80,15 @@ RATE_CONTROL_MODES = {
     'vbr': api.VA_RC_VBR,
     'cqp': api.VA_RC_CQP,
 }
+
+#: The most reconstructed pictures a control layer may keep to predict from:
+#: the largest decoded picture buffer of any codec here, H.264's and HEVC's 16.
+MAX_REFERENCES = 16
+
+#: The most segments a coded buffer is followed through. A driver answers
+#: with one segment a picture, or one a slice; a chain longer than this is
+#: one that does not end.
+MAX_CODED_SEGMENTS = 1024
 
 def as_encoder_error(method: Callable[..., Any]) -> Callable[..., Any]:
     """Let a method raise only :class:`EncoderError`, keeping the cause.
@@ -91,6 +105,11 @@ def as_encoder_error(method: Callable[..., Any]) -> Callable[..., Any]:
     and libva decodes as well as encodes, so neither is an encoder's error
     until an encoder is what raised it. The original stays on ``__cause__``,
     which is where a traceback shows it.
+
+    Every other :class:`Exception` a setting or a driver brings about is
+    translated the same way, :class:`MemoryError` included.
+    :class:`KeyboardInterrupt`, :class:`SystemExit` and :class:`GeneratorExit`
+    pass through.
     """
     @functools.wraps(method)
     def translating(*arguments: Any, **named: Any) -> Any:
@@ -98,8 +117,8 @@ def as_encoder_error(method: Callable[..., Any]) -> Callable[..., Any]:
             return method(*arguments, **named)
         except EncoderError:
             raise
-        except (api.VAError, dmabuf.DMABufError) as error:
-            raise EncoderError(str(error)) from error
+        except Exception as error:
+            raise EncoderError(worded(error)) from error
     return translating
 
 
@@ -107,10 +126,11 @@ def colour_pipeline(surface: int, size: tuple[int, int] | None = None,
                     ) -> api.VAProcPipelineParameterBuffer:
     """The video processing pass that turns a full-range RGB surface into NV12.
 
-    size -- the picture, as (width, height). The pass writes that rectangle
-        at the top left of its target and nothing else, so a target padded
-        out to a codec's block size holds the picture unscaled. Without it
-        the picture is scaled to fill the target.
+    size -- the picture, as (width, height), each from 1 to 65535, which is
+        what the rectangle's 16-bit fields hold. The pass writes that
+        rectangle at the top left of its target and nothing else, so a target
+        padded out to a codec's block size holds the picture unscaled.
+        Without it the picture is scaled to fill the target.
 
     A renderer's colours are full range, and the stream every control layer
     here produces declares limited-range BT.709 -- so the conversion has to say
@@ -129,7 +149,11 @@ def colour_pipeline(surface: int, size: tuple[int, int] | None = None,
     pipeline.output_color_properties.transfer_characteristics = TRANSFER_BT709
     pipeline.output_color_properties.matrix_coefficients = MATRIX_BT709
     if size is not None:
-        pipeline.output_region = ctypes.pointer(api.VARectangle(0, 0, *size))
+        width, height = bounds.frame_size(
+            *size, most=(bounds.FIELD_16, bounds.FIELD_16), error=EncoderError)
+        # The pipeline keeps the rectangle alive: ctypes holds what a pointer
+        # field was assigned from for as long as the structure lives.
+        pipeline.output_region = ctypes.pointer(api.VARectangle(0, 0, width, height))
     return pipeline
 
 
@@ -163,16 +187,16 @@ class InputHandle(inputs.InputHandle):
         """
         return _Drawing(self)
 
-    def close(self) -> None:
-        """Give back the framebuffer, and the texture if this handle made it."""
-        self.forget_fence()
-        super().close()
+    def _held(self) -> list[Callable[[], object]]:
+        """A release for each OpenGL object the handle still holds, the fence first."""
+        fence = [self.forget_fence] if self.fence is not None else []
+        return [*fence, *super()._held()]
 
     def forget_fence(self) -> None:
         """Delete the fence made when drawing last finished, if there is one."""
         if self.fence is not None:
-            glDeleteSync(self.fence)
-            self.fence = None
+            fence, self.fence = self.fence, None
+            glDeleteSync(fence)
 
 
 class _Drawing:
@@ -203,13 +227,17 @@ class _Submission:
 class VAAPIEncoder(Encoder):
     """Encoding on Intel and AMD hardware, fed from an OpenGL texture.
 
-    width/height -- the picture size, both even
+    width/height -- the picture size, both even and at most
+        :data:`~pyopengl_video.vaapi.control.LARGEST_SIDE`
     codec -- any codec in :data:`pyopengl_video.vaapi.codecs.ENCODERS` that the
         device offers; :func:`pyopengl_video.encoders` lists them for this machine
-    fps -- frame rate, as a number or an exact ``(numerator, denominator)``
-    bitrate -- bits per second; the default is derived from the frame size and
-        rate
-    gop -- frames between key frames
+    fps -- frame rate, as a number or an exact ``(numerator, denominator)``.
+        The ratio in lowest terms has to fit 16 bits each way, which is how
+        libva carries it: 30000/1001 does, and so does 90000/3003.
+    bitrate -- bits per second, up to 2**31 - 1; the default is derived from
+        the frame size and rate
+    gop -- frames between key frames, up to 2**32 - 1; the default is one
+        second of them
     rate_control -- ``'cbr'``, ``'vbr'`` or ``'cqp'``; a mode the driver does
         not offer is refused by name
     qp -- the quantiser, which is what ``'cqp'`` codes at and what the other
@@ -220,6 +248,13 @@ class VAAPIEncoder(Encoder):
         the default is the first that has an encoder for the codec
 
     The picture is coded as 8-bit 4:2:0, limited-range BT.709.
+
+    Every setting is checked before a device is opened, and
+    :class:`~pyopengl_video.encoder.EncoderError` names the one that does not
+    fit. An :meth:`encode` that fails part-way stops the encoder: the picture
+    was not coded, so the ones after it would predict from a picture the
+    stream does not hold. :meth:`flush` still returns the packets of the
+    pictures before it, and :meth:`close` releases everything.
     """
 
     allocates_inputs = False
@@ -242,7 +277,25 @@ class VAAPIEncoder(Encoder):
             raise EncoderError(
                 f'the VA-API backend encodes {", ".join(sorted(ENCODERS))}, '
                 f'not {codec!r}')
-        if bframes:
+        self._closed = False
+        self._stopped = ''
+        self._device: Device | None = None
+        self._config = api.VAConfigID(0)
+        self._context = api.VAContextID(0)
+        self._vpp_config = api.VAConfigID(0)
+        self._vpp_context = api.VAContextID(0)
+        self._sources: list[int] = []
+        self._reconstructions: list[int] = []
+        self._coded_buffers: list[int] = []
+        self._coded_size = 0
+        self._registered: list[InputHandle] = []
+        self._pending: list[_Submission] = []
+        self._slot = 0
+        self._recon_slot = 0
+        self._coded_slot = 0
+        self._conversion_kept = False
+
+        if bounds.whole(bframes, 'bframes', 0, bounds.FIELD_16, EncoderError):
             raise EncoderError(
                 'the VA-API backend codes pictures in display order, so '
                 f'bframes must be 0, not {bframes}; a stream with B-frames '
@@ -254,37 +307,32 @@ class VAAPIEncoder(Encoder):
 
         self.codec = support.codec
         self._support = support
-        self.size = (int(width), int(height))
-        self.frame_rate = frame_rate_ratio(fps)
-        self.bitrate = int(bitrate) if bitrate else default_bitrate(
-            self.size, self.frame_rate)
-        self.gop = int(gop) if gop else max(1, round(
-            self.frame_rate[0] / self.frame_rate[1]))
+        self.size = bounds.frame_size(width, height, most=(LARGEST_SIDE, LARGEST_SIDE),
+                                      even=True, error=EncoderError)
+        self.frame_rate = bounds.frame_rate(frame_rate_ratio(fps), EncoderError)
+        self.bitrate = bounds.whole(
+            bitrate if bitrate else min(
+                LARGEST_BITRATE, max(1, default_bitrate(self.size, self.frame_rate))),
+            'bitrate', 1, LARGEST_BITRATE, EncoderError)
+        self.gop = bounds.whole(
+            gop if gop else min(bounds.FIELD_32, max(1, round(
+                self.frame_rate[0] / self.frame_rate[1]))),
+            'gop', 1, bounds.FIELD_32, EncoderError)
         self.rate_control_name = rate_control
-        self.qp = int(qp)
+        self.qp = bounds.whole(qp, 'qp', *QP_RANGE, EncoderError)
+        # Made here, before a device is opened, since making it is what holds
+        # each setting to the field a control layer writes it into.
+        self._settings = EncodeSettings(
+            size=self.size, frame_rate=self.frame_rate, bitrate=self.bitrate,
+            gop=self.gop, qp=self.qp, rate_control=RATE_CONTROL_MODES[rate_control])
 
         self.api = api.VA.instance()
-        self._device: Device | None = None
         self.device = device
-        self._config = api.VAConfigID(0)
-        self._context = api.VAContextID(0)
-        self._vpp_config = api.VAConfigID(0)
-        self._vpp_context = api.VAContextID(0)
-        self._sources: list[int] = []
-        self._reconstructions: list[int] = []
-        self._coded_buffers: list[int] = []
-        self._registered: list[InputHandle] = []
-        self._pending: list[_Submission] = []
-        self._slot = 0
-        self._recon_slot = 0
-        self._coded_slot = 0
-        self._conversion_kept = False
-        self._closed = False
 
         try:
             self._open()
-        except Exception:
-            self.close()
+        except BaseException:
+            abandon(self.close)
             raise
 
     def __repr__(self) -> str:
@@ -361,11 +409,11 @@ class VAAPIEncoder(Encoder):
                 f'{offered or ["none this backend knows"]}')
         self.rate_control = wanted
 
-        self.control = layer(
-            EncodeSettings(size=self.size, frame_rate=self.frame_rate,
-                           bitrate=self.bitrate, gop=self.gop, qp=self.qp,
-                           rate_control=wanted),
-            stated)
+        self.control = layer(self._settings, stated)
+        bounds.whole(self.control.references, f'the pictures {layer.title} keeps to '
+                     'predict from', 1, MAX_REFERENCES, EncoderError)
+        bounds.frame_size(*self.control.coded_size, most=(bounds.FIELD_16, bounds.FIELD_16),
+                          error=EncoderError)
         self.packed_headers = self.control.packed_headers
         self.input_slots = PIPELINE_DEPTH + 1
         log.debug('%s: %s, %s, references %d, packed headers %#x',
@@ -409,7 +457,9 @@ class VAAPIEncoder(Encoder):
                 ctypes.byref(self._context)),
             'vaCreateContext', f'{coded_width}x{coded_height} encode')
 
-        size = self._coded_buffer_size()
+        # Kept: a driver's segment lengths are compared with it when a
+        # picture is read back.
+        self._coded_size = size = self._coded_buffer_size()
         for _ in range(PIPELINE_DEPTH + 1):
             buffer = api.VABufferID(0)
             self.api.check(
@@ -427,7 +477,9 @@ class VAAPIEncoder(Encoder):
         inside it.
         """
         width, height = self.control.coded_size
-        return max(width * height * 3 // 2, 1 << 16)
+        return bounds.whole(max(width * height * 3 // 2, 1 << 16),
+                            f'the coded buffer of a {width}x{height} picture, in bytes',
+                            1, (1 << 31) - 1, EncoderError)
 
     def _create_surfaces(self, format: int, width: int, height: int,
                          count: int) -> list[int]:
@@ -464,15 +516,16 @@ class VAAPIEncoder(Encoder):
         The texture keeps its contents and stays an ordinary OpenGL texture;
         what the encoder gets is a second name for the same memory. It must
         outlive the handle, and it must be ``GL_RGBA8`` of exactly the
-        encoder's size.
+        encoder's size: OpenGL is asked, and a texture of another size or
+        format is refused.
         """
         self._check_open()
         width, height = self.size
         exported = dmabuf.export_texture(texture, width, height)
         try:
             surface = self._import_surface(exported)
-        except Exception:
-            exported.close()
+        except BaseException:
+            abandon(exported.close)
             raise
         handle = InputHandle(texture=int(texture),
                              target=int(target or GL_TEXTURE_2D),
@@ -491,20 +544,28 @@ class VAAPIEncoder(Encoder):
                 f'the texture exported as {api.fourcc_name(exported.fourcc)}, '
                 'not ABGR8888; the encoder reads a GL_RGBA8 texture')
         plane = exported.planes[0]
+        # The layout is EGL's answer, and each number goes into a 32-bit field
+        # the driver sizes its reads by.
+        offset = bounds.whole(plane.offset, "the exported plane's offset", 0,
+                              bounds.FIELD_32, EncoderError)
+        stride = bounds.whole(plane.stride, "the exported plane's stride",
+                              exported.width * 4, bounds.FIELD_32, EncoderError)
         descriptor = api.VADRMPRIMESurfaceDescriptor()
         descriptor.fourcc = api.VA_FOURCC_RGBA
         descriptor.width = exported.width
         descriptor.height = exported.height
         descriptor.num_objects = 1
         descriptor.objects[0].fd = plane.fd
-        descriptor.objects[0].size = plane.offset + plane.stride * exported.height
+        descriptor.objects[0].size = bounds.whole(
+            offset + stride * exported.height, 'the exported buffer, in bytes', 1,
+            bounds.FIELD_32, EncoderError)
         descriptor.objects[0].drm_format_modifier = exported.modifier
         descriptor.num_layers = 1
         descriptor.layers[0].drm_format = exported.fourcc
         descriptor.layers[0].num_planes = 1
         descriptor.layers[0].object_index[0] = 0
-        descriptor.layers[0].offset[0] = plane.offset
-        descriptor.layers[0].pitch[0] = plane.stride
+        descriptor.layers[0].offset[0] = offset
+        descriptor.layers[0].pitch[0] = stride
 
         attributes = (api.VASurfaceAttrib * 2)()
         attributes[0].type = api.VASurfaceAttribMemoryType
@@ -534,25 +595,40 @@ class VAAPIEncoder(Encoder):
 
         The list is empty until the pipeline has filled, which takes one frame;
         after that it holds exactly one packet per call.
+
+        A call that fails once the picture has been handed to the driver
+        stops the encoder, and every later call is refused: the control
+        layer has counted a picture the stream does not hold. :meth:`flush`
+        returns the pictures coded before it.
         """
         self._check_open()
+        if self._stopped:
+            raise EncoderError(
+                f'the encoder has stopped: {self._stopped}; flush it for the '
+                'pictures already coded, and close it')
         duration = self.frame_duration(duration)
         if handle not in self._registered:
             raise EncoderError(
                 'this handle was not registered with this encoder, or the '
                 'encoder has been closed since it was')
         self._wait_for_drawing(handle)
-        source = self._sources[self._slot]
-        self._slot = (self._slot + 1) % len(self._sources)
-        self._convert(handle, source)
-        if not self._conversion_kept:
-            self._keep_conversion(handle, source)
-        picture = self.control.next_picture(force_key=force_idr)
-        self._submit(picture, source, timestamp, duration)
-        # Submitted first, then read: the picture whose packet comes back has
-        # had this call's conversion and coding queued in front of it, so the
-        # wait is on work that is a whole frame old.
-        return self._drain(keep=PIPELINE_DEPTH)
+        try:
+            source = self._sources[self._slot]
+            self._convert(handle, source)
+            if not self._conversion_kept:
+                self._keep_conversion(handle, source)
+            picture = self.control.next_picture(force_key=force_idr)
+            self._submit(picture, source, timestamp, duration)
+            # Advanced once the picture is in flight: until then the source
+            # is not one a later picture has to keep clear of.
+            self._slot = (self._slot + 1) % len(self._sources)
+            # Submitted first, then read: the picture whose packet comes back
+            # has had this call's conversion and coding queued in front of it,
+            # so the wait is on work that is a whole frame old.
+            return self._drain(keep=PIPELINE_DEPTH)
+        except BaseException as error:
+            self._stopped = worded(error)
+            raise
 
     def _wait_for_drawing(self, handle: InputHandle) -> None:
         """Wait until OpenGL has finished drawing into the handle's texture.
@@ -601,15 +677,20 @@ class VAAPIEncoder(Encoder):
 
     def _submit(self, picture: CodedPicture, source: int, timestamp: int,
                 duration: int) -> None:
-        """Hand one picture to the encoder, with everything it has to be told."""
+        """Hand one picture to the encoder, with everything it has to be told.
+
+        The coded buffer and the reconstruction are the next of each, and the
+        counters that choose them advance once the driver has taken the
+        picture, so a refused picture leaves both free.
+        """
         coded = self._coded_buffers[self._coded_slot]
-        self._coded_slot = (self._coded_slot + 1) % len(self._coded_buffers)
         reconstruction = self._reconstructions[self._recon_slot]
-        self._recon_slot = (self._recon_slot + 1) % len(self._reconstructions)
 
         described = self.control.buffers(picture, coded, reconstruction)
         self._picture(self._context, source, self._buffers(self._context, described),
                       picture.name)
+        self._coded_slot = (self._coded_slot + 1) % len(self._coded_buffers)
+        self._recon_slot = (self._recon_slot + 1) % len(self._reconstructions)
         self._pending.append(_Submission(
             picture=picture, coded_buffer=coded, source=source,
             timestamp=int(timestamp), duration=int(duration)))
@@ -617,13 +698,17 @@ class VAAPIEncoder(Encoder):
     def _picture(self, context: Any, target: int, buffers: list[int],
                  what: str) -> None:
         """Run one begin/render/end sequence, and give the buffers back after."""
-        assert self._device is not None
-        self._device.picture(context, target, [buffers], what)
+        self._opened().picture(context, target, [buffers], what)
 
     def _buffer(self, context: Any, kind: int, payload: Any) -> int:
         """Create a VA buffer holding `payload`."""
-        assert self._device is not None
-        return self._device.buffer(context, kind, payload)
+        return self._opened().buffer(context, kind, payload)
+
+    def _opened(self) -> Device:
+        """The device, where the encoder still has one."""
+        if self._device is None:
+            raise EncoderError('this encoder has been closed')
+        return self._device
 
     def _buffers(self, context: Any, described: list[Buffer]) -> list[int]:
         """Create a VA buffer for each of `described`, or none if one fails."""
@@ -671,19 +756,46 @@ class VAAPIEncoder(Encoder):
         """Follow a coded buffer's segments and join what they hold.
 
         An encoder may answer in more than one run of bytes, and the chain is
-        how it says so.
+        how it says so. The lengths are the driver's, so each segment and
+        their sum are held to the size the coded buffer was created at, and
+        the chain to :data:`MAX_CODED_SEGMENTS`.
+        :class:`~pyopengl_video.encoder.EncoderError` for a length outside
+        those, and for a segment whose status says the picture overflowed the
+        buffer or the bitstream is bad: what such a buffer holds is not a
+        picture.
         """
-        segments = []
         address = pointer.value
-        while address:
+        if not address:
+            raise EncoderError('vaMapBuffer gave no address for the coded picture')
+        segments = []
+        total = 0
+        for _ in range(MAX_CODED_SEGMENTS):
             segment = api.VACodedBufferSegment.from_address(address)
-            if segment.size and segment.buf:
-                segments.append(ctypes.string_at(segment.buf, segment.size))
-            quantiser = segment.status & api.VA_CODED_BUF_STATUS_PICTURE_AVE_QP_MASK
-            log.debug('coded segment: %d bytes, average quantiser %d',
-                      segment.size, quantiser)
+            status = int(segment.status)
+            if status & api.VA_CODED_BUF_STATUS_SLICE_OVERFLOW_MASK:
+                raise EncoderError(
+                    f'the coded picture overflowed its {self._coded_size} byte '
+                    f'buffer (segment status {status:#x})')
+            if status & api.VA_CODED_BUF_STATUS_BAD_BITSTREAM:
+                raise EncoderError(
+                    f'the driver marks the coded picture as a bad bitstream '
+                    f'(segment status {status:#x})')
+            _, size = bounds.span(total, segment.size, self._coded_size,
+                                  'a segment of the coded picture', EncoderError)
+            if size:
+                if not segment.buf:
+                    raise EncoderError(
+                        f'a segment of the coded picture states {size} bytes '
+                        'at no address')
+                segments.append(ctypes.string_at(segment.buf, size))
+                total += size
+            log.debug('coded segment: %d bytes, average quantiser %d', size,
+                      status & api.VA_CODED_BUF_STATUS_PICTURE_AVE_QP_MASK)
             address = ctypes.cast(segment.next, ctypes.c_void_p).value
-        return b''.join(segments)
+            if not address:
+                return b''.join(segments)
+        raise EncoderError(
+            f'the coded picture has more than {MAX_CODED_SEGMENTS} segments')
 
     @as_encoder_error
     def flush(self) -> list[Packet]:
@@ -691,6 +803,7 @@ class VAAPIEncoder(Encoder):
         self._check_open()
         return self._drain(keep=0)
 
+    @as_encoder_error
     def headers(self) -> bytes:
         """The stream's configuration, as a container stores it up front.
 
@@ -702,49 +815,82 @@ class VAAPIEncoder(Encoder):
 
     # ----------------------------------------------------------------- closing
 
+    @as_encoder_error
     def close(self) -> None:
-        """Release everything, in the order that leaves nothing dangling."""
-        if self._closed:
-            return
+        """Release everything, in the order that leaves nothing dangling.
+
+        Every release runs whatever the others do, and the display and the
+        render node are closed last, always. Each registered input's EGL
+        image belongs to the OpenGL context it was registered in: with
+        another current, or none, the image is kept,
+        :class:`~pyopengl_video.encoder.EncoderError` says so once everything
+        of libva's is released, and closing again with that context current
+        gives it back. Closing an encoder with nothing left to release does
+        nothing.
+        """
         self._closed = True
-        if self.display is not None:
-            for handle in self._registered:
-                self._release_handle(handle)
-            for buffer in self._coded_buffers:
-                self.api.vaDestroyBuffer(self.display, buffer)
-            for context, config in ((self._vpp_context, self._vpp_config),
-                                    (self._context, self._config)):
-                if context:
-                    self.api.vaDestroyContext(self.display, context)
-                if config:
-                    self.api.vaDestroyConfig(self.display, config)
-            self._destroy_surfaces(self._sources + self._reconstructions)
-        self._registered = []
-        self._coded_buffers = []
-        self._sources = []
-        self._reconstructions = []
         self._pending = []
-        self._close_display()
+        release_all(self._release_inputs, self._destroy_coded_buffers,
+                    *(functools.partial(self._destroy, name, call)
+                      for name, call in (('_vpp_context', 'vaDestroyContext'),
+                                         ('_vpp_config', 'vaDestroyConfig'),
+                                         ('_context', 'vaDestroyContext'),
+                                         ('_config', 'vaDestroyConfig'))),
+                    self._destroy_surfaces, self._close_display)
+
+    def _release_inputs(self) -> None:
+        """Give back every registered input; one that could not be is kept."""
+        handles, self._registered = self._registered, []
+        try:
+            release_all(*(functools.partial(self._release_handle, handle)
+                          for handle in handles))
+        finally:
+            self._registered = [handle for handle in handles
+                                if handle.surface or handle.exported is not None]
 
     def _release_handle(self, handle: InputHandle) -> None:
         """Give back the surface and the buffer behind one registered input."""
-        if handle.surface:
-            surface = api.VASurfaceID(handle.surface)
-            self.api.vaDestroySurfaces(self.display, ctypes.byref(surface), 1)
-            handle.surface = 0
+        release_all(functools.partial(self._destroy_input_surface, handle),
+                    functools.partial(self._close_export, handle))
+
+    def _destroy_input_surface(self, handle: InputHandle) -> None:
+        surface, handle.surface = handle.surface, 0
+        if surface and self.display is not None:
+            identifier = api.VASurfaceID(surface)
+            self.api.vaDestroySurfaces(self.display, ctypes.byref(identifier), 1)
+
+    @staticmethod
+    def _close_export(handle: InputHandle) -> None:
+        # Cleared once closed: an export whose image another context holds
+        # stays on the handle for the next close.
         if handle.exported is not None:
             handle.exported.close()
             handle.exported = None
 
-    def _destroy_surfaces(self, surfaces: list[int]) -> None:
+    def _destroy_coded_buffers(self) -> None:
+        buffers, self._coded_buffers = self._coded_buffers, []
+        if self.display is not None:
+            release_all(*(functools.partial(self.api.vaDestroyBuffer, self.display, buffer)
+                          for buffer in buffers))
+
+    def _destroy(self, name: str, call: str) -> None:
+        """Destroy the libva context or configuration held as attribute `name`."""
+        held = getattr(self, name)
+        setattr(self, name, type(held)(0))
+        if held and self.display is not None:
+            getattr(self.api, call)(self.display, held)
+
+    def _destroy_surfaces(self) -> None:
+        surfaces = self._sources + self._reconstructions
+        self._sources, self._reconstructions = [], []
         if self._device is not None:
             self._device.destroy_surfaces(surfaces)
 
     def _close_display(self) -> None:
         """Terminate libva and close the render node, once."""
-        if self._device is not None:
-            self._device.close()
-            self._device = None
+        device, self._device = self._device, None
+        if device is not None:
+            device.close()
 
     def _check_open(self) -> None:
         if self._closed:

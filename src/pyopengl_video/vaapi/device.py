@@ -8,13 +8,41 @@ begin/render/end sequence are the same for an encoder and a decoder;
 from __future__ import annotations
 
 import ctypes
+import logging
 import os
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from pyopengl_video.teardown import release_all
 from pyopengl_video.vaapi import api
 
-__all__ = ['Device']
+__all__ = ['Device', 'abandon', 'worded']
+
+log = logging.getLogger(__name__)
+
+
+def worded(error: BaseException) -> str:
+    """What `error` says, led by its type's name where the type is not this package's.
+
+    This package's errors are sentences. ``list index out of range`` or an
+    empty :class:`MemoryError` is not one without the name of what was raised.
+    """
+    if type(error).__module__.startswith('pyopengl_video'):
+        return str(error)
+    return f'{type(error).__name__}: {error}' if str(error) else type(error).__name__
+
+
+def abandon(close: Callable[[], object]) -> None:
+    """Call `close` for an object whose construction failed, logging what it raises.
+
+    The caller is about to re-raise the failure that stopped the
+    construction, which is the one a reader needs; a failure to release what
+    had been made is logged with its traceback.
+    """
+    try:
+        close()
+    except Exception:
+        log.exception('releasing what a failed construction had made also failed')
 
 
 class Device:
@@ -39,6 +67,10 @@ class Device:
             display = self.va.vaGetDisplayDRM(self._fd)
             if not display:
                 raise api.VAError(-1, 'vaGetDisplayDRM', node)
+            # The display exists from here, initialised or not: libva allocates
+            # it in vaGetDisplayDRM and frees it in vaTerminate, so close()
+            # terminates one that would not initialise too.
+            self.display = display
             # Before vaInitialize, so the driver's log lines never reach a
             # caller's stderr: discovery runs in other people's programs.
             self.va.vaSetInfoCallback(display, self._silence, None)
@@ -47,14 +79,12 @@ class Device:
             status = self.va.vaInitialize(display, ctypes.byref(major), ctypes.byref(minor))
             if status != api.VA_STATUS_SUCCESS:
                 raise api.VAError(status, 'vaInitialize', node)
+            self.version = (major.value, minor.value)
+            vendor = self.va.vaQueryVendorString(display)
+            self.vendor = vendor.decode('utf-8', 'replace') if vendor else ''
         except BaseException:
-            os.close(self._fd)
-            self._fd = -1
+            abandon(self.close)
             raise
-        self.display = display
-        self.version = (major.value, minor.value)
-        vendor = self.va.vaQueryVendorString(display)
-        self.vendor = vendor.decode('utf-8', 'replace') if vendor else ''
 
     def __repr__(self) -> str:
         return f'<{type(self).__name__} {self.node} {self.vendor!r}>'
@@ -77,7 +107,11 @@ class Device:
             except (OSError, api.VAError) as error:
                 failures.append(f'{node}: {error}')
                 continue
-            objection = accept(device)
+            try:
+                objection = accept(device)
+            except BaseException:
+                device.close()
+                raise
             if not objection:
                 return device
             device.close()
@@ -160,15 +194,24 @@ class Device:
 
         Each batch is one ``vaRenderPicture`` call. ``vaEndPicture`` is what
         submits the picture, so every buffer is held until it has returned.
+
+        A picture that was begun is always ended: when a batch is refused,
+        ``vaEndPicture`` closes the sequence, its status unread, before the
+        refusal is raised, so the context is ready for the next
+        ``vaBeginPicture``. What `target` holds after that is undefined.
         """
         try:
             self.check(self.va.vaBeginPicture(self.display, context, target),
                        'vaBeginPicture', what)
-            for batch in batches:
-                array = (api.VABufferID * len(batch))(*batch)
-                self.check(self.va.vaRenderPicture(self.display, context, array,
-                                                   len(batch)),
-                           'vaRenderPicture', f'{len(batch)} buffer(s) for {what}')
+            try:
+                for batch in batches:
+                    array = (api.VABufferID * len(batch))(*batch)
+                    self.check(self.va.vaRenderPicture(self.display, context, array,
+                                                       len(batch)),
+                               'vaRenderPicture', f'{len(batch)} buffer(s) for {what}')
+            except BaseException:
+                self.va.vaEndPicture(self.display, context)
+                raise
             self.check(self.va.vaEndPicture(self.display, context), 'vaEndPicture', what)
         finally:
             for batch in batches:
@@ -181,10 +224,18 @@ class Device:
             self.va.vaDestroySurfaces(self.display, array, len(surfaces))
 
     def close(self) -> None:
-        """Terminate libva and close the render node. Safe to call twice."""
-        if self.display is not None:
-            self.va.vaTerminate(self.display)
-            self.display = None
-        if self._fd >= 0:
-            os.close(self._fd)
-            self._fd = -1
+        """Terminate libva and close the render node. Safe to call twice.
+
+        The node is closed whatever terminating does.
+        """
+        release_all(self._terminate, self._close_node)
+
+    def _terminate(self) -> None:
+        display, self.display = self.display, None
+        if display is not None:
+            self.va.vaTerminate(display)
+
+    def _close_node(self) -> None:
+        fd, self._fd = self._fd, -1
+        if fd >= 0:
+            os.close(fd)

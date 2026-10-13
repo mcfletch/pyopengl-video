@@ -5,20 +5,44 @@ from OpenGL.GL import (
     GL_DRAW_FRAMEBUFFER,
     GL_DRAW_FRAMEBUFFER_BINDING,
     GL_FRAMEBUFFER_COMPLETE,
+    GL_PIXEL_UNPACK_BUFFER,
+    GL_PIXEL_UNPACK_BUFFER_BINDING,
+    GL_STREAM_DRAW,
+    GL_TEXTURE_2D,
+    GL_TEXTURE_BINDING_2D,
+    glBindBuffer,
     glBindFramebuffer,
+    glBindTexture,
+    glBufferData,
     glCheckFramebufferStatus,
+    glDeleteBuffers,
+    glDeleteTextures,
+    glGenBuffers,
     glGenFramebuffers,
+    glGenTextures,
     glGetIntegerv,
+    glIsFramebuffer,
     glIsTexture,
 )
 
+from pyopengl_video import encoder as encoder_module
+from pyopengl_video import inputs
 from pyopengl_video.encoder import (
     DEFAULT_BITS_PER_PIXEL,
     Encoder,
+    EncoderError,
     default_bitrate,
     frame_rate_ratio,
 )
-from pyopengl_video.inputs import InputHandle, create_framebuffer, delete_framebuffer
+from pyopengl_video.inputs import (
+    InputHandle,
+    create_framebuffer,
+    create_rgba_texture,
+    delete_framebuffer,
+)
+
+#: The `contexts` fixture: a second OpenGL context beside the suite's.
+pytest_plugins = ('tests.other_context',)
 
 
 def test_a_whole_frame_rate_is_that_many_over_one():
@@ -135,3 +159,110 @@ def test_a_framebuffer_that_cannot_be_built_leaves_the_binding_as_it_found_it():
 def test_every_accepted_rate_shape_gives_two_positive_integers(fps):
     numerator, denominator = frame_rate_ratio(fps)
     assert numerator > 0 and denominator > 0
+
+
+# ------------------------------------------------ the state around a texture
+
+
+@pytest.mark.usefixtures('gl_context')
+def test_making_a_texture_leaves_the_texture_binding_as_it_found_it():
+    other = int(glGenTextures(1))
+    glBindTexture(GL_TEXTURE_2D, other)
+    made = 0
+    try:
+        made = create_rgba_texture(16, 16)
+        assert int(glGetIntegerv(GL_TEXTURE_BINDING_2D)) == other
+    finally:
+        glBindTexture(GL_TEXTURE_2D, 0)
+        glDeleteTextures([other, made])
+
+
+@pytest.mark.usefixtures('gl_context')
+def test_a_texture_is_not_filled_from_a_pixel_unpack_buffer_the_renderer_left_bound():
+    """With one bound, a null data pointer is an offset into the buffer."""
+    buffer = int(glGenBuffers(1))
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer)
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, 16, None, GL_STREAM_DRAW)
+    made = 0
+    try:
+        made = create_rgba_texture(64, 64)
+        assert int(glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING)) == buffer
+    finally:
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
+        glDeleteBuffers(1, [buffer])
+        glDeleteTextures([made])
+
+
+# ------------------------------------------------- the context of an input
+
+
+class TestAnotherContextCurrent:
+    def handle(self):
+        return ForeignTextureEncoder().new_input()
+
+    @pytest.mark.parametrize('current', ['second', None])
+    def test_an_input_is_not_deleted_from_another_context(self, contexts, current):
+        handle = self.handle()
+        texture, framebuffer = handle.texture, handle.framebuffer
+        contexts.use(getattr(contexts, current) if current else None)
+        with pytest.raises(EncoderError, match='OpenGL context'):
+            handle.close()
+        contexts.use(contexts.first)
+        assert glIsTexture(texture) and glIsFramebuffer(framebuffer)
+        handle.close()
+        assert not glIsTexture(texture) and not glIsFramebuffer(framebuffer)
+
+    def test_the_other_contexts_texture_of_the_same_name_survives(self, contexts):
+        handle = self.handle()
+        contexts.use(contexts.second)
+        victim = contexts.texture_named(handle.texture)
+        with pytest.raises(EncoderError):
+            handle.close()
+        assert glIsTexture(victim)
+        contexts.use(contexts.first)
+        handle.close()
+
+    @pytest.mark.usefixtures('gl_context')
+    def test_a_closed_input_closes_again_with_no_context_current(self, contexts):
+        handle = self.handle()
+        handle.close()
+        contexts.use(None)
+        handle.close()
+
+
+class TestClosingWhenADeleteFails:
+    @pytest.mark.usefixtures('gl_context')
+    def test_the_texture_is_deleted_when_the_framebuffer_cannot_be(self, monkeypatch):
+        handle = ForeignTextureEncoder().new_input()
+        texture = handle.texture
+        deleting = inputs.delete_framebuffer
+
+        def refuse(framebuffer):
+            deleting(framebuffer)
+            raise GLError(err=1282, baseOperation='glDeleteFramebuffers')
+        monkeypatch.setattr(inputs, 'delete_framebuffer', refuse)
+        with pytest.raises(GLError):
+            handle.close()
+        assert not glIsTexture(texture)
+        assert (handle.framebuffer, handle.texture) == (0, 0)
+        handle.close()
+
+
+@pytest.mark.usefixtures('gl_context')
+def test_an_input_that_cannot_be_registered_leaves_no_texture(monkeypatch):
+    """The texture is the encoder's own until a handle owns it."""
+    made = []
+    create = encoder_module.create_rgba_texture
+
+    def creating(width, height):
+        made.append(create(width, height))
+        return made[-1]
+
+    class Refusing(ForeignTextureEncoder):
+        def register(self, texture, target=None):  # noqa: ARG002 - the Encoder interface's signature
+            raise EncoderError('the driver would not take the texture')
+
+    monkeypatch.setattr(encoder_module, 'create_rgba_texture', creating)
+    with pytest.raises(EncoderError, match='would not take'):
+        Refusing().new_input()
+    assert made and not glIsTexture(made[0])

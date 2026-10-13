@@ -50,6 +50,7 @@ from OpenGL.GL import (
     glGetTexImage,
     glGetTexLevelParameteriv,
     glIsEnabled,
+    glIsProgram,
     glPixelStorei,
     glTexImage2D,
     glTexParameteri,
@@ -65,6 +66,9 @@ from pyopengl_video.colour import (
 )
 from pyopengl_video.convert import NV12Converter, create_output_texture
 from pyopengl_video.decoder import DecodedFrame, DecoderError
+
+#: The `contexts` fixture: a second OpenGL context beside the suite's.
+pytest_plugins = ('tests.other_context',)
 
 pytestmark = pytest.mark.gl
 
@@ -316,6 +320,104 @@ class TestRGBAFrames:
                              on_release=lambda _frame: None)
         with pytest.raises(DecoderError, match='yuy2 frame has no conversion'):
             converter.convert(frame, textures.output(4, 4))
+
+
+class TestWhatIsFetched:
+    """No rectangle or size makes the pass read outside the luma texture."""
+
+    COLOUR = Colour(matrix=MATRIX_BT601, full_range=True)
+
+    @pytest.mark.parametrize('visible', [
+        (0, 0, 49, 30), (0, 0, 36, 41), (20, 0, 36, 30), (0, 20, 36, 30),
+        (-1, 0, 36, 30), (0, -1, 36, 30), (0, 0, 0, 30), (0, 0, 36, 0),
+        (0, 0, -136, -136), (0, 0, 36.5, 30),
+    ])
+    def test_a_rectangle_that_is_not_inside_the_texture_is_refused(
+            self, converter, textures, visible):
+        luma, chroma = textures(*planes(100, 128, 128))
+        target = textures.output(8, 8)
+        with pytest.raises(DecoderError, match='visible'):
+            converter.draw(luma, chroma, visible=visible, colour=self.COLOUR,
+                           target=target, size=(8, 8), texture_size=TEXTURE)
+
+    @pytest.mark.parametrize('visible', [(0, 0, 0, 30), (0, 0, -136, -136), (-4, 0, 36, 30)])
+    def test_an_empty_or_negative_rectangle_is_refused_whatever_the_texture(
+            self, converter, textures, visible):
+        luma, chroma = textures(*planes(100, 128, 128))
+        with pytest.raises(DecoderError, match='visible'):
+            converter.draw(luma, chroma, visible=visible, colour=self.COLOUR,
+                           target=textures.output(8, 8), size=(8, 8))
+
+    @pytest.mark.parametrize('size', [(37, 30), (36, 31), (640, 480), (0, 30), (36, -1)])
+    def test_a_size_the_rectangle_does_not_cover_is_refused(self, converter, textures, size):
+        luma, chroma = textures(*planes(100, 128, 128))
+        with pytest.raises(DecoderError, match='size'):
+            converter.draw(luma, chroma, visible=VISIBLE, colour=self.COLOUR,
+                           target=textures.output(8, 8), size=size, texture_size=TEXTURE)
+
+    def test_a_frame_whose_rectangle_leaves_its_texture_is_refused(self, converter, textures):
+        luma, chroma = textures(*planes(100, 128, 128))
+        frame = DecodedFrame(timestamp=0, duration=0, planes=(luma, chroma), layout='nv12',
+                             texture_size=TEXTURE, visible=(0, 0, 64, 64), colour=self.COLOUR,
+                             on_release=lambda _frame: None)
+        with pytest.raises(DecoderError, match='visible'):
+            converter.convert(frame, textures.output(64, 64))
+
+    def test_a_smaller_size_than_the_rectangle_is_drawn(self, converter, textures):
+        luma, chroma = textures(*planes(100, 128, 128))
+        target = textures.output(8, 8)
+        converter.draw(luma, chroma, visible=VISIBLE, colour=self.COLOUR, target=target,
+                       size=(8, 8), texture_size=TEXTURE)
+        found = read(target, 8, 8)[..., :3].astype(int)
+        assert np.abs(found - expected(self.COLOUR, 100, 128, 128)).max() <= 1
+
+    def test_the_shader_holds_luma_to_the_texture(self, converter, textures):
+        """A rectangle past the texture, with no texture size to refuse it by."""
+        size = (16, 16)
+        luma, chroma = textures(*planes(100, 128, 128, texture=size, visible=(0, 0, *size)))
+        target = textures.output(32, 32)
+        converter.draw(luma, chroma, visible=(0, 0, 32, 32), colour=self.COLOUR,
+                       target=target)
+        found = read(target, 32, 32)[..., :3].astype(int)
+        assert np.abs(found - expected(self.COLOUR, 100, 128, 128)).max() <= 1
+
+    def test_the_shader_holds_luma_to_the_visible_rectangle(self, converter, textures):
+        """The pass itself, drawn larger than its rectangle: the padding is not read."""
+        luma, chroma = textures(*planes(100, 128, 128))
+        target = textures.output(*TEXTURE)
+        converter._pass(luma, chroma, VISIBLE, self.COLOUR, target, TEXTURE, 8)  # noqa: SLF001 - the shader, with the refusals in front of it stepped around
+        found = read(target, *TEXTURE)[..., :3].astype(int)
+        assert np.abs(found - expected(self.COLOUR, 100, 128, 128)).max() <= 1
+
+
+class TestTheContextItWasBuiltIn:
+    def test_nothing_is_deleted_with_another_context_current(self, gl_context, contexts):  # noqa: ARG002 - requested so a GL context is current first
+        converter = NV12Converter()
+        program = converter._program  # noqa: SLF001 - the name a wrong delete would take from the other context
+        contexts.use(contexts.second)
+        with pytest.raises(DecoderError, match='another OpenGL context'):
+            converter.close()
+        contexts.use(None)
+        with pytest.raises(DecoderError, match='no OpenGL context'):
+            converter.close()
+        contexts.use(contexts.first)
+        assert glIsProgram(program)
+        converter.close()
+        assert not glIsProgram(program)
+        converter.close()
+
+    def test_a_framebuffer_is_not_forgotten_from_another_context(self, textures, contexts):
+        converter = NV12Converter()
+        target = textures.output(8, 8)
+        luma, chroma = textures(*planes(100, 128, 128))
+        converter.draw(luma, chroma, visible=VISIBLE, colour=Colour(), target=target,
+                       size=(8, 8))
+        contexts.use(contexts.second)
+        with pytest.raises(DecoderError, match='another OpenGL context'):
+            converter.forget(target)
+        contexts.use(contexts.first)
+        converter.forget(target)
+        converter.close()
 
 
 class TestState:

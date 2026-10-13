@@ -1,4 +1,1612 @@
 {
+  "bits": {
+    "VAConfigAttribValEncAV1Ext2": {
+      "bits.max_tile_num_minus1": {
+        "at": 0,
+        "bytes": "80ff0f"
+      },
+      "bits.obu_size_bytes_minus1": {
+        "at": 0,
+        "bytes": "0c"
+      },
+      "bits.tile_size_bytes_minus1": {
+        "at": 0,
+        "bytes": "03"
+      },
+      "bits.tx_mode_support": {
+        "at": 0,
+        "bytes": "70"
+      }
+    },
+    "VAConfigAttribValEncHEVCBlockSizes": {
+      "bits.log2_max_coding_tree_block_size_minus3": {
+        "at": 0,
+        "bytes": "03"
+      },
+      "bits.log2_max_luma_transform_block_size_minus2": {
+        "at": 0,
+        "bytes": "c0"
+      },
+      "bits.log2_max_pcm_coding_block_size_minus3": {
+        "at": 2,
+        "bytes": "0c"
+      },
+      "bits.log2_min_coding_tree_block_size_minus3": {
+        "at": 0,
+        "bytes": "0c"
+      },
+      "bits.log2_min_luma_coding_block_size_minus3": {
+        "at": 0,
+        "bytes": "30"
+      },
+      "bits.log2_min_luma_transform_block_size_minus2": {
+        "at": 1,
+        "bytes": "03"
+      },
+      "bits.log2_min_pcm_coding_block_size_minus3": {
+        "at": 2,
+        "bytes": "30"
+      },
+      "bits.max_max_transform_hierarchy_depth_inter": {
+        "at": 1,
+        "bytes": "0c"
+      },
+      "bits.max_max_transform_hierarchy_depth_intra": {
+        "at": 1,
+        "bytes": "c0"
+      },
+      "bits.min_max_transform_hierarchy_depth_inter": {
+        "at": 1,
+        "bytes": "30"
+      },
+      "bits.min_max_transform_hierarchy_depth_intra": {
+        "at": 2,
+        "bytes": "03"
+      },
+      "bits.reserved": {
+        "at": 2,
+        "bytes": "c0ff"
+      }
+    },
+    "VAConfigAttribValEncHEVCFeatures": {
+      "bits.amp": {
+        "at": 0,
+        "bytes": "30"
+      },
+      "bits.constrained_intra_pred": {
+        "at": 2,
+        "bytes": "0c"
+      },
+      "bits.cu_qp_delta": {
+        "at": 2,
+        "bytes": "c0"
+      },
+      "bits.deblocking_filter_disable": {
+        "at": 3,
+        "bytes": "30"
+      },
+      "bits.dependent_slices": {
+        "at": 1,
+        "bytes": "c0"
+      },
+      "bits.pcm": {
+        "at": 1,
+        "bytes": "03"
+      },
+      "bits.reserved": {
+        "at": 3,
+        "bytes": "c0"
+      },
+      "bits.sao": {
+        "at": 0,
+        "bytes": "c0"
+      },
+      "bits.scaling_lists": {
+        "at": 0,
+        "bytes": "0c"
+      },
+      "bits.separate_colour_planes": {
+        "at": 0,
+        "bytes": "03"
+      },
+      "bits.sign_data_hiding": {
+        "at": 2,
+        "bytes": "03"
+      },
+      "bits.strong_intra_smoothing": {
+        "at": 1,
+        "bytes": "30"
+      },
+      "bits.temporal_mvp": {
+        "at": 1,
+        "bytes": "0c"
+      },
+      "bits.transform_skip": {
+        "at": 2,
+        "bytes": "30"
+      },
+      "bits.transquant_bypass": {
+        "at": 3,
+        "bytes": "0c"
+      },
+      "bits.weighted_prediction": {
+        "at": 3,
+        "bytes": "03"
+      }
+    },
+    "VADecPictureParameterBufferAV1": {
+      "film_grain_info.film_grain_info_fields.bits.apply_grain": {
+        "at": 240,
+        "bytes": "01"
+      },
+      "film_grain_info.film_grain_info_fields.bits.ar_coeff_lag": {
+        "at": 240,
+        "bytes": "30"
+      },
+      "film_grain_info.film_grain_info_fields.bits.ar_coeff_shift_minus_6": {
+        "at": 240,
+        "bytes": "c0"
+      },
+      "film_grain_info.film_grain_info_fields.bits.chroma_scaling_from_luma": {
+        "at": 240,
+        "bytes": "02"
+      },
+      "film_grain_info.film_grain_info_fields.bits.clip_to_restricted_range": {
+        "at": 241,
+        "bytes": "08"
+      },
+      "film_grain_info.film_grain_info_fields.bits.grain_scale_shift": {
+        "at": 241,
+        "bytes": "03"
+      },
+      "film_grain_info.film_grain_info_fields.bits.grain_scaling_minus_8": {
+        "at": 240,
+        "bytes": "0c"
+      },
+      "film_grain_info.film_grain_info_fields.bits.overlap_flag": {
+        "at": 241,
+        "bytes": "04"
+      },
+      "loop_filter_info_fields.bits.mode_ref_delta_enabled": {
+        "at": 686,
+        "bytes": "08"
+      },
+      "loop_filter_info_fields.bits.mode_ref_delta_update": {
+        "at": 686,
+        "bytes": "10"
+      },
+      "loop_filter_info_fields.bits.sharpness_level": {
+        "at": 686,
+        "bytes": "07"
+      },
+      "loop_restoration_fields.bits.cbframe_restoration_type": {
+        "at": 730,
+        "bytes": "0c"
+      },
+      "loop_restoration_fields.bits.crframe_restoration_type": {
+        "at": 730,
+        "bytes": "30"
+      },
+      "loop_restoration_fields.bits.lr_unit_shift": {
+        "at": 730,
+        "bytes": "c0"
+      },
+      "loop_restoration_fields.bits.lr_uv_shift": {
+        "at": 731,
+        "bytes": "01"
+      },
+      "loop_restoration_fields.bits.yframe_restoration_type": {
+        "at": 730,
+        "bytes": "03"
+      },
+      "mode_control_fields.bits.delta_lf_multi": {
+        "at": 708,
+        "bytes": "40"
+      },
+      "mode_control_fields.bits.delta_lf_present_flag": {
+        "at": 708,
+        "bytes": "08"
+      },
+      "mode_control_fields.bits.delta_q_present_flag": {
+        "at": 708,
+        "bytes": "01"
+      },
+      "mode_control_fields.bits.log2_delta_lf_res": {
+        "at": 708,
+        "bytes": "30"
+      },
+      "mode_control_fields.bits.log2_delta_q_res": {
+        "at": 708,
+        "bytes": "06"
+      },
+      "mode_control_fields.bits.reduced_tx_set_used": {
+        "at": 709,
+        "bytes": "04"
+      },
+      "mode_control_fields.bits.reference_select": {
+        "at": 709,
+        "bytes": "02"
+      },
+      "mode_control_fields.bits.skip_mode_present": {
+        "at": 709,
+        "bytes": "08"
+      },
+      "mode_control_fields.bits.tx_mode": {
+        "at": 708,
+        "bytes": "8001"
+      },
+      "pic_info_fields.bits.allow_high_precision_mv": {
+        "at": 677,
+        "bytes": "04"
+      },
+      "pic_info_fields.bits.allow_intrabc": {
+        "at": 677,
+        "bytes": "01"
+      },
+      "pic_info_fields.bits.allow_screen_content_tools": {
+        "at": 676,
+        "bytes": "40"
+      },
+      "pic_info_fields.bits.allow_warped_motion": {
+        "at": 677,
+        "bytes": "80"
+      },
+      "pic_info_fields.bits.disable_cdf_update": {
+        "at": 676,
+        "bytes": "20"
+      },
+      "pic_info_fields.bits.disable_frame_end_update_cdf": {
+        "at": 677,
+        "bytes": "20"
+      },
+      "pic_info_fields.bits.error_resilient_mode": {
+        "at": 676,
+        "bytes": "10"
+      },
+      "pic_info_fields.bits.force_integer_mv": {
+        "at": 676,
+        "bytes": "80"
+      },
+      "pic_info_fields.bits.frame_type": {
+        "at": 676,
+        "bytes": "03"
+      },
+      "pic_info_fields.bits.is_motion_mode_switchable": {
+        "at": 677,
+        "bytes": "08"
+      },
+      "pic_info_fields.bits.large_scale_tile": {
+        "at": 678,
+        "bytes": "01"
+      },
+      "pic_info_fields.bits.show_frame": {
+        "at": 676,
+        "bytes": "04"
+      },
+      "pic_info_fields.bits.showable_frame": {
+        "at": 676,
+        "bytes": "08"
+      },
+      "pic_info_fields.bits.uniform_tile_spacing_flag": {
+        "at": 677,
+        "bytes": "40"
+      },
+      "pic_info_fields.bits.use_ref_frame_mvs": {
+        "at": 677,
+        "bytes": "10"
+      },
+      "pic_info_fields.bits.use_superres": {
+        "at": 677,
+        "bytes": "02"
+      },
+      "qmatrix_fields.bits.qm_u": {
+        "at": 704,
+        "bytes": "e001"
+      },
+      "qmatrix_fields.bits.qm_v": {
+        "at": 705,
+        "bytes": "1e"
+      },
+      "qmatrix_fields.bits.qm_y": {
+        "at": 704,
+        "bytes": "1e"
+      },
+      "qmatrix_fields.bits.using_qmatrix": {
+        "at": 704,
+        "bytes": "01"
+      },
+      "seg_info.segment_info_fields.bits.enabled": {
+        "at": 84,
+        "bytes": "01"
+      },
+      "seg_info.segment_info_fields.bits.temporal_update": {
+        "at": 84,
+        "bytes": "04"
+      },
+      "seg_info.segment_info_fields.bits.update_data": {
+        "at": 84,
+        "bytes": "08"
+      },
+      "seg_info.segment_info_fields.bits.update_map": {
+        "at": 84,
+        "bytes": "02"
+      },
+      "seq_info_fields.fields.chroma_sample_position": {
+        "at": 5,
+        "bytes": "40"
+      },
+      "seq_info_fields.fields.color_range": {
+        "at": 5,
+        "bytes": "08"
+      },
+      "seq_info_fields.fields.enable_cdef": {
+        "at": 5,
+        "bytes": "02"
+      },
+      "seq_info_fields.fields.enable_dual_filter": {
+        "at": 4,
+        "bytes": "40"
+      },
+      "seq_info_fields.fields.enable_filter_intra": {
+        "at": 4,
+        "bytes": "04"
+      },
+      "seq_info_fields.fields.enable_interintra_compound": {
+        "at": 4,
+        "bytes": "10"
+      },
+      "seq_info_fields.fields.enable_intra_edge_filter": {
+        "at": 4,
+        "bytes": "08"
+      },
+      "seq_info_fields.fields.enable_jnt_comp": {
+        "at": 5,
+        "bytes": "01"
+      },
+      "seq_info_fields.fields.enable_masked_compound": {
+        "at": 4,
+        "bytes": "20"
+      },
+      "seq_info_fields.fields.enable_order_hint": {
+        "at": 4,
+        "bytes": "80"
+      },
+      "seq_info_fields.fields.film_grain_params_present": {
+        "at": 5,
+        "bytes": "80"
+      },
+      "seq_info_fields.fields.mono_chrome": {
+        "at": 5,
+        "bytes": "04"
+      },
+      "seq_info_fields.fields.still_picture": {
+        "at": 4,
+        "bytes": "01"
+      },
+      "seq_info_fields.fields.subsampling_x": {
+        "at": 5,
+        "bytes": "10"
+      },
+      "seq_info_fields.fields.subsampling_y": {
+        "at": 5,
+        "bytes": "20"
+      },
+      "seq_info_fields.fields.use_128x128_superblock": {
+        "at": 4,
+        "bytes": "02"
+      }
+    },
+    "VADecPictureParameterBufferVP9": {
+      "pic_fields.bits.allow_high_precision_mv": {
+        "at": 36,
+        "bytes": "40"
+      },
+      "pic_fields.bits.alt_ref_frame": {
+        "at": 39,
+        "bytes": "38"
+      },
+      "pic_fields.bits.alt_ref_frame_sign_bias": {
+        "at": 39,
+        "bytes": "40"
+      },
+      "pic_fields.bits.error_resilient_mode": {
+        "at": 36,
+        "bytes": "10"
+      },
+      "pic_fields.bits.frame_context_idx": {
+        "at": 37,
+        "bytes": "c0"
+      },
+      "pic_fields.bits.frame_parallel_decoding_mode": {
+        "at": 37,
+        "bytes": "04"
+      },
+      "pic_fields.bits.frame_type": {
+        "at": 36,
+        "bytes": "04"
+      },
+      "pic_fields.bits.golden_ref_frame": {
+        "at": 38,
+        "bytes": "8003"
+      },
+      "pic_fields.bits.golden_ref_frame_sign_bias": {
+        "at": 39,
+        "bytes": "04"
+      },
+      "pic_fields.bits.intra_only": {
+        "at": 36,
+        "bytes": "20"
+      },
+      "pic_fields.bits.last_ref_frame": {
+        "at": 38,
+        "bytes": "38"
+      },
+      "pic_fields.bits.last_ref_frame_sign_bias": {
+        "at": 38,
+        "bytes": "40"
+      },
+      "pic_fields.bits.lossless_flag": {
+        "at": 39,
+        "bytes": "80"
+      },
+      "pic_fields.bits.mcomp_filter_type": {
+        "at": 36,
+        "bytes": "8003"
+      },
+      "pic_fields.bits.refresh_frame_context": {
+        "at": 37,
+        "bytes": "20"
+      },
+      "pic_fields.bits.reset_frame_context": {
+        "at": 37,
+        "bytes": "18"
+      },
+      "pic_fields.bits.segmentation_enabled": {
+        "at": 38,
+        "bytes": "01"
+      },
+      "pic_fields.bits.segmentation_temporal_update": {
+        "at": 38,
+        "bytes": "02"
+      },
+      "pic_fields.bits.segmentation_update_map": {
+        "at": 38,
+        "bytes": "04"
+      },
+      "pic_fields.bits.show_frame": {
+        "at": 36,
+        "bytes": "08"
+      },
+      "pic_fields.bits.subsampling_x": {
+        "at": 36,
+        "bytes": "01"
+      },
+      "pic_fields.bits.subsampling_y": {
+        "at": 36,
+        "bytes": "02"
+      }
+    },
+    "VAEncMiscParameterFrameRate": {
+      "framerate_flags.bits.reserved": {
+        "at": 5,
+        "bytes": "ffffff"
+      },
+      "framerate_flags.bits.temporal_id": {
+        "at": 4,
+        "bytes": "ff"
+      }
+    },
+    "VAEncMiscParameterRateControl": {
+      "rc_flags.bits.cfs_I_frames": {
+        "at": 25,
+        "bytes": "80"
+      },
+      "rc_flags.bits.disable_bit_stuffing": {
+        "at": 24,
+        "bytes": "04"
+      },
+      "rc_flags.bits.disable_frame_skip": {
+        "at": 24,
+        "bytes": "02"
+      },
+      "rc_flags.bits.enable_dynamic_scaling": {
+        "at": 26,
+        "bytes": "02"
+      },
+      "rc_flags.bits.enable_parallel_brc": {
+        "at": 26,
+        "bytes": "01"
+      },
+      "rc_flags.bits.frame_tolerance_mode": {
+        "at": 26,
+        "bytes": "0c"
+      },
+      "rc_flags.bits.mb_rate_control": {
+        "at": 24,
+        "bytes": "78"
+      },
+      "rc_flags.bits.reserved": {
+        "at": 26,
+        "bytes": "f0ff"
+      },
+      "rc_flags.bits.reset": {
+        "at": 24,
+        "bytes": "01"
+      },
+      "rc_flags.bits.temporal_id": {
+        "at": 24,
+        "bytes": "807f"
+      }
+    },
+    "VAEncPictureParameterBufferAV1": {
+      "loop_filter_flags.bits.mode_ref_delta_enabled": {
+        "at": 75,
+        "bytes": "08"
+      },
+      "loop_filter_flags.bits.mode_ref_delta_update": {
+        "at": 75,
+        "bytes": "10"
+      },
+      "loop_filter_flags.bits.sharpness_level": {
+        "at": 75,
+        "bytes": "07"
+      },
+      "loop_restoration_flags.bits.cbframe_restoration_type": {
+        "at": 536,
+        "bytes": "0c"
+      },
+      "loop_restoration_flags.bits.crframe_restoration_type": {
+        "at": 536,
+        "bytes": "30"
+      },
+      "loop_restoration_flags.bits.lr_unit_shift": {
+        "at": 536,
+        "bytes": "c0"
+      },
+      "loop_restoration_flags.bits.lr_uv_shift": {
+        "at": 537,
+        "bytes": "01"
+      },
+      "loop_restoration_flags.bits.yframe_restoration_type": {
+        "at": 536,
+        "bytes": "03"
+      },
+      "mode_control_flags.bits.delta_lf_multi": {
+        "at": 100,
+        "bytes": "40"
+      },
+      "mode_control_flags.bits.delta_lf_present": {
+        "at": 100,
+        "bytes": "08"
+      },
+      "mode_control_flags.bits.delta_lf_res": {
+        "at": 100,
+        "bytes": "30"
+      },
+      "mode_control_flags.bits.delta_q_present": {
+        "at": 100,
+        "bytes": "01"
+      },
+      "mode_control_flags.bits.delta_q_res": {
+        "at": 100,
+        "bytes": "06"
+      },
+      "mode_control_flags.bits.reference_mode": {
+        "at": 101,
+        "bytes": "06"
+      },
+      "mode_control_flags.bits.skip_mode_present": {
+        "at": 101,
+        "bytes": "08"
+      },
+      "mode_control_flags.bits.tx_mode": {
+        "at": 100,
+        "bytes": "8001"
+      },
+      "picture_flags.bits.allow_high_precision_mv": {
+        "at": 64,
+        "bytes": "20"
+      },
+      "picture_flags.bits.allow_intrabc": {
+        "at": 65,
+        "bytes": "10"
+      },
+      "picture_flags.bits.disable_cdf_update": {
+        "at": 64,
+        "bytes": "08"
+      },
+      "picture_flags.bits.disable_frame_end_update_cdf": {
+        "at": 64,
+        "bytes": "80"
+      },
+      "picture_flags.bits.disable_frame_recon": {
+        "at": 65,
+        "bytes": "08"
+      },
+      "picture_flags.bits.enable_frame_obu": {
+        "at": 65,
+        "bytes": "02"
+      },
+      "picture_flags.bits.error_resilient_mode": {
+        "at": 64,
+        "bytes": "04"
+      },
+      "picture_flags.bits.frame_type": {
+        "at": 64,
+        "bytes": "03"
+      },
+      "picture_flags.bits.long_term_reference": {
+        "at": 65,
+        "bytes": "04"
+      },
+      "picture_flags.bits.palette_mode_enable": {
+        "at": 65,
+        "bytes": "20"
+      },
+      "picture_flags.bits.reduced_tx_set": {
+        "at": 65,
+        "bytes": "01"
+      },
+      "picture_flags.bits.use_ref_frame_mvs": {
+        "at": 64,
+        "bytes": "40"
+      },
+      "picture_flags.bits.use_superres": {
+        "at": 64,
+        "bytes": "10"
+      },
+      "qmatrix_flags.bits.qm_u": {
+        "at": 96,
+        "bytes": "e001"
+      },
+      "qmatrix_flags.bits.qm_v": {
+        "at": 97,
+        "bytes": "1e"
+      },
+      "qmatrix_flags.bits.qm_y": {
+        "at": 96,
+        "bytes": "1e"
+      },
+      "qmatrix_flags.bits.using_qmatrix": {
+        "at": 96,
+        "bytes": "01"
+      },
+      "ref_frame_ctrl_l0.fields.search_idx0": {
+        "at": 56,
+        "bytes": "07"
+      },
+      "ref_frame_ctrl_l0.fields.search_idx1": {
+        "at": 56,
+        "bytes": "38"
+      },
+      "ref_frame_ctrl_l0.fields.search_idx2": {
+        "at": 56,
+        "bytes": "c001"
+      },
+      "ref_frame_ctrl_l0.fields.search_idx3": {
+        "at": 57,
+        "bytes": "0e"
+      },
+      "ref_frame_ctrl_l0.fields.search_idx4": {
+        "at": 57,
+        "bytes": "70"
+      },
+      "ref_frame_ctrl_l0.fields.search_idx5": {
+        "at": 57,
+        "bytes": "8003"
+      },
+      "ref_frame_ctrl_l0.fields.search_idx6": {
+        "at": 58,
+        "bytes": "1c"
+      },
+      "ref_frame_ctrl_l1.fields.search_idx0": {
+        "at": 60,
+        "bytes": "07"
+      },
+      "ref_frame_ctrl_l1.fields.search_idx1": {
+        "at": 60,
+        "bytes": "38"
+      },
+      "ref_frame_ctrl_l1.fields.search_idx2": {
+        "at": 60,
+        "bytes": "c001"
+      },
+      "ref_frame_ctrl_l1.fields.search_idx3": {
+        "at": 61,
+        "bytes": "0e"
+      },
+      "ref_frame_ctrl_l1.fields.search_idx4": {
+        "at": 61,
+        "bytes": "70"
+      },
+      "ref_frame_ctrl_l1.fields.search_idx5": {
+        "at": 61,
+        "bytes": "8003"
+      },
+      "ref_frame_ctrl_l1.fields.search_idx6": {
+        "at": 62,
+        "bytes": "1c"
+      },
+      "segments.seg_flags.bits.segmentation_enabled": {
+        "at": 104,
+        "bytes": "01"
+      },
+      "segments.seg_flags.bits.segmentation_temporal_update": {
+        "at": 104,
+        "bytes": "04"
+      },
+      "segments.seg_flags.bits.segmentation_update_map": {
+        "at": 104,
+        "bytes": "02"
+      },
+      "tile_group_obu_hdr_info.bits.obu_extension_flag": {
+        "at": 960,
+        "bytes": "01"
+      },
+      "tile_group_obu_hdr_info.bits.obu_has_size_field": {
+        "at": 960,
+        "bytes": "02"
+      },
+      "tile_group_obu_hdr_info.bits.spatial_id": {
+        "at": 960,
+        "bytes": "60"
+      },
+      "tile_group_obu_hdr_info.bits.temporal_id": {
+        "at": 960,
+        "bytes": "1c"
+      }
+    },
+    "VAEncPictureParameterBufferH264": {
+      "pic_fields.bits.constrained_intra_pred_flag": {
+        "at": 628,
+        "bytes": "80"
+      },
+      "pic_fields.bits.deblocking_filter_control_present_flag": {
+        "at": 629,
+        "bytes": "02"
+      },
+      "pic_fields.bits.entropy_coding_mode_flag": {
+        "at": 628,
+        "bytes": "08"
+      },
+      "pic_fields.bits.idr_pic_flag": {
+        "at": 628,
+        "bytes": "01"
+      },
+      "pic_fields.bits.pic_order_present_flag": {
+        "at": 629,
+        "bytes": "08"
+      },
+      "pic_fields.bits.pic_scaling_matrix_present_flag": {
+        "at": 629,
+        "bytes": "10"
+      },
+      "pic_fields.bits.redundant_pic_cnt_present_flag": {
+        "at": 629,
+        "bytes": "04"
+      },
+      "pic_fields.bits.reference_pic_flag": {
+        "at": 628,
+        "bytes": "06"
+      },
+      "pic_fields.bits.transform_8x8_mode_flag": {
+        "at": 629,
+        "bytes": "01"
+      },
+      "pic_fields.bits.weighted_bipred_idc": {
+        "at": 628,
+        "bytes": "60"
+      },
+      "pic_fields.bits.weighted_pred_flag": {
+        "at": 628,
+        "bytes": "10"
+      }
+    },
+    "VAEncPictureParameterBufferHEVC": {
+      "pic_fields.bits.coding_type": {
+        "at": 508,
+        "bytes": "0e"
+      },
+      "pic_fields.bits.constrained_intra_pred_flag": {
+        "at": 508,
+        "bytes": "80"
+      },
+      "pic_fields.bits.cu_qp_delta_enabled_flag": {
+        "at": 509,
+        "bytes": "02"
+      },
+      "pic_fields.bits.dependent_slice_segments_enabled_flag": {
+        "at": 508,
+        "bytes": "20"
+      },
+      "pic_fields.bits.enable_gpu_weighted_prediction": {
+        "at": 510,
+        "bytes": "08"
+      },
+      "pic_fields.bits.entropy_coding_sync_enabled_flag": {
+        "at": 509,
+        "bytes": "40"
+      },
+      "pic_fields.bits.idr_pic_flag": {
+        "at": 508,
+        "bytes": "01"
+      },
+      "pic_fields.bits.loop_filter_across_tiles_enabled_flag": {
+        "at": 509,
+        "bytes": "80"
+      },
+      "pic_fields.bits.no_output_of_prior_pics_flag": {
+        "at": 510,
+        "bytes": "10"
+      },
+      "pic_fields.bits.pps_loop_filter_across_slices_enabled_flag": {
+        "at": 510,
+        "bytes": "01"
+      },
+      "pic_fields.bits.reference_pic_flag": {
+        "at": 508,
+        "bytes": "10"
+      },
+      "pic_fields.bits.reserved": {
+        "at": 510,
+        "bytes": "e0ff"
+      },
+      "pic_fields.bits.scaling_list_data_present_flag": {
+        "at": 510,
+        "bytes": "02"
+      },
+      "pic_fields.bits.screen_content_flag": {
+        "at": 510,
+        "bytes": "04"
+      },
+      "pic_fields.bits.sign_data_hiding_enabled_flag": {
+        "at": 508,
+        "bytes": "40"
+      },
+      "pic_fields.bits.tiles_enabled_flag": {
+        "at": 509,
+        "bytes": "20"
+      },
+      "pic_fields.bits.transform_skip_enabled_flag": {
+        "at": 509,
+        "bytes": "01"
+      },
+      "pic_fields.bits.transquant_bypass_enabled_flag": {
+        "at": 509,
+        "bytes": "10"
+      },
+      "pic_fields.bits.weighted_bipred_flag": {
+        "at": 509,
+        "bytes": "08"
+      },
+      "pic_fields.bits.weighted_pred_flag": {
+        "at": 509,
+        "bytes": "04"
+      },
+      "scc_fields.bits.pps_curr_pic_ref_enabled_flag": {
+        "at": 514,
+        "bytes": "01"
+      },
+      "scc_fields.bits.reserved": {
+        "at": 514,
+        "bytes": "feff"
+      }
+    },
+    "VAEncSegParamAV1": {
+      "seg_flags.bits.segmentation_enabled": {
+        "at": 0,
+        "bytes": "01"
+      },
+      "seg_flags.bits.segmentation_temporal_update": {
+        "at": 0,
+        "bytes": "04"
+      },
+      "seg_flags.bits.segmentation_update_map": {
+        "at": 0,
+        "bytes": "02"
+      }
+    },
+    "VAEncSequenceParameterBufferAV1": {
+      "seq_fields.bits.bit_depth_minus8": {
+        "at": 17,
+        "bytes": "c001"
+      },
+      "seq_fields.bits.enable_cdef": {
+        "at": 17,
+        "bytes": "10"
+      },
+      "seq_fields.bits.enable_dual_filter": {
+        "at": 16,
+        "bytes": "80"
+      },
+      "seq_fields.bits.enable_filter_intra": {
+        "at": 16,
+        "bytes": "04"
+      },
+      "seq_fields.bits.enable_interintra_compound": {
+        "at": 16,
+        "bytes": "10"
+      },
+      "seq_fields.bits.enable_intra_edge_filter": {
+        "at": 16,
+        "bytes": "08"
+      },
+      "seq_fields.bits.enable_jnt_comp": {
+        "at": 17,
+        "bytes": "02"
+      },
+      "seq_fields.bits.enable_masked_compound": {
+        "at": 16,
+        "bytes": "20"
+      },
+      "seq_fields.bits.enable_order_hint": {
+        "at": 17,
+        "bytes": "01"
+      },
+      "seq_fields.bits.enable_ref_frame_mvs": {
+        "at": 17,
+        "bytes": "04"
+      },
+      "seq_fields.bits.enable_restoration": {
+        "at": 17,
+        "bytes": "20"
+      },
+      "seq_fields.bits.enable_superres": {
+        "at": 17,
+        "bytes": "08"
+      },
+      "seq_fields.bits.enable_warped_motion": {
+        "at": 16,
+        "bytes": "40"
+      },
+      "seq_fields.bits.mono_chrome": {
+        "at": 18,
+        "bytes": "08"
+      },
+      "seq_fields.bits.still_picture": {
+        "at": 16,
+        "bytes": "01"
+      },
+      "seq_fields.bits.subsampling_x": {
+        "at": 18,
+        "bytes": "02"
+      },
+      "seq_fields.bits.subsampling_y": {
+        "at": 18,
+        "bytes": "04"
+      },
+      "seq_fields.bits.use_128x128_superblock": {
+        "at": 16,
+        "bytes": "02"
+      }
+    },
+    "VAEncSequenceParameterBufferH264": {
+      "seq_fields.bits.chroma_format_idc": {
+        "at": 28,
+        "bytes": "03"
+      },
+      "seq_fields.bits.delta_pic_order_always_zero_flag": {
+        "at": 30,
+        "bytes": "01"
+      },
+      "seq_fields.bits.direct_8x8_inference_flag": {
+        "at": 28,
+        "bytes": "20"
+      },
+      "seq_fields.bits.frame_mbs_only_flag": {
+        "at": 28,
+        "bytes": "04"
+      },
+      "seq_fields.bits.log2_max_frame_num_minus4": {
+        "at": 28,
+        "bytes": "c003"
+      },
+      "seq_fields.bits.log2_max_pic_order_cnt_lsb_minus4": {
+        "at": 29,
+        "bytes": "f0"
+      },
+      "seq_fields.bits.mb_adaptive_frame_field_flag": {
+        "at": 28,
+        "bytes": "08"
+      },
+      "seq_fields.bits.pic_order_cnt_type": {
+        "at": 29,
+        "bytes": "0c"
+      },
+      "seq_fields.bits.seq_scaling_matrix_present_flag": {
+        "at": 28,
+        "bytes": "10"
+      },
+      "vui_fields.bits.aspect_ratio_info_present_flag": {
+        "at": 1092,
+        "bytes": "01"
+      },
+      "vui_fields.bits.bitstream_restriction_flag": {
+        "at": 1092,
+        "bytes": "04"
+      },
+      "vui_fields.bits.fixed_frame_rate_flag": {
+        "at": 1093,
+        "bytes": "20"
+      },
+      "vui_fields.bits.log2_max_mv_length_horizontal": {
+        "at": 1092,
+        "bytes": "f8"
+      },
+      "vui_fields.bits.log2_max_mv_length_vertical": {
+        "at": 1093,
+        "bytes": "1f"
+      },
+      "vui_fields.bits.low_delay_hrd_flag": {
+        "at": 1093,
+        "bytes": "40"
+      },
+      "vui_fields.bits.motion_vectors_over_pic_boundaries_flag": {
+        "at": 1093,
+        "bytes": "80"
+      },
+      "vui_fields.bits.reserved": {
+        "at": 1094,
+        "bytes": "ffff"
+      },
+      "vui_fields.bits.timing_info_present_flag": {
+        "at": 1092,
+        "bytes": "02"
+      }
+    },
+    "VAEncSequenceParameterBufferHEVC": {
+      "scc_fields.bits.palette_mode_enabled_flag": {
+        "at": 84,
+        "bytes": "01"
+      },
+      "scc_fields.bits.reserved": {
+        "at": 84,
+        "bytes": "feffffff"
+      },
+      "seq_fields.bits.amp_enabled_flag": {
+        "at": 25,
+        "bytes": "08"
+      },
+      "seq_fields.bits.bit_depth_chroma_minus8": {
+        "at": 24,
+        "bytes": "c001"
+      },
+      "seq_fields.bits.bit_depth_luma_minus8": {
+        "at": 24,
+        "bytes": "38"
+      },
+      "seq_fields.bits.chroma_format_idc": {
+        "at": 24,
+        "bytes": "03"
+      },
+      "seq_fields.bits.hierachical_flag": {
+        "at": 26,
+        "bytes": "02"
+      },
+      "seq_fields.bits.low_delay_seq": {
+        "at": 26,
+        "bytes": "01"
+      },
+      "seq_fields.bits.pcm_enabled_flag": {
+        "at": 25,
+        "bytes": "20"
+      },
+      "seq_fields.bits.pcm_loop_filter_disabled_flag": {
+        "at": 25,
+        "bytes": "40"
+      },
+      "seq_fields.bits.reserved_bits": {
+        "at": 26,
+        "bytes": "fcff"
+      },
+      "seq_fields.bits.sample_adaptive_offset_enabled_flag": {
+        "at": 25,
+        "bytes": "10"
+      },
+      "seq_fields.bits.scaling_list_enabled_flag": {
+        "at": 25,
+        "bytes": "02"
+      },
+      "seq_fields.bits.separate_colour_plane_flag": {
+        "at": 24,
+        "bytes": "04"
+      },
+      "seq_fields.bits.sps_temporal_mvp_enabled_flag": {
+        "at": 25,
+        "bytes": "80"
+      },
+      "seq_fields.bits.strong_intra_smoothing_enabled_flag": {
+        "at": 25,
+        "bytes": "04"
+      },
+      "vui_fields.bits.aspect_ratio_info_present_flag": {
+        "at": 56,
+        "bytes": "01"
+      },
+      "vui_fields.bits.bitstream_restriction_flag": {
+        "at": 56,
+        "bytes": "10"
+      },
+      "vui_fields.bits.field_seq_flag": {
+        "at": 56,
+        "bytes": "04"
+      },
+      "vui_fields.bits.log2_max_mv_length_horizontal": {
+        "at": 57,
+        "bytes": "1f"
+      },
+      "vui_fields.bits.log2_max_mv_length_vertical": {
+        "at": 57,
+        "bytes": "e003"
+      },
+      "vui_fields.bits.motion_vectors_over_pic_boundaries_flag": {
+        "at": 56,
+        "bytes": "40"
+      },
+      "vui_fields.bits.neutral_chroma_indication_flag": {
+        "at": 56,
+        "bytes": "02"
+      },
+      "vui_fields.bits.restricted_ref_pic_lists_flag": {
+        "at": 56,
+        "bytes": "80"
+      },
+      "vui_fields.bits.tiles_fixed_structure_flag": {
+        "at": 56,
+        "bytes": "20"
+      },
+      "vui_fields.bits.vui_timing_info_present_flag": {
+        "at": 56,
+        "bytes": "08"
+      }
+    },
+    "VAEncSliceParameterBufferHEVC": {
+      "slice_fields.bits.cabac_init_flag": {
+        "at": 1041,
+        "bytes": "02"
+      },
+      "slice_fields.bits.collocated_from_l0_flag": {
+        "at": 1041,
+        "bytes": "20"
+      },
+      "slice_fields.bits.colour_plane_id": {
+        "at": 1040,
+        "bytes": "0c"
+      },
+      "slice_fields.bits.dependent_slice_segment_flag": {
+        "at": 1040,
+        "bytes": "02"
+      },
+      "slice_fields.bits.last_slice_of_pic_flag": {
+        "at": 1040,
+        "bytes": "01"
+      },
+      "slice_fields.bits.mvd_l1_zero_flag": {
+        "at": 1041,
+        "bytes": "01"
+      },
+      "slice_fields.bits.num_ref_idx_active_override_flag": {
+        "at": 1040,
+        "bytes": "80"
+      },
+      "slice_fields.bits.slice_deblocking_filter_disabled_flag": {
+        "at": 1041,
+        "bytes": "0c"
+      },
+      "slice_fields.bits.slice_loop_filter_across_slices_enabled_flag": {
+        "at": 1041,
+        "bytes": "10"
+      },
+      "slice_fields.bits.slice_sao_chroma_flag": {
+        "at": 1040,
+        "bytes": "40"
+      },
+      "slice_fields.bits.slice_sao_luma_flag": {
+        "at": 1040,
+        "bytes": "20"
+      },
+      "slice_fields.bits.slice_temporal_mvp_enabled_flag": {
+        "at": 1040,
+        "bytes": "10"
+      }
+    },
+    "VAFilmGrainStructAV1": {
+      "film_grain_info_fields.bits.apply_grain": {
+        "at": 0,
+        "bytes": "01"
+      },
+      "film_grain_info_fields.bits.ar_coeff_lag": {
+        "at": 0,
+        "bytes": "30"
+      },
+      "film_grain_info_fields.bits.ar_coeff_shift_minus_6": {
+        "at": 0,
+        "bytes": "c0"
+      },
+      "film_grain_info_fields.bits.chroma_scaling_from_luma": {
+        "at": 0,
+        "bytes": "02"
+      },
+      "film_grain_info_fields.bits.clip_to_restricted_range": {
+        "at": 1,
+        "bytes": "08"
+      },
+      "film_grain_info_fields.bits.grain_scale_shift": {
+        "at": 1,
+        "bytes": "03"
+      },
+      "film_grain_info_fields.bits.grain_scaling_minus_8": {
+        "at": 0,
+        "bytes": "0c"
+      },
+      "film_grain_info_fields.bits.overlap_flag": {
+        "at": 1,
+        "bytes": "04"
+      }
+    },
+    "VAPictureParameterBufferH264": {
+      "pic_fields.bits.constrained_intra_pred_flag": {
+        "at": 632,
+        "bytes": "40"
+      },
+      "pic_fields.bits.deblocking_filter_control_present_flag": {
+        "at": 633,
+        "bytes": "01"
+      },
+      "pic_fields.bits.entropy_coding_mode_flag": {
+        "at": 632,
+        "bytes": "01"
+      },
+      "pic_fields.bits.field_pic_flag": {
+        "at": 632,
+        "bytes": "20"
+      },
+      "pic_fields.bits.pic_order_present_flag": {
+        "at": 632,
+        "bytes": "80"
+      },
+      "pic_fields.bits.redundant_pic_cnt_present_flag": {
+        "at": 633,
+        "bytes": "02"
+      },
+      "pic_fields.bits.reference_pic_flag": {
+        "at": 633,
+        "bytes": "04"
+      },
+      "pic_fields.bits.transform_8x8_mode_flag": {
+        "at": 632,
+        "bytes": "10"
+      },
+      "pic_fields.bits.weighted_bipred_idc": {
+        "at": 632,
+        "bytes": "0c"
+      },
+      "pic_fields.bits.weighted_pred_flag": {
+        "at": 632,
+        "bytes": "02"
+      },
+      "seq_fields.bits.MinLumaBiPredSize8x8": {
+        "at": 620,
+        "bytes": "80"
+      },
+      "seq_fields.bits.chroma_format_idc": {
+        "at": 620,
+        "bytes": "03"
+      },
+      "seq_fields.bits.delta_pic_order_always_zero_flag": {
+        "at": 622,
+        "bytes": "04"
+      },
+      "seq_fields.bits.direct_8x8_inference_flag": {
+        "at": 620,
+        "bytes": "40"
+      },
+      "seq_fields.bits.frame_mbs_only_flag": {
+        "at": 620,
+        "bytes": "10"
+      },
+      "seq_fields.bits.gaps_in_frame_num_value_allowed_flag": {
+        "at": 620,
+        "bytes": "08"
+      },
+      "seq_fields.bits.log2_max_frame_num_minus4": {
+        "at": 621,
+        "bytes": "0f"
+      },
+      "seq_fields.bits.log2_max_pic_order_cnt_lsb_minus4": {
+        "at": 621,
+        "bytes": "c003"
+      },
+      "seq_fields.bits.mb_adaptive_frame_field_flag": {
+        "at": 620,
+        "bytes": "20"
+      },
+      "seq_fields.bits.pic_order_cnt_type": {
+        "at": 621,
+        "bytes": "30"
+      },
+      "seq_fields.bits.residual_colour_transform_flag": {
+        "at": 620,
+        "bytes": "04"
+      }
+    },
+    "VAPictureParameterBufferHEVC": {
+      "pic_fields.bits.NoBiPredFlag": {
+        "at": 454,
+        "bytes": "10"
+      },
+      "pic_fields.bits.NoPicReorderingFlag": {
+        "at": 454,
+        "bytes": "08"
+      },
+      "pic_fields.bits.ReservedBits": {
+        "at": 454,
+        "bytes": "e0ff"
+      },
+      "pic_fields.bits.amp_enabled_flag": {
+        "at": 452,
+        "bytes": "40"
+      },
+      "pic_fields.bits.chroma_format_idc": {
+        "at": 452,
+        "bytes": "03"
+      },
+      "pic_fields.bits.constrained_intra_pred_flag": {
+        "at": 453,
+        "bytes": "02"
+      },
+      "pic_fields.bits.cu_qp_delta_enabled_flag": {
+        "at": 453,
+        "bytes": "04"
+      },
+      "pic_fields.bits.entropy_coding_sync_enabled_flag": {
+        "at": 453,
+        "bytes": "80"
+      },
+      "pic_fields.bits.loop_filter_across_tiles_enabled_flag": {
+        "at": 454,
+        "bytes": "02"
+      },
+      "pic_fields.bits.pcm_enabled_flag": {
+        "at": 452,
+        "bytes": "08"
+      },
+      "pic_fields.bits.pcm_loop_filter_disabled_flag": {
+        "at": 454,
+        "bytes": "04"
+      },
+      "pic_fields.bits.pps_loop_filter_across_slices_enabled_flag": {
+        "at": 454,
+        "bytes": "01"
+      },
+      "pic_fields.bits.scaling_list_enabled_flag": {
+        "at": 452,
+        "bytes": "10"
+      },
+      "pic_fields.bits.separate_colour_plane_flag": {
+        "at": 452,
+        "bytes": "04"
+      },
+      "pic_fields.bits.sign_data_hiding_enabled_flag": {
+        "at": 453,
+        "bytes": "01"
+      },
+      "pic_fields.bits.strong_intra_smoothing_enabled_flag": {
+        "at": 452,
+        "bytes": "80"
+      },
+      "pic_fields.bits.tiles_enabled_flag": {
+        "at": 453,
+        "bytes": "40"
+      },
+      "pic_fields.bits.transform_skip_enabled_flag": {
+        "at": 452,
+        "bytes": "20"
+      },
+      "pic_fields.bits.transquant_bypass_enabled_flag": {
+        "at": 453,
+        "bytes": "20"
+      },
+      "pic_fields.bits.weighted_bipred_flag": {
+        "at": 453,
+        "bytes": "10"
+      },
+      "pic_fields.bits.weighted_pred_flag": {
+        "at": 453,
+        "bytes": "08"
+      },
+      "slice_parsing_fields.bits.IdrPicFlag": {
+        "at": 557,
+        "bytes": "10"
+      },
+      "slice_parsing_fields.bits.IntraPicFlag": {
+        "at": 557,
+        "bytes": "20"
+      },
+      "slice_parsing_fields.bits.RapPicFlag": {
+        "at": 557,
+        "bytes": "08"
+      },
+      "slice_parsing_fields.bits.ReservedBits": {
+        "at": 557,
+        "bytes": "c0ffff"
+      },
+      "slice_parsing_fields.bits.cabac_init_present_flag": {
+        "at": 556,
+        "bytes": "08"
+      },
+      "slice_parsing_fields.bits.deblocking_filter_override_enabled_flag": {
+        "at": 557,
+        "bytes": "01"
+      },
+      "slice_parsing_fields.bits.dependent_slice_segments_enabled_flag": {
+        "at": 556,
+        "bytes": "20"
+      },
+      "slice_parsing_fields.bits.lists_modification_present_flag": {
+        "at": 556,
+        "bytes": "01"
+      },
+      "slice_parsing_fields.bits.long_term_ref_pics_present_flag": {
+        "at": 556,
+        "bytes": "02"
+      },
+      "slice_parsing_fields.bits.output_flag_present_flag": {
+        "at": 556,
+        "bytes": "10"
+      },
+      "slice_parsing_fields.bits.pps_disable_deblocking_filter_flag": {
+        "at": 557,
+        "bytes": "02"
+      },
+      "slice_parsing_fields.bits.pps_slice_chroma_qp_offsets_present_flag": {
+        "at": 556,
+        "bytes": "40"
+      },
+      "slice_parsing_fields.bits.sample_adaptive_offset_enabled_flag": {
+        "at": 556,
+        "bytes": "80"
+      },
+      "slice_parsing_fields.bits.slice_segment_header_extension_present_flag": {
+        "at": 557,
+        "bytes": "04"
+      },
+      "slice_parsing_fields.bits.sps_temporal_mvp_enabled_flag": {
+        "at": 556,
+        "bytes": "04"
+      }
+    },
+    "VARefFrameCtrlAV1": {
+      "fields.search_idx0": {
+        "at": 0,
+        "bytes": "07"
+      },
+      "fields.search_idx1": {
+        "at": 0,
+        "bytes": "38"
+      },
+      "fields.search_idx2": {
+        "at": 0,
+        "bytes": "c001"
+      },
+      "fields.search_idx3": {
+        "at": 1,
+        "bytes": "0e"
+      },
+      "fields.search_idx4": {
+        "at": 1,
+        "bytes": "70"
+      },
+      "fields.search_idx5": {
+        "at": 1,
+        "bytes": "8003"
+      },
+      "fields.search_idx6": {
+        "at": 2,
+        "bytes": "1c"
+      }
+    },
+    "VASegmentParameterVP9": {
+      "segment_flags.fields.segment_reference": {
+        "at": 0,
+        "bytes": "06"
+      },
+      "segment_flags.fields.segment_reference_enabled": {
+        "at": 0,
+        "bytes": "01"
+      },
+      "segment_flags.fields.segment_reference_skipped": {
+        "at": 0,
+        "bytes": "08"
+      }
+    },
+    "VASegmentationStructAV1": {
+      "segment_info_fields.bits.enabled": {
+        "at": 0,
+        "bytes": "01"
+      },
+      "segment_info_fields.bits.temporal_update": {
+        "at": 0,
+        "bytes": "04"
+      },
+      "segment_info_fields.bits.update_data": {
+        "at": 0,
+        "bytes": "08"
+      },
+      "segment_info_fields.bits.update_map": {
+        "at": 0,
+        "bytes": "02"
+      }
+    },
+    "VASliceParameterBufferHEVC": {
+      "LongSliceFlags.fields.LastSliceOfPic": {
+        "at": 52,
+        "bytes": "01"
+      },
+      "LongSliceFlags.fields.cabac_init_flag": {
+        "at": 53,
+        "bytes": "02"
+      },
+      "LongSliceFlags.fields.collocated_from_l0_flag": {
+        "at": 53,
+        "bytes": "10"
+      },
+      "LongSliceFlags.fields.color_plane_id": {
+        "at": 52,
+        "bytes": "30"
+      },
+      "LongSliceFlags.fields.dependent_slice_segment_flag": {
+        "at": 52,
+        "bytes": "02"
+      },
+      "LongSliceFlags.fields.mvd_l1_zero_flag": {
+        "at": 53,
+        "bytes": "01"
+      },
+      "LongSliceFlags.fields.reserved": {
+        "at": 53,
+        "bytes": "c0ffff"
+      },
+      "LongSliceFlags.fields.slice_deblocking_filter_disabled_flag": {
+        "at": 53,
+        "bytes": "08"
+      },
+      "LongSliceFlags.fields.slice_loop_filter_across_slices_enabled_flag": {
+        "at": 53,
+        "bytes": "20"
+      },
+      "LongSliceFlags.fields.slice_sao_chroma_flag": {
+        "at": 52,
+        "bytes": "80"
+      },
+      "LongSliceFlags.fields.slice_sao_luma_flag": {
+        "at": 52,
+        "bytes": "40"
+      },
+      "LongSliceFlags.fields.slice_temporal_mvp_enabled_flag": {
+        "at": 53,
+        "bytes": "04"
+      },
+      "LongSliceFlags.fields.slice_type": {
+        "at": 52,
+        "bytes": "0c"
+      }
+    },
+    "VASliceParameterBufferVP9": {
+      "seg_param[0].segment_flags.fields.segment_reference": {
+        "at": 12,
+        "bytes": "06"
+      },
+      "seg_param[0].segment_flags.fields.segment_reference_enabled": {
+        "at": 12,
+        "bytes": "01"
+      },
+      "seg_param[0].segment_flags.fields.segment_reference_skipped": {
+        "at": 12,
+        "bytes": "08"
+      }
+    }
+  },
   "constants": {
     "VAAV1EncTransformationAffine": 3,
     "VAAV1EncTransformationCount": 4,
@@ -72,7 +1680,9 @@
     "VASurfaceAttribUsageHint": 8,
     "VA_AV1_MAX_SEGMENTS": 8,
     "VA_AV1_SEG_LVL_MAX": 8,
+    "VA_CODED_BUF_STATUS_BAD_BITSTREAM": 32768,
     "VA_CODED_BUF_STATUS_PICTURE_AVE_QP_MASK": 255,
+    "VA_CODED_BUF_STATUS_SLICE_OVERFLOW_MASK": 512,
     "VA_ENC_PACKED_HEADER_MISC": 8,
     "VA_ENC_PACKED_HEADER_PICTURE": 2,
     "VA_ENC_PACKED_HEADER_RAW_DATA": 16,
@@ -128,6 +1738,251 @@
     "VA_SURFACE_ATTRIB_USAGE_HINT_VPP_READ": 4,
     "VA_SURFACE_ATTRIB_USAGE_HINT_VPP_WRITE": 8
   },
+  "nested": {
+    "VADRMPRIMESurfaceDescriptor": {
+      "layers[0].drm_format": 84,
+      "layers[0].num_planes": 88,
+      "layers[0].object_index": 92,
+      "layers[0].offset": 108,
+      "layers[0].pitch": 124,
+      "objects[0].drm_format_modifier": 24,
+      "objects[0].fd": 16,
+      "objects[0].size": 20
+    },
+    "VADecPictureParameterBufferAV1": {
+      "film_grain_info.ar_coeffs_cb": 341,
+      "film_grain_info.ar_coeffs_cr": 366,
+      "film_grain_info.ar_coeffs_y": 317,
+      "film_grain_info.cb_luma_mult": 392,
+      "film_grain_info.cb_mult": 391,
+      "film_grain_info.cb_offset": 394,
+      "film_grain_info.cr_luma_mult": 397,
+      "film_grain_info.cr_mult": 396,
+      "film_grain_info.cr_offset": 398,
+      "film_grain_info.film_grain_info_fields.value": 240,
+      "film_grain_info.grain_seed": 244,
+      "film_grain_info.num_cb_points": 275,
+      "film_grain_info.num_cr_points": 296,
+      "film_grain_info.num_y_points": 246,
+      "film_grain_info.point_cb_scaling": 286,
+      "film_grain_info.point_cb_value": 276,
+      "film_grain_info.point_cr_scaling": 307,
+      "film_grain_info.point_cr_value": 297,
+      "film_grain_info.point_y_scaling": 261,
+      "film_grain_info.point_y_value": 247,
+      "film_grain_info.va_reserved": 400,
+      "loop_filter_info_fields.value": 686,
+      "loop_restoration_fields.value": 730,
+      "mode_control_fields.value": 708,
+      "pic_info_fields.value": 676,
+      "qmatrix_fields.value": 704,
+      "seg_info.feature_data": 88,
+      "seg_info.feature_mask": 216,
+      "seg_info.segment_info_fields.value": 84,
+      "seg_info.va_reserved": 224,
+      "seq_info_fields.value": 4,
+      "wm[0].invalid": 768,
+      "wm[0].va_reserved": 772,
+      "wm[0].wmmat": 736,
+      "wm[0].wmtype": 732
+    },
+    "VADecPictureParameterBufferVP9": {
+      "pic_fields.value": 36
+    },
+    "VAEncMiscParameterFrameRate": {
+      "framerate_flags.value": 4
+    },
+    "VAEncMiscParameterRateControl": {
+      "rc_flags.value": 24
+    },
+    "VAEncPictureParameterBufferAV1": {
+      "loop_filter_flags.value": 75,
+      "loop_restoration_flags.value": 536,
+      "mode_control_flags.value": 100,
+      "picture_flags.value": 64,
+      "qmatrix_flags.value": 96,
+      "ref_frame_ctrl_l0.value": 56,
+      "ref_frame_ctrl_l1.value": 60,
+      "segments.feature_data": 106,
+      "segments.feature_mask": 234,
+      "segments.seg_flags.value": 104,
+      "segments.segment_number": 105,
+      "segments.va_reserved": 244,
+      "tile_group_obu_hdr_info.value": 960,
+      "wm[0].invalid": 576,
+      "wm[0].va_reserved": 580,
+      "wm[0].wmmat": 544,
+      "wm[0].wmtype": 540
+    },
+    "VAEncPictureParameterBufferH264": {
+      "CurrPic.BottomFieldOrderCnt": 16,
+      "CurrPic.TopFieldOrderCnt": 12,
+      "CurrPic.flags": 8,
+      "CurrPic.frame_idx": 4,
+      "CurrPic.picture_id": 0,
+      "CurrPic.va_reserved": 20,
+      "ReferenceFrames[0].BottomFieldOrderCnt": 52,
+      "ReferenceFrames[0].TopFieldOrderCnt": 48,
+      "ReferenceFrames[0].flags": 44,
+      "ReferenceFrames[0].frame_idx": 40,
+      "ReferenceFrames[0].picture_id": 36,
+      "ReferenceFrames[0].va_reserved": 56,
+      "pic_fields.value": 628
+    },
+    "VAEncPictureParameterBufferHEVC": {
+      "decoded_curr_pic.flags": 8,
+      "decoded_curr_pic.pic_order_cnt": 4,
+      "decoded_curr_pic.picture_id": 0,
+      "decoded_curr_pic.va_reserved": 12,
+      "pic_fields.value": 508,
+      "reference_frames[0].flags": 36,
+      "reference_frames[0].pic_order_cnt": 32,
+      "reference_frames[0].picture_id": 28,
+      "reference_frames[0].va_reserved": 40,
+      "scc_fields.value": 514
+    },
+    "VAEncSegParamAV1": {
+      "seg_flags.value": 0
+    },
+    "VAEncSequenceParameterBufferAV1": {
+      "seq_fields.value": 16
+    },
+    "VAEncSequenceParameterBufferH264": {
+      "seq_fields.value": 28,
+      "vui_fields.value": 1092
+    },
+    "VAEncSequenceParameterBufferHEVC": {
+      "scc_fields.value": 84,
+      "seq_fields.value": 24,
+      "vui_fields.value": 56
+    },
+    "VAEncSliceParameterBufferH264": {
+      "RefPicList0[0].BottomFieldOrderCnt": 52,
+      "RefPicList0[0].TopFieldOrderCnt": 48,
+      "RefPicList0[0].flags": 44,
+      "RefPicList0[0].frame_idx": 40,
+      "RefPicList0[0].picture_id": 36,
+      "RefPicList0[0].va_reserved": 56,
+      "RefPicList1[0].BottomFieldOrderCnt": 1204,
+      "RefPicList1[0].TopFieldOrderCnt": 1200,
+      "RefPicList1[0].flags": 1196,
+      "RefPicList1[0].frame_idx": 1192,
+      "RefPicList1[0].picture_id": 1188,
+      "RefPicList1[0].va_reserved": 1208
+    },
+    "VAEncSliceParameterBufferHEVC": {
+      "ref_pic_list0[0].flags": 20,
+      "ref_pic_list0[0].pic_order_cnt": 16,
+      "ref_pic_list0[0].picture_id": 12,
+      "ref_pic_list0[0].va_reserved": 24,
+      "ref_pic_list1[0].flags": 440,
+      "ref_pic_list1[0].pic_order_cnt": 436,
+      "ref_pic_list1[0].picture_id": 432,
+      "ref_pic_list1[0].va_reserved": 444,
+      "slice_fields.value": 1040
+    },
+    "VAFilmGrainStructAV1": {
+      "film_grain_info_fields.value": 0
+    },
+    "VAGenericValue": {
+      "value.f": 8,
+      "value.fn": 8,
+      "value.i": 8,
+      "value.p": 8
+    },
+    "VAImage": {
+      "format.alpha_mask": 32,
+      "format.bits_per_pixel": 12,
+      "format.blue_mask": 28,
+      "format.byte_order": 8,
+      "format.depth": 16,
+      "format.fourcc": 4,
+      "format.green_mask": 24,
+      "format.red_mask": 20,
+      "format.va_reserved": 36
+    },
+    "VAPictureParameterBufferH264": {
+      "CurrPic.BottomFieldOrderCnt": 16,
+      "CurrPic.TopFieldOrderCnt": 12,
+      "CurrPic.flags": 8,
+      "CurrPic.frame_idx": 4,
+      "CurrPic.picture_id": 0,
+      "CurrPic.va_reserved": 20,
+      "ReferenceFrames[0].BottomFieldOrderCnt": 52,
+      "ReferenceFrames[0].TopFieldOrderCnt": 48,
+      "ReferenceFrames[0].flags": 44,
+      "ReferenceFrames[0].frame_idx": 40,
+      "ReferenceFrames[0].picture_id": 36,
+      "ReferenceFrames[0].va_reserved": 56,
+      "pic_fields.value": 632,
+      "seq_fields.value": 620
+    },
+    "VAPictureParameterBufferHEVC": {
+      "CurrPic.flags": 8,
+      "CurrPic.pic_order_cnt": 4,
+      "CurrPic.picture_id": 0,
+      "CurrPic.va_reserved": 12,
+      "ReferenceFrames[0].flags": 36,
+      "ReferenceFrames[0].pic_order_cnt": 32,
+      "ReferenceFrames[0].picture_id": 28,
+      "ReferenceFrames[0].va_reserved": 40,
+      "pic_fields.value": 452,
+      "slice_parsing_fields.value": 556
+    },
+    "VAProcPipelineParameterBuffer": {
+      "input_color_properties.chroma_sample_location": 132,
+      "input_color_properties.color_range": 133,
+      "input_color_properties.colour_primaries": 134,
+      "input_color_properties.matrix_coefficients": 136,
+      "input_color_properties.reserved": 137,
+      "input_color_properties.transfer_characteristics": 135,
+      "output_color_properties.chroma_sample_location": 140,
+      "output_color_properties.color_range": 141,
+      "output_color_properties.colour_primaries": 142,
+      "output_color_properties.matrix_coefficients": 144,
+      "output_color_properties.reserved": 145,
+      "output_color_properties.transfer_characteristics": 143
+    },
+    "VASegmentParameterVP9": {
+      "segment_flags.value": 0
+    },
+    "VASegmentationStructAV1": {
+      "segment_info_fields.value": 0
+    },
+    "VASliceParameterBufferH264": {
+      "RefPicList0[0].BottomFieldOrderCnt": 44,
+      "RefPicList0[0].TopFieldOrderCnt": 40,
+      "RefPicList0[0].flags": 36,
+      "RefPicList0[0].frame_idx": 32,
+      "RefPicList0[0].picture_id": 28,
+      "RefPicList0[0].va_reserved": 48,
+      "RefPicList1[0].BottomFieldOrderCnt": 1196,
+      "RefPicList1[0].TopFieldOrderCnt": 1192,
+      "RefPicList1[0].flags": 1188,
+      "RefPicList1[0].frame_idx": 1184,
+      "RefPicList1[0].picture_id": 1180,
+      "RefPicList1[0].va_reserved": 1200
+    },
+    "VASliceParameterBufferHEVC": {
+      "LongSliceFlags.value": 52
+    },
+    "VASliceParameterBufferVP9": {
+      "seg_param[0].chroma_ac_quant_scale": 26,
+      "seg_param[0].chroma_dc_quant_scale": 28,
+      "seg_param[0].filter_level": 14,
+      "seg_param[0].luma_ac_quant_scale": 22,
+      "seg_param[0].luma_dc_quant_scale": 24,
+      "seg_param[0].segment_flags.value": 12,
+      "seg_param[0].va_reserved": 32
+    },
+    "VASurfaceAttrib": {
+      "value.type": 8,
+      "value.value.f": 16,
+      "value.value.fn": 16,
+      "value.value.i": 16,
+      "value.value.p": 16
+    }
+  },
   "offsets": {
     "VACodedBufferSegment": {
       "bit_offset": 4,
@@ -141,6 +1996,18 @@
     "VAConfigAttrib": {
       "type": 0,
       "value": 4
+    },
+    "VAConfigAttribValEncAV1Ext2": {
+      "bits": 0,
+      "value": 0
+    },
+    "VAConfigAttribValEncHEVCBlockSizes": {
+      "bits": 0,
+      "value": 0
+    },
+    "VAConfigAttribValEncHEVCFeatures": {
+      "bits": 0,
+      "value": 0
     },
     "VADRMPRIMESurfaceDescriptor": {
       "fourcc": 0,
@@ -699,6 +2566,10 @@
       "x": 0,
       "y": 2
     },
+    "VARefFrameCtrlAV1": {
+      "fields": 0,
+      "value": 0
+    },
     "VASegmentParameterVP9": {
       "chroma_ac_quant_scale": 14,
       "chroma_dc_quant_scale": 16,
@@ -813,6 +2684,9 @@
   "sizes": {
     "VACodedBufferSegment": 48,
     "VAConfigAttrib": 8,
+    "VAConfigAttribValEncAV1Ext2": 4,
+    "VAConfigAttribValEncHEVCBlockSizes": 4,
+    "VAConfigAttribValEncHEVCFeatures": 4,
     "VADRMPRIMESurfaceDescriptor": 312,
     "VADecPictureParameterBufferAV1": 1160,
     "VADecPictureParameterBufferVP9": 92,
@@ -844,6 +2718,7 @@
     "VAProcColorProperties": 8,
     "VAProcPipelineParameterBuffer": 224,
     "VARectangle": 8,
+    "VARefFrameCtrlAV1": 4,
     "VASegmentParameterVP9": 36,
     "VASegmentationStructAV1": 156,
     "VASliceParameterBufferAV1": 40,

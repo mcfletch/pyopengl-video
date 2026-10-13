@@ -17,17 +17,21 @@ from __future__ import annotations
 
 import ctypes
 import dataclasses
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, ClassVar, Protocol
 
+from pyopengl_video import bounds
 from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import Sample
+from pyopengl_video.encoder import EncoderError
 from pyopengl_video.vaapi import api
 
 __all__ = ['Buffer', 'CodedPicture', 'DecodeControl', 'DecodeSession',
            'EncodeControl', 'EncodeSettings', 'Format', 'HRD_BUFFER_SECONDS',
-           'VBR_TARGET_PERCENTAGE', 'packed_header', 'rate_control_buffers']
+           'LARGEST_BITRATE', 'LARGEST_SIDE', 'QP_RANGE', 'VBR_TARGET_PERCENTAGE',
+           'packed_frame_rate', 'packed_header', 'rate_control_buffers']
 
 #: One parameter buffer: its libva buffer type, and a ctypes object or the
 #: bytes it holds.
@@ -39,6 +43,19 @@ VBR_TARGET_PERCENTAGE = 70
 #: How much video the hypothetical reference decoder's buffer holds, as a
 #: multiple of one second's bits.
 HRD_BUFFER_SECONDS = 2
+
+#: The largest width or height an encoder takes. libva carries a picture size
+#: in 16-bit fields, and a control layer rounds it up to its codec's blocks,
+#: the largest of which is 64 samples, so this is the largest multiple of 64
+#: that 16 bits hold.
+LARGEST_SIDE = bounds.FIELD_16 // 64 * 64
+
+#: The largest bit rate, in bits a second. The buffer of the hypothetical
+#: reference decoder is :data:`HRD_BUFFER_SECONDS` times this, in a 32-bit field.
+LARGEST_BITRATE = bounds.FIELD_32 // HRD_BUFFER_SECONDS
+
+#: The quantiser's range, on the H.264 scale every control layer is given it in.
+QP_RANGE = (0, 51)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -149,6 +166,13 @@ class EncodeSettings:
     qp -- the quantiser on the H.264 scale of 0 to 51; a layer whose codec
         counts differently converts it
     rate_control -- the libva rate control mode in use, ``VA_RC_CBR`` and so on
+
+    Each is held to the field libva carries it in, so a control layer writes
+    what it was given: :class:`~pyopengl_video.encoder.EncoderError` for a
+    side outside 1 to :data:`LARGEST_SIDE`, a frame rate
+    :func:`packed_frame_rate` refuses, a bit rate outside 1 to
+    :data:`LARGEST_BITRATE`, a group of fewer than 1 or more than 2**32 - 1
+    frames, and a quantiser outside :data:`QP_RANGE`.
     """
 
     size: tuple[int, int]
@@ -157,6 +181,20 @@ class EncodeSettings:
     gop: int
     qp: int
     rate_control: int
+
+    def __post_init__(self) -> None:
+        if len(self.size) != 2 or len(self.frame_rate) != 2:
+            raise EncoderError(f'a size of {self.size!r} at a frame rate of '
+                               f'{self.frame_rate!r} is not two pairs of numbers')
+        bounds.frame_size(*self.size, most=(LARGEST_SIDE, LARGEST_SIDE), error=EncoderError)
+        packed_frame_rate(self.frame_rate)
+        bounds.whole(self.bitrate, 'bitrate', 1, LARGEST_BITRATE, EncoderError)
+        if type(self.gop) is int and self.gop < 1:
+            raise EncoderError(f'gop is {self.gop}, and a group of {self.gop} '
+                               'pictures holds none')
+        bounds.whole(self.gop, 'gop', 1, bounds.FIELD_32, EncoderError)
+        bounds.whole(self.qp, 'qp', *QP_RANGE, EncoderError)
+        bounds.whole(self.rate_control, 'rate_control', 0, bounds.FIELD_32, EncoderError)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -239,11 +277,35 @@ def packed_header(kind: int, data: bytes, bits: int | None = None, *,
     """
     parameters = api.VAEncPackedHeaderParameterBuffer()
     parameters.type = kind
-    parameters.bit_length = len(data) * 8 if bits is None else bits
+    # The driver reads `bit_length` bits of the data buffer that follows.
+    parameters.bit_length = bounds.whole(
+        len(data) * 8 if bits is None else bits, 'the length of a packed header, in bits',
+        0, min(len(data) * 8, bounds.FIELD_32), EncoderError)
     parameters.has_emulation_bytes = int(has_emulation_bytes)
     payload = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
     return [(api.VAEncPackedHeaderParameterBufferType, parameters),
             (api.VAEncPackedHeaderDataBufferType, payload)]
+
+
+def packed_frame_rate(rate: tuple[int, int]) -> int:
+    """A frame rate as ``VAEncMiscParameterFrameRate`` carries it.
+
+    rate -- an exact (numerator, denominator), both above zero
+
+    The numerator is the low 16 bits and the denominator the 16 above them; a
+    denominator of zero there means the numerator is whole frames a second.
+    The ratio is reduced first, so 90000/3003 is packed as 30000/1001.
+    :class:`~pyopengl_video.encoder.EncoderError` for a rate either half of
+    which, once reduced, does not fit 16 bits.
+    """
+    numerator, denominator = bounds.frame_rate(rate, EncoderError)
+    divisor = math.gcd(numerator, denominator)
+    numerator, denominator = numerator // divisor, denominator // divisor
+    if numerator > bounds.FIELD_16 or denominator > bounds.FIELD_16:
+        raise EncoderError(
+            f'a frame rate of {rate[0]}/{rate[1]} cannot be coded: it reduces to '
+            f'{numerator}/{denominator}, and libva carries each half in 16 bits')
+    return numerator | (denominator << 16 if denominator > 1 else 0)
 
 
 def rate_control_buffers(settings: EncodeSettings, initial_qp: int,
@@ -253,6 +315,7 @@ def rate_control_buffers(settings: EncodeSettings, initial_qp: int,
     initial_qp -- the quantiser rate control starts from, on the codec's own scale
     max_qp -- the largest quantiser the codec has
     """
+    initial_qp = bounds.whole(initial_qp, 'the initial quantiser', 0, max_qp, EncoderError)
     control = api.VAEncMiscParameterRateControl()
     control.bits_per_second = settings.bitrate
     control.target_percentage = (
@@ -262,10 +325,7 @@ def rate_control_buffers(settings: EncodeSettings, initial_qp: int,
     control.min_qp = 0
     control.max_qp = max_qp
     rate = api.VAEncMiscParameterFrameRate()
-    # The numerator goes in the low half and the denominator above it; a
-    # denominator of zero means the numerator is whole frames a second.
-    numerator, denominator = settings.frame_rate
-    rate.framerate = numerator | (denominator << 16 if denominator > 1 else 0)
+    rate.framerate = packed_frame_rate(settings.frame_rate)
     hrd = api.VAEncMiscParameterHRD()
     hrd.buffer_size = settings.bitrate * HRD_BUFFER_SECONDS
     hrd.initial_buffer_fullness = hrd.buffer_size // 2

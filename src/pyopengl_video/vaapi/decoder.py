@@ -34,23 +34,36 @@ from OpenGL.GL import (
     glFenceSync,
 )
 
+from pyopengl_video import bounds
 from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecodedFrame, Decoder, DecoderError, Sample
+from pyopengl_video.glcontext import Owner
 from pyopengl_video.linux import dmabuf
+from pyopengl_video.teardown import release_all
 from pyopengl_video.vaapi import api
 from pyopengl_video.vaapi.codecs import DECODERS, support_for
 from pyopengl_video.vaapi.control import Buffer, DecodeControl, Format
-from pyopengl_video.vaapi.device import Device
-from pyopengl_video.vaapi.h264 import StreamError
+from pyopengl_video.vaapi.device import Device, abandon, worded
 
 log = logging.getLogger(__name__)
 
-__all__ = ['DEFAULT_OUTPUT_SLOTS', 'LAYOUTS', 'SurfaceLayout', 'SurfaceOrder',
-           'VAAPIDecoder', 'allocation']
+__all__ = ['DEFAULT_OUTPUT_SLOTS', 'LAYOUTS', 'MAX_FORMAT_SURFACES',
+           'MAX_OUTPUT_SLOTS', 'SurfaceLayout', 'SurfaceOrder', 'VAAPIDecoder',
+           'allocation', 'as_decoder_error']
 
 #: How many decoded frames a caller may hold at once, unless it says otherwise.
 #: A player converts each frame as it arrives and holds none for long.
 DEFAULT_OUTPUT_SLOTS = 4
+
+#: The most surfaces a control layer may ask for in a
+#: :class:`~pyopengl_video.vaapi.control.Format`. The largest any codec here
+#: needs is AV1's with film grain: eight reference slots and the frame being
+#: decoded, each a reconstruction and the picture shown, which is 18. H.264
+#: and HEVC hold at most 16 pictures and the one being decoded, and VP9 nine.
+MAX_FORMAT_SURFACES = 18
+
+#: The most frames a caller may ask to hold unreleased at once.
+MAX_OUTPUT_SLOTS = 64
 
 
 def as_decoder_error(method: Callable[..., Any]) -> Callable[..., Any]:
@@ -58,7 +71,11 @@ def as_decoder_error(method: Callable[..., Any]) -> Callable[..., Any]:
 
     libva's errors, the DMA-BUF shim's and the parser's each say something
     worth reading, and none is a :class:`DecoderError` in itself, since each
-    module serves more than decoding.
+    module serves more than decoding. Every other :class:`Exception` a stream
+    or a driver brings about is translated the same way, :class:`MemoryError`
+    included, with the original on ``__cause__``. :class:`KeyboardInterrupt`,
+    :class:`SystemExit` and :class:`GeneratorExit` are not errors of the
+    stream and pass through.
     """
     @functools.wraps(method)
     def translating(*arguments: Any, **named: Any) -> Any:
@@ -66,8 +83,8 @@ def as_decoder_error(method: Callable[..., Any]) -> Callable[..., Any]:
             return method(*arguments, **named)
         except DecoderError:
             raise
-        except (api.VAError, dmabuf.DMABufError, StreamError) as error:
-            raise DecoderError(str(error)) from error
+        except Exception as error:
+            raise DecoderError(worded(error)) from error
     return translating
 
 
@@ -162,6 +179,10 @@ class _Pool:
     decoding never creates a GL object. A fence made when a lent frame comes
     back is waited on before its surface is decoded into again, so the decoder
     never writes a picture OpenGL is still reading.
+
+    The textures, images and fences belong to the OpenGL context current when
+    the pool is made, and :meth:`close` releases them only with that context
+    current.
     """
 
     def __init__(self, device: Device, format: Format, count: int) -> None:
@@ -179,14 +200,15 @@ class _Pool:
         self.count = count
         self.surfaces: list[int] = []
         self.textures: dict[int, tuple[int, int]] = {}
-        self._images: list[tuple[int, object]] = []
+        self._images: list[tuple[int, dmabuf.ImportedImage]] = []
         self._fences: dict[int, Any] = {}
+        self._owner = Owner.current()
         self.config = api.VAConfigID(0)
         self.context = api.VAContextID(0)
         try:
             self._create()
         except BaseException:
-            self.close()
+            abandon(self.close)
             raise
 
     def _create(self) -> None:
@@ -265,34 +287,63 @@ class _Pool:
             glDeleteSync(fence)
 
     def returned(self, surface: int) -> None:
-        """Note the point in OpenGL's commands where a lent surface came back."""
-        if self.context:
+        """Note the point in OpenGL's commands where a lent surface came back.
+
+        Nothing is noted once the pool's context is destroyed, or with
+        another OpenGL context current: a fence is an object of the context
+        it is made in.
+        """
+        if self.context and self._owner.is_current():
             self.order.returned(surface)
             previous = self._fences.pop(surface, None)
             if previous is not None:
                 glDeleteSync(previous)
             self._fences[surface] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
 
+    @property
+    def closed(self) -> bool:
+        """Whether :meth:`close` has released everything the pool held."""
+        return not (self._images or self._fences or self.context or self.surfaces
+                    or self.config)
+
     def close(self) -> None:
-        """Give back the textures, the images, the surfaces and the context."""
-        for fence in self._fences.values():
-            glDeleteSync(fence)
-        self._fences = {}
-        for texture, image in self._images:
-            dmabuf.release_imported_texture(texture, image)
-        self._images = []
+        """Give back the textures, the images, the surfaces and the context.
+
+        Every release runs whatever the others do. The libva context,
+        surfaces and configuration are released whichever OpenGL context is
+        current. With another context current, or none, the textures, images
+        and fences are kept and :class:`DecoderError` says so once the libva
+        objects are gone; closing again with the pool's own context current
+        releases them.
+        """
         self.textures = {}
-        va, display = self.device.va, self.device.display
-        if display is None:
+        release_all(self._release_textures, self._destroy_context,
+                    self._destroy_surfaces, self._destroy_config)
+
+    def _release_textures(self) -> None:
+        if not (self._fences or self._images):
             return
-        if self.context:
-            va.vaDestroyContext(display, self.context)
-            self.context = api.VAContextID(0)
-        self.device.destroy_surfaces(self.surfaces)
-        self.surfaces = []
-        if self.config:
-            va.vaDestroyConfig(display, self.config)
-            self.config = api.VAConfigID(0)
+        self._owner.require("a decoder's surface textures", DecoderError)
+        fences, self._fences = self._fences, {}
+        images, self._images = self._images, []
+        release_all(
+            *(functools.partial(glDeleteSync, fence) for fence in fences.values()),
+            *(functools.partial(dmabuf.release_imported_texture, texture, image)
+              for texture, image in images))
+
+    def _destroy_context(self) -> None:
+        context, self.context = self.context, api.VAContextID(0)
+        if context and self.device.display is not None:
+            self.device.va.vaDestroyContext(self.device.display, context)
+
+    def _destroy_surfaces(self) -> None:
+        surfaces, self.surfaces = self.surfaces, []
+        self.device.destroy_surfaces(surfaces)
+
+    def _destroy_config(self) -> None:
+        config, self.config = self.config, api.VAConfigID(0)
+        if config and self.device.display is not None:
+            self.device.va.vaDestroyConfig(self.device.display, config)
 
 
 # --------------------------------------------------------------- decoder
@@ -313,7 +364,10 @@ class _Session:
         self.output_slots = output_slots
         self._make_pool = make_pool
         self.control: DecodeControl | None = None
+        #: The surfaces pictures are decoded into, or None: before the first
+        #: format is activated, and after one the device refused.
         self.pool: _Pool | None = None
+        self._refused = False
         self._retired: list[_Pool] = []
         self._lent: dict[DecodedFrame, tuple[_Pool, int]] = {}
         self._ready: list[DecodedFrame] = []
@@ -324,22 +378,52 @@ class _Session:
         return ready
 
     def activate(self, format: Format) -> None:
-        count = format.surfaces + self.output_slots
+        """Make the surfaces suit `format`, replacing them when they do not.
+
+        The pool before is given up first, so a device never holds the
+        surfaces of two sequences at once. When the new pool cannot be made
+        the session holds none, and every picture is refused until a format
+        is activated that the device takes.
+        """
+        surfaces = bounds.whole(format.surfaces, 'the number of decode surfaces '
+                                f'{format.name or "the stream"} asks for',
+                                1, MAX_FORMAT_SURFACES, DecoderError)
+        count = surfaces + self.output_slots
         pool = self.pool
         if (pool is not None and count <= pool.count
                 and (pool.profile, pool.coded_size, pool.layout.depth)
                 == (format.profile, format.coded_size, format.depth)):
             return
+        # Cleared before the old pool is released, and assigned once the new
+        # one is whole: a submission never finds a destroyed context here.
+        self.pool = None
+        self._refused = True
         if pool is not None:
             self._retire(pool)
         log.debug('%s: %d surfaces of %dx%d for %s', self.device.node, count,
                   *format.coded_size, format.name)
         self.pool = self._make_pool(self.device, format, count)
+        self._refused = False
 
-    def acquire(self) -> int:
+    def _live(self, surface: int | None = None) -> _Pool:
+        """The pool pictures are decoded into; `surface`, if given, is one of its own."""
         pool = self.pool
         if pool is None:
+            if self._refused:
+                raise DecoderError(
+                    'the decode surfaces for the stream could not be made, so '
+                    'there is nothing to decode into until a sequence begins '
+                    'that this device takes')
             raise DecoderError('a picture arrived before anything said what the stream is')
+        if surface is not None and surface not in pool.textures:
+            raise DecoderError(
+                f'surface {surface} is not one of the {pool.count} decode '
+                'surfaces in use; it belongs to a sequence whose surfaces '
+                'have been given back')
+        return pool
+
+    def acquire(self) -> int:
+        pool = self._live()
         held = self.control.held() if self.control is not None else set()
         lent = [frame for frame, (owner, _) in self._lent.items() if owner is pool]
         in_use = held | {self._lent[frame][1] for frame in lent}
@@ -354,8 +438,7 @@ class _Session:
         return surface
 
     def submit(self, surface: int, batches: Sequence[Sequence[Buffer]], what: str) -> None:
-        pool = self.pool
-        assert pool is not None
+        pool = self._live(surface)
         made: list[list[int]] = []
         try:
             for batch in batches:
@@ -370,8 +453,13 @@ class _Session:
 
     def output(self, surface: int, *, timestamp: int, duration: int,
                visible: tuple[int, int, int, int], colour: Colour) -> None:
-        pool = self.pool
-        assert pool is not None
+        """Wait for the picture in `surface` and lend it as the next frame.
+
+        A surface the driver will not synchronise is not lent: no frame is
+        made, the error is raised, and the surface stays the control layer's
+        to hold or to decode into again. What it holds is undefined.
+        """
+        pool = self._live(surface)
         self.device.check(self.device.va.vaSyncSurface(self.device.display, surface),
                           'vaSyncSurface', f'surface {surface}')
         frame = DecodedFrame(
@@ -382,29 +470,52 @@ class _Session:
         self._ready.append(frame)
 
     def _released(self, frame: DecodedFrame) -> None:
-        owner, surface = self._lent.pop(frame)
+        found = self._lent.pop(frame, None)
+        if found is None:
+            return
+        owner, surface = found
         if not any(lent == (owner, surface) for lent in self._lent.values()):
             owner.returned(surface)
         if owner in self._retired and not any(
                 pool is owner for pool, _ in self._lent.values()):
-            self._retired.remove(owner)
-            owner.close()
+            try:
+                owner.close()
+            finally:
+                if owner.closed:
+                    self._retired.remove(owner)
 
     def _retire(self, pool: _Pool) -> None:
+        """Close `pool`, once no frame lent from it is held.
+
+        A pool that will not close whole, its OpenGL context not being
+        current, is kept for :meth:`close`.
+        """
         if any(owner is pool for owner, _ in self._lent.values()):
             self._retired.append(pool)
-        else:
+            return
+        try:
             pool.close()
+        finally:
+            if not pool.closed:
+                self._retired.append(pool)
 
     def close(self) -> None:
-        """Release the surfaces and their textures, frames lent included."""
-        for frame in list(self._lent):
-            frame.release()
-        self._ready = []
-        for pool in [*self._retired, *([self.pool] if self.pool else [])]:
-            pool.close()
-        self._retired = []
+        """Release the surfaces and their textures, frames lent included.
+
+        Every frame is released and every pool closed whatever the others
+        do. A pool that could not release everything, because its OpenGL
+        context was not current, is kept for the next call to close.
+        """
+        pools = [*self._retired, *([self.pool] if self.pool else [])]
+        lent, self._lent = self._lent, {}
         self.pool = None
+        self._retired = []
+        self._ready = []
+        try:
+            release_all(*(frame.release for frame in lent),
+                        *(pool.close for pool in pools))
+        finally:
+            self._retired = [pool for pool in pools if not pool.closed]
 
 
 class VAAPIDecoder(Decoder):
@@ -442,7 +553,8 @@ class VAAPIDecoder(Decoder):
                 f'the VA-API backend decodes {", ".join(sorted(DECODERS))}, not {codec!r}')
         del size
         self.codec = support.codec
-        self.output_slots = int(output_slots)
+        self.output_slots = bounds.whole(output_slots, 'output_slots', 1,
+                                         MAX_OUTPUT_SLOTS, DecoderError)
         self._closed = False
         nodes = [device] if device else api.render_nodes()
         self._device = Device.first(nodes, support.objection,
@@ -456,7 +568,7 @@ class VAAPIDecoder(Decoder):
             self._control.configure(headers)
             self._describe()
         except BaseException:
-            self.close()
+            abandon(self.close)
             raise
 
     def __repr__(self) -> str:
@@ -485,17 +597,35 @@ class VAAPIDecoder(Decoder):
         self._control.flush()
         return self._session.take()
 
+    @as_decoder_error
     def reset(self) -> None:
         """Drop every picture held back. Frames already lent stay valid."""
+        self._check_open()
         self._control.reset()
 
+    @as_decoder_error
     def close(self) -> None:
-        """Release the surfaces and their textures, frames lent included."""
-        if self._closed:
-            return
+        """Release the surfaces and their textures, frames lent included.
+
+        The libva objects, the display and the render node are released
+        whichever OpenGL context is current. The surface textures are OpenGL
+        objects of the context the decoder was opened in: with another
+        current, or none, they are kept, :class:`DecoderError` says so, and
+        closing again with the decoder's own context current releases them.
+        Closing a decoder that has nothing left to release does nothing.
+        """
         self._closed = True
-        self._session.close()
-        self._device.close()
+        release_all(self._close_session, self._close_device)
+
+    def _close_session(self) -> None:
+        session = getattr(self, '_session', None)
+        if session is not None:
+            session.close()
+
+    def _close_device(self) -> None:
+        device = getattr(self, '_device', None)
+        if device is not None:
+            device.close()
 
     def _check_open(self) -> None:
         if self._closed:
