@@ -18,7 +18,7 @@ from pyopengl_video.decoder import DecoderError, Sample
 from pyopengl_video.mp4 import split_annexb
 from pyopengl_video.vaapi import api, hevc_api
 from pyopengl_video.vaapi.control import Format
-from pyopengl_video.vaapi.decoder import _Pool
+from pyopengl_video.vaapi.decoder import allocation as surface_allocation
 from pyopengl_video.vaapi.h264 import StreamError, annexb
 from pyopengl_video.vaapi.hevc_decode import (
     DIAGONAL_4X4,
@@ -557,28 +557,11 @@ class TestColour:
         assert colour_of(sequence(vui={'timing': (1, 30)})).matrix == 6
 
 
-class StandInDevice:
-    """A device that answers surface limits and nothing else."""
-
-    vendor = 'a stand-in'
-
-    def __init__(self, least):
-        self.least = least
-
-    def surface_limits(self, config):  # noqa: ARG002 - the signature of the device's
-        return {api.VASurfaceAttribMinWidth: self.least[0],
-                api.VASurfaceAttribMinHeight: self.least[1],
-                api.VASurfaceAttribMaxWidth: 4096, api.VASurfaceAttribMaxHeight: 4096}
-
-
 def allocation(format, least=(64, 64)):
-    """What a pool would allocate for `format` on a device with that minimum."""
-    pool = object.__new__(_Pool)
-    pool.device = StandInDevice(least)
-    pool.format = format
-    pool.coded_size = format.coded_size
-    pool.config = api.VAConfigID(0)
-    return pool._allocation()  # noqa: SLF001 - the rule under test, without the surfaces a pool makes
+    """What is allocated for `format` on a device with that minimum."""
+    limits = {api.VASurfaceAttribMinWidth: least[0], api.VASurfaceAttribMinHeight: least[1],
+              api.VASurfaceAttribMaxWidth: 4096, api.VASurfaceAttribMaxHeight: 4096}
+    return surface_allocation(format, limits, 'a stand-in')
 
 
 class TestSurfacesOfTheCodedSizeExactly:

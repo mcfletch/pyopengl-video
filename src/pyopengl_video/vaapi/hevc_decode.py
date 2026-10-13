@@ -12,7 +12,6 @@ from collections.abc import Sequence
 from typing import Any
 
 from pyopengl_video import codecs
-from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecoderError, Sample
 from pyopengl_video.mp4 import split_annexb
 from pyopengl_video.vaapi import api, hevc_api
@@ -32,6 +31,7 @@ from pyopengl_video.vaapi.hevc_parse import (
     ScalingLists,
     SequenceParameterSet,
     SliceHeader,
+    colour_of,
     parse_nal,
     parse_pps,
     parse_slice_header,
@@ -349,17 +349,6 @@ def slice_parameters(header: SliceHeader, list0: Sequence[Frame], list1: Sequenc
     parameters.entry_offset_to_subset_array = entry_offset
     parameters.slice_data_num_emu_prevn_bytes = header.header_escapes
     return parameters
-
-
-def colour_of(sps: SequenceParameterSet) -> Colour:
-    """A sequence's colour description, the matrix chosen where it states none."""
-    vui = sps.vui
-    if vui is None:
-        return Colour().resolved(sps.size[1])
-    return Colour(matrix=vui.matrix_coeffs, full_range=bool(vui.video_full_range_flag),
-                  primaries=vui.colour_primaries, transfer=vui.transfer_characteristics,
-                  chroma_location=vui.chroma_sample_loc_type_top_field,
-                  ).resolved(sps.size[1])
 
 
 # ------------------------------------------------------------ the layer

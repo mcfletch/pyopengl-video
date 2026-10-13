@@ -22,7 +22,7 @@ import ctypes
 import functools
 import logging
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from OpenGL.GL import (
@@ -46,7 +46,7 @@ from pyopengl_video.vaapi.h264 import StreamError
 log = logging.getLogger(__name__)
 
 __all__ = ['DEFAULT_OUTPUT_SLOTS', 'LAYOUTS', 'SurfaceLayout', 'SurfaceOrder',
-           'VAAPIDecoder']
+           'VAAPIDecoder', 'allocation']
 
 #: How many decoded frames a caller may hold at once, unless it says otherwise.
 #: A player converts each frame as it arrives and holds none for long.
@@ -126,6 +126,35 @@ class SurfaceOrder:
         self._order.append(surface)
 
 
+def allocation(format: Format, limits: Mapping[int, int], vendor: str) -> tuple[int, int]:
+    """The size surfaces are allocated at: the coded size, at least the driver's minimum.
+
+    format -- what the stream decodes into
+    limits -- the surface attributes the device states for the configuration,
+        by attribute type; one it leaves out is no limit
+    vendor -- whose device it is, for a message
+
+    A picture smaller than the minimum decodes into the top left of a larger
+    surface, unless its format needs the surface to be the coded size exactly,
+    and then it is refused by its size. One larger than the maximum is refused
+    by its size.
+    """
+    width, height = format.coded_size
+    most = (limits.get(api.VASurfaceAttribMaxWidth, width),
+            limits.get(api.VASurfaceAttribMaxHeight, height))
+    if width > most[0] or height > most[1]:
+        raise DecoderError(
+            f'a {width}x{height} picture is larger than the {most[0]}x{most[1]} '
+            f'this decoder ({vendor}) reaches')
+    least = (limits.get(api.VASurfaceAttribMinWidth, 0),
+             limits.get(api.VASurfaceAttribMinHeight, 0))
+    if format.exact_size and (width < least[0] or height < least[1]):
+        raise DecoderError(
+            f'a {width}x{height} {format.name} picture is smaller than the '
+            f'{least[0]}x{least[1]} this decoder ({vendor}) reaches')
+    return max(width, least[0]), max(height, least[1])
+
+
 class _Pool:
     """Decode surfaces and the OpenGL textures over them, for one sequence.
 
@@ -169,7 +198,8 @@ class _Pool:
             va.vaCreateConfig(display, self.profile, api.VAEntrypointVLD,
                               ctypes.byref(attribute), 1, ctypes.byref(self.config)),
             'vaCreateConfig', f'{self.format.name} decode, profile {self.profile}')
-        self.size = self._allocation()
+        self.size = allocation(self.format, self.device.surface_limits(self.config),
+                               self.device.vendor)
         width, height = self.size
         format_attribute = api.VASurfaceAttrib()
         format_attribute.type = api.VASurfaceAttribPixelFormat
@@ -190,30 +220,6 @@ class _Pool:
         for surface in self.surfaces:
             self.textures[surface] = self._import(surface)
         self.order = SurfaceOrder(self.surfaces)
-
-    def _allocation(self) -> tuple[int, int]:
-        """The surface size: the coded size, at least the driver's minimum.
-
-        A picture smaller than the minimum decodes into the top left of a
-        larger surface, unless its format needs the surface to be the coded
-        size exactly, and then it is refused by its size. One larger than the
-        maximum is refused by its size.
-        """
-        limits = self.device.surface_limits(self.config)
-        width, height = self.coded_size
-        most = (limits.get(api.VASurfaceAttribMaxWidth, width),
-                limits.get(api.VASurfaceAttribMaxHeight, height))
-        if width > most[0] or height > most[1]:
-            raise DecoderError(
-                f'a {width}x{height} picture is larger than the {most[0]}x{most[1]} '
-                f'this decoder ({self.device.vendor}) reaches')
-        least = (limits.get(api.VASurfaceAttribMinWidth, 0),
-                 limits.get(api.VASurfaceAttribMinHeight, 0))
-        if self.format.exact_size and (width < least[0] or height < least[1]):
-            raise DecoderError(
-                f'a {width}x{height} {self.format.name} picture is smaller than the '
-                f'{least[0]}x{least[1]} this decoder ({self.device.vendor}) reaches')
-        return max(width, least[0]), max(height, least[1])
 
     def _import(self, surface: int) -> tuple[int, int]:
         """Export `surface` as DMA-BUF layers and give each an OpenGL name."""

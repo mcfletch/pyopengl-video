@@ -302,8 +302,8 @@ def frame_bytes(frame):
     width, height = frame.texture_size
     x, y, w, h = frame.visible
     luma = read_plane(frame.planes[0], GL_RED, kind).reshape(height, width)[y:y + h, x:x + w]
-    chroma = read_plane(frame.planes[1], GL_RG, kind).reshape(height // 2, width // 2, 2)[
-        y // 2:(y + h + 1) // 2, x // 2:(x + w + 1) // 2]
+    chroma = read_plane(frame.planes[1], GL_RG, kind).reshape(
+        (height + 1) // 2, (width + 1) // 2, 2)[y // 2:(y + h + 1) // 2, x // 2:(x + w + 1) // 2]
     return luma.astype('<u2' if kind == GL_UNSIGNED_SHORT else np.uint8).tobytes() + chroma.astype(
         '<u2' if kind == GL_UNSIGNED_SHORT else np.uint8).tobytes()
 

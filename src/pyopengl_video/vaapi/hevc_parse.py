@@ -23,6 +23,7 @@ from collections.abc import Mapping
 from math import gcd
 from typing import Any
 
+from pyopengl_video.colour import Colour
 from pyopengl_video.vaapi.h264 import BitReader, StreamError, rbsp_of
 from pyopengl_video.vaapi.h264_parse import ASPECT_RATIOS, EXTENDED_SAR
 
@@ -30,7 +31,7 @@ __all__ = [
     'DEFAULT_SCALING_LISTS', 'FLAT_SCALING_LISTS', 'LongTermPicture', 'NalUnit',
     'PictureParameterSet', 'PredWeightTable', 'ProfileTierLevel', 'ScalingLists',
     'SequenceParameterSet', 'ShortTermRefPicSet', 'SliceHeader', 'StreamError',
-    'VideoParameterSet', 'VideoUsability', 'parse_nal', 'parse_pps',
+    'VideoParameterSet', 'VideoUsability', 'colour_of', 'parse_nal', 'parse_pps',
     'parse_slice_header', 'parse_sps', 'parse_vps',
 ]
 
@@ -807,6 +808,17 @@ def parse_sps(rbsp: bytes) -> SequenceParameterSet:
         sps_multilayer_extension_flag=extensions[1],
         sps_3d_extension_flag=extensions[2], sps_scc_extension_flag=extensions[3],
         range_extension=tuple(range_extension))
+
+
+def colour_of(sps: SequenceParameterSet) -> Colour:
+    """A sequence's colour description, the matrix chosen where it states none."""
+    vui = sps.vui
+    if vui is None:
+        return Colour().resolved(sps.size[1])
+    return Colour(matrix=vui.matrix_coeffs, full_range=bool(vui.video_full_range_flag),
+                  primaries=vui.colour_primaries, transfer=vui.transfer_characteristics,
+                  chroma_location=vui.chroma_sample_loc_type_top_field,
+                  ).resolved(sps.size[1])
 
 
 @dataclasses.dataclass(frozen=True)

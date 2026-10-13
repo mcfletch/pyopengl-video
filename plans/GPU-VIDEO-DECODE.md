@@ -5,7 +5,9 @@ through oneVPL (see *What landed in D6*). D1, D2 and D3 landed 2026-10-09: H.264
 on AMD under Linux, through `pyopengl_video.playback`, with no scenegraph.
 D5 landed 2026-10-12 on NVIDIA under Linux (see *What landed in D5*). On both,
 every picture of the x264 test streams decodes bit-exact against `ffmpeg`'s
-software decoder. D4 (OpenGLContext) is next. Audio is deferred (see *Audio*).
+software decoder. HEVC, AV1 and VP9 at 8 and 10 bits landed on VA-API
+2026-10-12 (D8) and on NVDEC 2026-10-13 (D10). D4 (OpenGLContext) is next.
+Audio is deferred (see *Audio*).
 **Scope:** `pyopengl-video`, with OpenGLContext's `MovieTexture` as the first
 consumer.
 **Goal:** a movie file in, an OpenGL texture out, on NVIDIA, AMD and Intel, on
@@ -529,6 +531,7 @@ context and holds the frame time.
 | D7 | Decoding ahead on a worker thread, after D3 to D5 are measured | D5 |
 | D8 | HEVC, AV1 and VP9 on VA-API (control layers of their own), 10-bit as P010, MP4 and IVF for each | landed on AMD 2026-10-12; Intel/Linux is the same code, untested |
 | D9 | AMF decode; fragmented MP4 and WebM | hardware per row |
+| D10 | HEVC, VP9 and AV1 on NVDEC, 10-bit as P016 | landed on Linux 2026-10-13, RTX 3060 Ti; Windows is the same code, untested |
 
 D1 and D2 go first because every backend needs them and neither needs a
 particular GPU. D3 is on this machine, so the first movie plays here, and D4
@@ -580,6 +583,45 @@ VA-API), and four 1080p movies in one context.
   references and dependent slice segments (x265 emits none), VP9 intra-only
   frames and reference scaling, AV1 reference scaling.
 - AV1 render size is not applied: a picture is its coded frame.
+
+### Every codec on NVDEC (D10, 2026-10-13)
+
+- `NVDECDecoder` takes `'hevc'`, `'vp9'` and `'av1'`. NVIDIA's parser reads
+  all three, so there is no control layer. `nvdec.decoder_codecs()` asks
+  `cuvidGetDecoderCaps` which the GPU decodes, and both backend records carry
+  it as their `capabilities`. Asking needs the CUDA context, so the first
+  `decoders()` call makes it.
+- A 10-bit stream decodes to P016, copied into `GL_R16` and `GL_RG16`
+  textures; the frame's layout is `'p010'`. A monochrome AV1 stream decodes
+  to NV12 with its chroma plane at the mid value.
+- `nvdec/description.py` reads the size and colour from this package's own
+  parsers for each codec. `colour_of()` for HEVC, VP9 and AV1 moved from the
+  VA-API control layers to the parsers, as H.264's had.
+- Found on the hardware:
+  - The decoder takes no picture under 144x144 in HEVC, or 128x128 in VP9
+    and AV1, neither as a decoder of that size nor as a small picture in a
+    larger one. Nearly every D8 fixture is smaller, so `large` streams were
+    added to each codec's table (13 in all), and
+    `tools/make_decode_fixtures.py` keeps a stream already written.
+  - The parser shows no picture for a VP9 `show_existing_frame`, and times
+    VP9 pictures by the wrong sample once a superframe has passed.
+    `nvdec/vp9.py` follows the reference slots, the decoder maps the slot's
+    picture itself, and VP9 runs with no display delay so the two keep their
+    order. AV1's `show_existing_frame` and timestamps are the parser's and
+    are right.
+  - The parser reports no colour description for VP9: every field zero,
+    which read as stated is RGB.
+  - A decoder asked for an odd target size scales the picture. Pictures are
+    mapped at the even size above the coded one.
+- Every `large` stream decodes to `ffmpeg`'s bytes through both `nvdec` and
+  `nvdec-copy`. 1080p60 takes 0.6 ms a frame in HEVC and AV1 and 1.0 ms in
+  VP9 on `nvdec`.
+- NVENC's HEVC was run for the first time here, and decodes back through
+  NVDEC within the round trip's tolerance.
+
+Not done: 12-bit HEVC and VP9 and 4:4:4 HEVC, which the RTX 3060 Ti decodes
+and this package refuses by name, as it does on VA-API; a VP9 or AV1 frame
+whose size changes between key frames; Windows.
 
 ## What landed in D5
 
@@ -725,6 +767,10 @@ OxideAV, measured the same way.
   *Audio*) is the remaining candidate.
 - Whether WGL_NV_DX_interop2 registers an NV12 texture on the Intel laptop:
   answered, see *What landed in D6*.
+- 12 bits and 4:4:4. NVDEC decodes both in HEVC (12 bits in VP9 too) and no
+  layout here holds them: a `'p012'` frame needs nothing but a name and a
+  scale in the conversion pass, 4:4:4 a third plane or a full-size chroma
+  texture.
 - Interlaced streams (field pictures, MBAFF, PAFF). The first VA-API control
   layer refuses them with an error that names the stream's structure. Games
   ship progressive video, and a recording from this package is always

@@ -42,10 +42,11 @@ texture = player.frame_at(seconds)       # right way up, sRGB
 
 `examples/play_movie.py` plays a file in a window.
 [docs/playback.md](docs/playback.md) covers the player, the decoders and what
-they decode. H.264, HEVC, AV1 and VP9 decode on AMD under Linux through VA-API,
-at 8 and 10 bits, H.264 on NVIDIA through NVDEC on Linux and Windows, and H.264, HEVC and VP9 on
-Intel under Windows through oneVPL. Intel on Linux runs the same code as the
-backends above, untested. AMD on Windows is
+they decode. H.264, HEVC, AV1 and VP9 decode at 8 and 10 bits on AMD under
+Linux through VA-API and on NVIDIA under Linux through NVDEC. NVDEC decodes
+H.264 on Windows too, and runs the same code for the other codecs there,
+untested. H.264, HEVC and VP9 decode on Intel under Windows through oneVPL.
+Intel on Linux runs the VA-API code, untested. AMD on Windows is
 [planned](plans/GPU-VIDEO-DECODE.md).
 
 ## What it needs
@@ -56,7 +57,7 @@ muxer is part of this package.
 
 | Backend | Hardware | Platform | Codecs | Frame handed over as | State |
 | --- | --- | --- | --- | --- | --- |
-| `nvenc` | NVIDIA, Kepler and later | Linux | H.264, HEVC, AV1 | an OpenGL texture, in place | H.264 working; HEVC and AV1 written from the header and not yet run |
+| `nvenc` | NVIDIA, Kepler and later | Linux | H.264, HEVC, AV1 | an OpenGL texture, in place | H.264 and HEVC working; AV1 written from the header and not yet run |
 | `nvenc` | NVIDIA, Kepler and later | Windows | H.264, HEVC, AV1 | a Direct3D 11 surface OpenGL draws into | H.264 working, decoded back through NVDEC; HEVC runs and has not been decoded; AV1 needs an RTX 40 series part |
 | `vaapi` | AMD, VCN | Linux | H.264, HEVC, AV1 | a DMA-BUF exported from a texture | working |
 | `vpl` | Intel, Gen9 and later | Windows | H.264, HEVC, AV1, VP9 | a Direct3D 11 surface OpenGL draws into | H.264 working; the others written from the headers and not yet run |

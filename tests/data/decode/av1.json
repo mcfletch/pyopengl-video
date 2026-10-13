@@ -419,5 +419,187 @@
         "707ccc1d67cb37e0ad8ebcf8530fc23d"
       ]
     }
+  },
+  "large": {
+    "av1_large_altref": {
+      "size": [
+        150,
+        146
+      ],
+      "depth": 8,
+      "file": "av1_large_altref.ivf",
+      "coding": "-c:v libaom-av1 -cpu-used 4 -b:v 200k -g 15 -lag-in-frames 14 -auto-alt-ref 1",
+      "md5": [
+        "62ac5020187dc7fb640416ebcc3897f3",
+        "8a49e3fe846b2aa5d24daafe52a50066",
+        "b72ed2d9cdcfb83fd1d7ed24670c84e9",
+        "34b349ba43d506913dba9d1898fd1a31",
+        "e473c0b34e3ddf04d4192c67d148ea03",
+        "fc17d860cc15fc8314768fbd801bb15e",
+        "09a59c76d5fe1771bba1bdb104eefe02",
+        "3ba735362bc31ec27717ed16ecc56130",
+        "bf12ca023e5c3f8126496c7a66865375",
+        "57c685b8d5a115ee6e24f2083c231a3e",
+        "17e415edebee18a93c23633226942843",
+        "2c980b53e8fd84e0500f8cb012e074bb",
+        "c0fab01f0342e9427b4f116b4c59b2b7",
+        "b0a27901646eb92051e9a345e207bb51",
+        "a61f85d405d3a22442b754074adcd1a5",
+        "1aaccd165bd1713993b1bc784b940efe",
+        "0a67113ccf2793e128f34de9aea83fd9",
+        "8c67b79aed05424b4d4dbb7bc9b2c458",
+        "51f7af408c251c649254f720ae50d1b0",
+        "3a0c98740c543cc759a337e26a4cbe6a",
+        "fdd5eb6cdd6592b5e6fdf4a59969bd98",
+        "a70ad4c4044f159db989ed8baa4fcd3d",
+        "9ec211f2d78fd083878c8eb2cedea470",
+        "572eee91b5bdaa5bc1a3e78c819d1071",
+        "4eaab2e411f6bdc5e2369f95f0859bdd",
+        "5832f26b7aec4b5acb17d7707da91412",
+        "8b20e93e089b9e05befc7b27597d2b1a",
+        "a8651b3bd7610d454ec2edd3521de540",
+        "c2044c667379a75cb9abd5d6abb41b4a",
+        "d41b9328dad3b5e290cca11da6e075ed"
+      ]
+    },
+    "av1_large_grain": {
+      "size": [
+        146,
+        144
+      ],
+      "depth": 8,
+      "file": "av1_large_grain.ivf",
+      "coding": "-c:v libaom-av1 -cpu-used 5 -b:v 180k -g 10 -aom-params film-grain-test=3",
+      "md5": [
+        "8b82e4128c302165b12ea78b4996fe4f",
+        "baf412365ea589b0d7b6be36cbcb9a70",
+        "ad34313077e15e2f7d8b1128f1986e6c",
+        "c18e2f320abe772bff37e133a3fac0db",
+        "af320303603c067c297c21afdd0bd620",
+        "a7d3f5a399e9701409b6a44350ed1774",
+        "c3c55efe5f6d4dd5c63ec1924f039569",
+        "efa7bcf80a8d48dd470e4acb3ce6c931",
+        "cc82e8f50b35dd8cd4fc5be73414b4fc",
+        "9282558b2dd61db35c5ddc859b212f86",
+        "6a92cb8f3b4b169c49ecb828108918af",
+        "aefee2e305cc99e99f5178d66da85048",
+        "255f68d1c7d8f80f2c6abefc5be410bb",
+        "2f97cede91eb6f6e5c66b11072dea856",
+        "81587450c52d465a0cf526e3f89f4624",
+        "b2dd8466aef326a7bc405e0c687390b2",
+        "f9af2849dbae1de306c969fe58bf59b1",
+        "b36dc115ebad859df7ae9c032418f6ba",
+        "e408fd7cac57c2f656106db664bd6eea",
+        "25588b870948ec1116c6307d46a977d2"
+      ]
+    },
+    "av1_large_grain10": {
+      "size": [
+        154,
+        146
+      ],
+      "depth": 10,
+      "file": "av1_large_grain10.ivf",
+      "coding": "-c:v libaom-av1 -cpu-used 5 -b:v 180k -g 10 -aom-params film-grain-test=7",
+      "md5": [
+        "212256fce56b19e723590005939bc65e",
+        "4c38125fd97e1ae775369851b6c1879d",
+        "e4f42bf000d3930fd0ef0ff64d8fb10e",
+        "75dae4fb101627af1451909b62d4307b",
+        "bf6616238e6a2f43f998b68a71aca09f",
+        "0526ca12e82f07e1501e5c0729e569e9",
+        "599be6cc016f94304302c8d0d3403333",
+        "7c8aa28aa35e7306b98f7d74ff3400d0",
+        "46de72060803e783e4eeec622c527148",
+        "eb36fd31565b9741432e11eeb6760f92",
+        "d9bf48338c537118454b1f452a351e4e",
+        "aa21e732759780da8ba1d93aad8368ab",
+        "190094a3a4fe34ff4429c6d4fbd5c1f7",
+        "a3853dbd4c9706d65ec4c9a18c7023a3",
+        "31ac93c5b76ebc8c2683e2f2a266028b",
+        "84f85b0963f3c285d357bf191a2e2c43",
+        "6688528f09c9f441c7efc8884ce3760c",
+        "8fbc3691e4fc914c070d57066807446c",
+        "f11fe76f6015e2939c63ac60bb1b39a6",
+        "f4bafd07f40550ab6ea2594c7c7ebecc"
+      ]
+    },
+    "av1_large_superres": {
+      "size": [
+        160,
+        144
+      ],
+      "depth": 8,
+      "file": "av1_large_superres.ivf",
+      "coding": "-c:v libsvtav1 -preset 8 -g 10 -svtav1-params superres-mode=1:superres-denom=12:superres-kf-denom=12",
+      "md5": [
+        "c7592ab7c7fb9f7a976d783e37e95e9f",
+        "8a122b50c647b216dc6ea3f00d697642",
+        "3524dbf34ee478a8eb16da2a0274aa3d",
+        "d0ec2ece185d80b0e564b774a52d06be",
+        "8f3b351a2fa68a756b93b1c24bda48b4",
+        "1bb8874ced1626a01895db99d8140b7f",
+        "1fd287aa9ecf6fcf0ca42cfcc952fe36",
+        "ceadb259d8e241b0b8496b58ca4cb6dd",
+        "912ca75f41f01cbc44ec199b3ca4cd28",
+        "53dc21facf02537a46da316990ccd37e",
+        "fd615275961f3d8ed17b3007fdfec21e",
+        "58ffe5eedf5c168ddfd9b35337385bb8",
+        "60a2cae0e6832fd07a60b8033b410681",
+        "4d18cfd5ee99db1e8e8510fd67ad968c",
+        "41d56e6baf3ffb6b48ee9a8090968015",
+        "9603250946395f85e53c99b8e1417cac",
+        "92599f6ea28585f4a7e087b7912b0fdf",
+        "7721d4355d1bd004f2c2096d4fcf2444",
+        "e63f2f6b04ac80d7d614cdce46675004",
+        "eafe2124b15daefa04c15c62b63070d8"
+      ]
+    },
+    "av1_large_monochrome": {
+      "size": [
+        148,
+        144
+      ],
+      "depth": 8,
+      "file": "av1_large_monochrome.ivf",
+      "coding": "-pix_fmt gray -c:v libaom-av1 -cpu-used 5 -b:v 120k -g 6",
+      "md5": [
+        "823c097702514da34528394a5893f6a1",
+        "e5017e6b003241e0a3c29a23955eeb2b",
+        "c28ef489955cfe0881bb917f73dd675d",
+        "7c0dbbc248e3611bbc853fdbfc0d9895",
+        "ee173a279799e4a982b04704b8c1bfe2",
+        "f038239c6fedaf7c9295d6d8414fd4fe",
+        "7295846f5458e69a6b8dff077e04a88d",
+        "ad1b5a36cf301d8b44fc3e8c57b57483",
+        "686a739bd8f296575b7297c7449beefb",
+        "012eaaad7a2ee523fb10a991af7b503c",
+        "60d3c41adaa9e77f76d0b003b6248b4b",
+        "88878f1e5445d387283e4b6eb81adde4"
+      ]
+    },
+    "av1_large_odd": {
+      "size": [
+        151,
+        145
+      ],
+      "depth": 8,
+      "file": "av1_large_odd.ivf",
+      "coding": "-c:v libaom-av1 -cpu-used 6 -b:v 150k -g 6",
+      "md5": [
+        "f1827e43a2de295786bd4527bfad557b",
+        "8ab0652dab56865fc57547f2b17b7f19",
+        "0d92cda9859969f0b157141a0bb387f5",
+        "a444cfbdde9ace734dcc4a42fd849382",
+        "017b4786352b37117af3eee2c07b6e87",
+        "90520f7ebb0e942970bab713fb47bc79",
+        "e222a6febe970a3d4bac275b7e1bc859",
+        "1be9c1bed6487f98f6b8ad2f5c2641dd",
+        "8910eff79934a6674fbfbc2079595690",
+        "c53849e335e57d16024eae92d460f87f",
+        "740d51fd67faecc686d9a47546a61c6c",
+        "acb6fc769c0fc5e8f050685aec438527"
+      ]
+    }
   }
 }

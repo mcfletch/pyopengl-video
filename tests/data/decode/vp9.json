@@ -240,5 +240,143 @@
         "78f0ceba3ec6c1e7e668b86e2784e66b"
       ]
     }
+  },
+  "large": {
+    "vp9_large_altref": {
+      "size": [
+        150,
+        146
+      ],
+      "depth": 8,
+      "file": "vp9_large_altref.ivf",
+      "coding": "-c:v libvpx-vp9 -b:v 200k -g 15 -auto-alt-ref 1 -lag-in-frames 12 -frame-parallel 0",
+      "md5": [
+        "196f547f2fb1cba1d79940baba960c03",
+        "0d7137b13f55a505c8a2d1dc61cffdd5",
+        "4d12fac137b6c3fd94a367387919cca9",
+        "2506f4147eb5b8df0819ceba359eb6ab",
+        "36d513ada9ebde2ed4abe760ef18d61f",
+        "17472c0179bf079605e5c5a2b6523e65",
+        "f620fd9a107ddcd7c09bd79e0f07d66f",
+        "cd74a5ce42050122476e618147af3783",
+        "7e931afdbcb3a0358a8bc5c00d96a1c7",
+        "d0664be33eb6da69b1ec73c423390f80",
+        "5280876830291db82ef5708b32cfbee7",
+        "81c2544f8b29f70e409eb36dda2743a8",
+        "39d686fedd5843512d3e1bedf1ddded2",
+        "902f320c2377cff858bcb2203327b5a0",
+        "783007232463db8ce1acea911f77fe76",
+        "ea8b4c66c91c7cd70812f34d9da3ee20",
+        "18b13e77b2460e2a62274a3df6c77a38",
+        "36ab03add8ac058967dfce17f3840bda",
+        "b0fffd803d231f51ab6ad7c29c9054de",
+        "49bee84e0678d2d740ee088315fd89c4",
+        "9ff7f18d00d6c2b00f68ed11da7c19ac",
+        "7d08373fb15688d8b15ff73eee56fb79",
+        "f7968cda35b2e3a6674def099359642a",
+        "89ec344130ceacabcfa46bc5227f9482",
+        "2c16ff69722b1810562df05b64b5494f",
+        "7073f30d36bb1e45529814acfaa1fea8",
+        "1dbba81ec454ca42bb8e72d40a6ab562",
+        "934ffa8e773eaa6e9324261dfa30eade",
+        "ff3a0656219126f0a059950342bdc78c",
+        "91af717bd8b1ed0a484a00b49f59fede"
+      ]
+    },
+    "vp9_large_show_existing": {
+      "size": [
+        146,
+        144
+      ],
+      "depth": 8,
+      "file": "vp9_large_show_existing.ivf",
+      "coding": "-c:v libvpx-vp9 -b:v 180k -g 15 -auto-alt-ref 6 -lag-in-frames 12 -frame-parallel 0",
+      "md5": [
+        "de14a053bcceefadbfeb2914a6825b4e",
+        "8da94cbe0be611dd186ae2ba2500aeb9",
+        "606baadb4907a82193f70d2c734ad9dc",
+        "f22465b0653c91cf3ad5d7d8a3ddefe6",
+        "a02ef707b9365cb42245e6a7960dff7f",
+        "9b3d568e6dab66b2be11937ac376b3d2",
+        "95ff39bd7256f376c983e7f30539be77",
+        "f0582c440755169a2830ac7f27aad90d",
+        "03914b4c4454bf3fd512db6b047a974f",
+        "c9ea1990211135103041da5fa4897650",
+        "e91011103ffab9a6c98a34fcdd35ec51",
+        "7cdd65dd79f724cf77d3ad08c2fed01d",
+        "088c1f5c4967352e07dce73a44cbf28e",
+        "25d2233b8a39ed695e7eec2327bbe911",
+        "1c5a9ad1991e5c13b3972ff112f201e2",
+        "23d9e925f1b55729a2a9fd50a736b759",
+        "9a3da555ad1cb72765873f09bf7aa252",
+        "6e52ab6c8630d6dcad31d344fe7d3ddd",
+        "52e8e7e69fdeb81002ce0672b3106256",
+        "12774501ddfe6747b15774addecd6ccd",
+        "3b7fd1f0d42c353a79fce7b73a2cdc34",
+        "901b422ea4e8632112e24f32216a58d7",
+        "4c1c9ee2d683b806f0aa277b8838cdad",
+        "37d7633a5f3cf23ba078fd43d19c811d",
+        "fa1c06a8fb40ad34fc4c22b8fccc9c64",
+        "a6fca4e196a299db4eaa1cb5a344f181",
+        "4b91f55c0e42123dd27c51c8fab35e5f",
+        "eb4275e055d381dbc0bf713ccf56fd31",
+        "deb4f94d4059c5ac2dc1a29b266fb9a0",
+        "0380b7299c87477c5ce151b3a882996d"
+      ]
+    },
+    "vp9_large_profile2": {
+      "size": [
+        154,
+        146
+      ],
+      "depth": 10,
+      "file": "vp9_large_profile2.ivf",
+      "coding": "-c:v libvpx-vp9 -profile:v 2 -b:v 150k -g 10",
+      "md5": [
+        "d3bb4d005d1f5ee1ad5117de1e4da27d",
+        "a3906981cd6b49080134439fb479943c",
+        "a3d30fe909ae3dfecff8b24fe04893da",
+        "5ec5e7ae34660b82ba10b92ee9765a0a",
+        "5aaaf2b48ef89b5a93c3cc532a5a4e76",
+        "3a7f1f900128cafab4d9370c994f3c6e",
+        "bc3c67d30da8a6fa283976478bf84ae6",
+        "5c2603ab58a3f140ee8a6e6ac0a637ff",
+        "eb1686e53f070582b00e7287ad2f63ea",
+        "dfaa953bf1c76c6c9c98c021642a3b79",
+        "adef326ecdaf8a418d1e70419711c17c",
+        "21d45aec47ca196f2877c7022e510c2f",
+        "1e1aa6cc801c8d0e502bd9c1b3d7e534",
+        "768d249b4d17e4041df129dbc75be47e",
+        "028f1e1a1c8d45d71b0aee0208287304",
+        "917101bde94119d80b77284489c66245",
+        "617de1a62e66feddd71ed497a8221557",
+        "84550db9f6598f7a32620e8457d955bb",
+        "6c651f3025ef4c3d8b513ca3defc3a12",
+        "51d6dce10221a6f8d97af53994361773"
+      ]
+    },
+    "vp9_large_odd": {
+      "size": [
+        151,
+        145
+      ],
+      "depth": 8,
+      "file": "vp9_large_odd.ivf",
+      "coding": "-c:v libvpx-vp9 -b:v 150k -g 6",
+      "md5": [
+        "28a9839bb386b4bf1604fb5e55f90a3e",
+        "068cc48dbbbbae3614655abed38d8482",
+        "ae3e7740ae35960e469be5fc878d6cec",
+        "991e49294f387cb23e6036e1ecaba1bf",
+        "89b1b4728bf1da4d94125d3caf723c59",
+        "6977a25f81b2fd072fcb5170c5a2f07c",
+        "6b5489d0f43e8265227a2f63977de2ac",
+        "89ccabc3b90ae96928660cbbeb064152",
+        "31c5a0a626d01d737624bb5fd4527c11",
+        "102b5abbd8404743822f41da446f9ddb",
+        "6c188bb29a1bfe85fcfab35bf48a62e4",
+        "0b4157be47a60b43b554f1bc71de07d5"
+      ]
+    }
   }
 }

@@ -43,6 +43,7 @@ from ctypes import (
 )
 from typing import Any
 
+from pyopengl_video import codecs
 from pyopengl_video.decoder import DecoderError
 
 
@@ -111,7 +112,15 @@ CUVID_PKT_DISCONTINUITY = 0x04
 CUVID_PKT_ENDOFPICTURE = 0x08
 
 #: The codec names this package uses, as the decoder's enumeration.
-CODECS = {'h264': cudaVideoCodec_H264}
+CODECS = {
+    codecs.H264: cudaVideoCodec_H264,
+    codecs.HEVC: cudaVideoCodec_HEVC,
+    codecs.VP9: cudaVideoCodec_VP9,
+    codecs.AV1: cudaVideoCodec_AV1,
+}
+
+#: Each of those as its specification names it, for a message.
+CODEC_TITLES = {value: codecs.title(name) for name, value in CODECS.items()}
 
 CHROMA_FORMAT_NAMES = {
     cudaVideoChromaFormat_Monochrome: 'monochrome',
@@ -241,8 +250,8 @@ class CUVIDPARSERDISPINFO(Structure):
 
 #: The parser's callbacks. Each returns 0 to fail the parse; the sequence
 #: callback returns the number of decode surfaces the parser may cycle through.
-#: The picture parameters are passed on to the decoder unread, so they arrive
-#: as an address.
+#: The picture parameters are passed on to the decoder as they arrive, so the
+#: callback takes their address; they are a :class:`CUVIDPICPARAMS`.
 SEQUENCE_CALLBACK = FUNCTYPE(c_int, c_void_p, POINTER(CUVIDEOFORMAT))
 DECODE_CALLBACK = FUNCTYPE(c_int, c_void_p, c_void_p)
 DISPLAY_CALLBACK = FUNCTYPE(c_int, c_void_p, POINTER(CUVIDPARSERDISPINFO))
@@ -267,6 +276,33 @@ class CUVIDPARSERPARAMS(Structure):
         ('pfnGetSEIMsg', c_void_p),
         ('pvReserved2', c_void_p * 5),
         ('pExtVideoInfo', c_void_p),
+    ]
+
+
+class CUVIDPICPARAMS(Structure):
+    """One picture's parameters, as the parser hands them to the decoder.
+
+    The decoder takes the structure as the parser built it. The fields ahead
+    of the codec's own are declared for ``CurrPicIdx``, the picture the frame
+    is decoded into; the codec's own are kept as the words they occupy.
+    """
+
+    _fields_ = [
+        ('PicWidthInMbs', c_int),
+        ('FrameHeightInMbs', c_int),
+        ('CurrPicIdx', c_int),
+        ('field_pic_flag', c_int),
+        ('bottom_field_flag', c_int),
+        ('second_field', c_int),
+        ('nBitstreamDataLen', c_uint),
+        ('pBitstreamData', c_void_p),
+        ('nNumSlices', c_uint),
+        ('pSliceDataOffsets', c_void_p),
+        ('ref_pic_flag', c_int),
+        ('intra_pic_flag', c_int),
+        ('timestamp', c_longlong),
+        ('Reserved', c_uint * 28),
+        ('CodecSpecific', c_uint * 1024),
     ]
 
 

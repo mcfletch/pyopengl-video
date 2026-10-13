@@ -1,16 +1,19 @@
-"""The NVDEC decoder: H.264 samples in, NV12 OpenGL textures out.
+"""The NVDEC decoder: compressed samples in, OpenGL textures out.
 
-NVIDIA's parser reads the bitstream and does the picture management, so this
-module holds no H.264 control layer. The parser calls back three times over:
+NVIDIA's parser reads the bitstream and does the picture management for
+H.264, HEVC, VP9 and AV1 alike, so this module holds no control layer for any
+of them. The parser calls back three times over:
 with each sequence, where the hardware decoder and the output textures are
 made; with each picture to decode, which is handed to the hardware as it
 arrives; and with each picture to show, in display order.
 
 A decoded picture is in CUDA device memory, and the parser reuses that
 picture as soon as the display callback returns, so the picture is copied
-out inside the callback: into a pair of OpenGL textures, luma as ``GL_R8`` and
-chroma as ``GL_RG8``, which the conversion pass
-(:mod:`pyopengl_video.convert`) turns into RGBA. Two transfers do the copy:
+out inside the callback: into a pair of OpenGL textures, luma and interleaved
+chroma, which the conversion pass (:mod:`pyopengl_video.convert`) turns into
+RGBA. An 8-bit stream decodes to NV12 (``GL_R8`` and ``GL_RG8`` textures) and
+a 10-bit one to P016 (``GL_R16`` and ``GL_RG16``, each sample in the high bits
+of its channel), as :data:`SURFACES` lists. Two transfers do the copy:
 
 - :class:`Interop` registers the textures with CUDA and copies device memory
   to device memory. It needs the OpenGL context to render on the GPU that
@@ -20,7 +23,8 @@ chroma as ``GL_RG8``, which the conversion pass
 
 What the decoder decides without a driver is in :class:`Sequence`,
 :class:`Presentation`, :class:`Outputs` and :func:`plane_copies`, which the
-suite checks on any machine.
+suite checks on any machine. :mod:`pyopengl_video.nvdec.description` reads the
+picture size and the colour description the parser does not report.
 """
 from __future__ import annotations
 
@@ -30,7 +34,7 @@ import functools
 import logging
 import threading
 from collections.abc import Callable
-from ctypes import c_ubyte, c_uint, c_ulonglong, c_void_p
+from ctypes import c_ubyte, c_uint, c_ulonglong, c_ushort, c_void_p
 from typing import Any, Protocol
 
 from OpenGL.GL import (
@@ -39,9 +43,11 @@ from OpenGL.GL import (
     GL_PIXEL_UNPACK_BUFFER,
     GL_PIXEL_UNPACK_BUFFER_BINDING,
     GL_R8,
+    GL_R16,
     GL_RED,
     GL_RG,
     GL_RG8,
+    GL_RG16,
     GL_TEXTURE_2D,
     GL_TEXTURE_BINDING_2D,
     GL_TEXTURE_MAG_FILTER,
@@ -53,6 +59,7 @@ from OpenGL.GL import (
     GL_UNPACK_SKIP_PIXELS,
     GL_UNPACK_SKIP_ROWS,
     GL_UNSIGNED_BYTE,
+    GL_UNSIGNED_SHORT,
     glBindBuffer,
     glBindTexture,
     glDeleteTextures,
@@ -64,24 +71,20 @@ from OpenGL.GL import (
     glTexSubImage2D,
 )
 
+from pyopengl_video import codecs
 from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecodedFrame, Decoder, DecoderError, Sample
-from pyopengl_video.mp4 import split_annexb
 from pyopengl_video.nvdec import api
+from pyopengl_video.nvdec.description import Description, describe
+from pyopengl_video.nvdec.vp9 import Frame, Slots
 from pyopengl_video.presentation import Outputs, Presentation
 from pyopengl_video.vaapi.h264 import StreamError
-from pyopengl_video.vaapi.h264_parse import (
-    NAL_SPS,
-    SequenceParameterSet,
-    colour_of,
-    parse_nal,
-    parse_sps,
-)
 
 log = logging.getLogger(__name__)
 
 __all__ = ['DEFAULT_OUTPUT_SLOTS', 'DEINTERLACE_MODES', 'Interop', 'NVDECDecoder',
-           'Outputs', 'Presentation', 'Sequence', 'Upload', 'plane_copies']
+           'Outputs', 'Presentation', 'SURFACES', 'Sequence', 'SurfaceFormat',
+           'Upload', 'plane_copies']
 
 #: How many decoded frames a caller may hold at once, unless it says otherwise.
 #: A player converts each frame as it arrives and holds none for long.
@@ -104,8 +107,66 @@ DEINTERLACE_MODES = {
 #: keeps the copy from stalling the thread that draws.
 DISPLAY_DELAY = 2
 
-#: The bit of ``CUVIDDECODECAPS.nOutputFormatMask`` that stands for NV12.
-NV12_OUTPUT = 1 << api.cudaVideoSurfaceFormat_NV12
+#: The codecs whose pictures are shown as their samples are parsed, with no
+#: delay. A VP9 frame shown again is shown by this module and not by the
+#: parser (:mod:`pyopengl_video.nvdec.vp9`), and the two keep their order
+#: only when the parser holds nothing back.
+SHOWN_AS_PARSED = frozenset({codecs.VP9})
+
+
+@dataclasses.dataclass(frozen=True)
+class SurfaceFormat:
+    """How pictures of one sample depth are decoded and held in textures.
+
+    depth -- bits a sample
+    surface -- the ``cudaVideoSurfaceFormat`` decoded into
+    name -- what the headers call that format, for a message
+    luma/chroma -- the internal formats of the two textures
+    kind -- the type of one channel, as OpenGL names it
+    sample_bytes -- bytes a sample, in device memory and in the textures
+    layout -- what a :class:`~pyopengl_video.decoder.DecodedFrame` calls it
+    """
+
+    depth: int
+    surface: int
+    name: str
+    luma: int
+    chroma: int
+    kind: int
+    sample_bytes: int
+    layout: str
+
+    @property
+    def output_bit(self) -> int:
+        """The bit of ``CUVIDDECODECAPS.nOutputFormatMask`` that stands for it."""
+        return 1 << self.surface
+
+    @property
+    def host_type(self) -> Any:
+        """The ctypes type of one sample in host memory."""
+        return c_ubyte if self.sample_bytes == 1 else c_ushort
+
+    def plane_sizes(self, size: tuple[int, int]) -> tuple[tuple[int, int], tuple[int, int]]:
+        """The luma and the chroma plane of a surface of `size`, each as (width, height)."""
+        width, height = size
+        return (width, height), (width // 2, height // 2)
+
+
+#: The surface formats decoded into, by bits a sample. P016 holds a sample in
+#: the high bits of 16, which for 10 bits is the layout called P010.
+SURFACES = {
+    8: SurfaceFormat(8, api.cudaVideoSurfaceFormat_NV12, 'NV12', GL_R8, GL_RG8,
+                     GL_UNSIGNED_BYTE, 1, 'nv12'),
+    10: SurfaceFormat(10, api.cudaVideoSurfaceFormat_P016, 'P016', GL_R16, GL_RG16,
+                      GL_UNSIGNED_SHORT, 2, 'p010'),
+}
+
+#: The chroma formats a two-plane surface holds. A stream with no chroma
+#: decodes into one too, its chroma plane at the mid value.
+TWO_PLANE_CHROMA = (api.cudaVideoChromaFormat_420, api.cudaVideoChromaFormat_Monochrome)
+
+#: What one sample is handed to the parser as: timed, and a whole picture.
+PICTURE = api.CUVID_PKT_TIMESTAMP | api.CUVID_PKT_ENDOFPICTURE
 
 
 # ------------------------------------------------- decisions with no driver
@@ -116,14 +177,16 @@ class Sequence:
     """What a decoder and its textures are built for: one coded video sequence.
 
     codec -- the ``cudaVideoCodec`` value
-    coded_size -- the size pictures are decoded at, whole macroblocks
+    coded_size -- the size pictures are decoded at: whole blocks in H.264 and
+        HEVC, the frame's own size in VP9 and AV1
     visible -- the picture within it, as ``(x, y, width, height)``
     surfaces -- how many decode surfaces the stream needs
     progressive -- every picture is a frame, none a pair of fields
     chroma_format -- the ``cudaVideoChromaFormat`` value
     bit_depth -- bits a sample, luma then chroma
-    colour -- the colour description the parser read; it does not report
-        where chroma samples sit
+    colour -- the colour description the parser read, with nothing stated
+        for a codec in :attr:`UNDESCRIBED`; it does not report where chroma
+        samples sit
     """
 
     codec: int
@@ -135,10 +198,19 @@ class Sequence:
     bit_depth: tuple[int, int]
     colour: Colour
 
+    #: The codecs the parser reports no colour description for: every field
+    #: is zero, and a matrix of zero is the code point for RGB.
+    UNDESCRIBED = frozenset({api.cudaVideoCodec_VP9})
+
     @classmethod
     def of(cls, format: api.CUVIDEOFORMAT) -> Sequence:
         """The sequence the parser describes in `format`."""
         area, signal = format.display_area, format.video_signal_description
+        described = Colour() if int(format.codec) in cls.UNDESCRIBED else Colour(
+            matrix=int(signal.matrix_coefficients),
+            full_range=bool(signal.video_full_range_flag),
+            primaries=int(signal.color_primaries),
+            transfer=int(signal.transfer_characteristics))
         return cls(
             codec=int(format.codec),
             coded_size=(int(format.coded_width), int(format.coded_height)),
@@ -149,18 +221,46 @@ class Sequence:
             chroma_format=int(format.chroma_format),
             bit_depth=(8 + int(format.bit_depth_luma_minus8),
                        8 + int(format.bit_depth_chroma_minus8)),
-            colour=Colour(matrix=int(signal.matrix_coefficients),
-                          full_range=bool(signal.video_full_range_flag),
-                          primaries=int(signal.color_primaries),
-                          transfer=int(signal.transfer_characteristics)))
+            colour=described)
 
     @property
     def size(self) -> tuple[int, int]:
         """The visible picture's size, as (width, height)."""
         return self.visible[2], self.visible[3]
 
+    @property
+    def surface_size(self) -> tuple[int, int]:
+        """The size pictures are copied out at: the coded size, made even each way.
+
+        VP9 and AV1 code a picture of any size, and a 4:2:0 surface has a
+        chroma sample for every two luma samples. A decoder asked for an odd
+        size scales the picture to an even one; asked for the even size above,
+        it hands the picture over as decoded, with a column or a row past its
+        edge that the visible rectangle leaves out.
+        """
+        width, height = self.coded_size
+        return width + width % 2, height + height % 2
+
+    @property
+    def depth(self) -> int:
+        """Bits a luma sample."""
+        return self.bit_depth[0]
+
+    @property
+    def monochrome(self) -> bool:
+        return self.chroma_format == api.cudaVideoChromaFormat_Monochrome
+
+    @property
+    def surface_format(self) -> SurfaceFormat | None:
+        """The surfaces this sequence decodes into, or None where it is not decoded here."""
+        if self.chroma_format not in TWO_PLANE_CHROMA:
+            return None
+        if not self.monochrome and self.bit_depth[1] != self.depth:
+            return None
+        return SURFACES.get(self.depth)
+
     def refusal(self, capabilities: api.CUVIDDECODECAPS, device: str) -> str:
-        """Why `device` cannot decode this sequence into NV12, or '' where it can.
+        """Why `device` cannot decode this sequence into textures, or '' where it can.
 
         capabilities -- what ``cuvidGetDecoderCaps`` answered for this
             sequence's codec, chroma format and bit depth
@@ -168,48 +268,53 @@ class Sequence:
         width, height = self.coded_size
         chroma = api.CHROMA_FORMAT_NAMES.get(self.chroma_format,
                                              f'chroma format {self.chroma_format}')
-        if self.chroma_format != api.cudaVideoChromaFormat_420 or self.bit_depth != (8, 8):
-            return (f'the stream is {chroma} at {max(self.bit_depth)} bits, and this '
-                    'decoder takes 8-bit 4:2:0')
+        title = api.CODEC_TITLES.get(self.codec, f'codec {self.codec}')
+        stream = f'{title}, {chroma} at {max(self.bit_depth)} bits'
+        surface = self.surface_format
+        if surface is None:
+            return (f'the stream is {stream}, and this decoder takes 4:2:0 or '
+                    f'monochrome at {" or ".join(map(str, SURFACES))} bits')
         if not capabilities.bIsSupported:
-            return f'{device} has no hardware decoder for this stream ({chroma}, 8 bits)'
-        if not capabilities.nOutputFormatMask & NV12_OUTPUT:
-            return f'{device} does not decode this stream to NV12'
+            return f'{device} has no hardware decoder for this stream ({stream})'
+        if not capabilities.nOutputFormatMask & surface.output_bit:
+            return f'{device} does not decode this stream ({stream}) to {surface.name}'
         most = (int(capabilities.nMaxWidth), int(capabilities.nMaxHeight))
         least = (int(capabilities.nMinWidth), int(capabilities.nMinHeight))
         if width > most[0] or height > most[1]:
             return (f'a {width}x{height} picture is larger than the '
-                    f'{most[0]}x{most[1]} {device} decodes')
+                    f'{most[0]}x{most[1]} {device} decodes in {title}')
         if width < least[0] or height < least[1]:
             return (f'a {width}x{height} picture is smaller than the '
-                    f'{least[0]}x{least[1]} {device} decodes')
-        macroblocks = (width // 16) * (height // 16)
+                    f'{least[0]}x{least[1]} {device} decodes in {title}')
+        macroblocks = -(-width // 16) * -(-height // 16)
         if macroblocks > capabilities.nMaxMBCount:
             return (f'a {width}x{height} picture is {macroblocks} macroblocks, and '
                     f'{device} decodes up to {int(capabilities.nMaxMBCount)}')
         return ''
 
 
-def plane_copies(pointer: int, pitch: int,
-                 coded_size: tuple[int, int]) -> tuple[api.CUDA_MEMCPY2D, api.CUDA_MEMCPY2D]:
-    """The source halves of the two copies that take a mapped NV12 picture out.
+def plane_copies(pointer: int, pitch: int, size: tuple[int, int],
+                 surface: SurfaceFormat = SURFACES[8],
+                 ) -> tuple[api.CUDA_MEMCPY2D, api.CUDA_MEMCPY2D]:
+    """The source halves of the two copies that take a mapped picture out.
 
     pointer/pitch -- where ``cuvidMapVideoFrame`` put the picture in device
         memory, and the bytes from one row to the next
-    coded_size -- the size the decoder was created with
+    size -- the size the picture is mapped at (:attr:`Sequence.surface_size`)
+    surface -- the format the picture was decoded into
 
-    Luma is `height` rows of `width` bytes. Chroma follows it `height` rows
-    down: half as many rows, each `width` bytes of interleaved Cb and Cr.
+    Luma is `height` rows of `width` samples. Chroma follows it `height` rows
+    down: half as many rows, each `width` samples of interleaved Cb and Cr.
     The destination of each copy is the transfer's to fill in.
     """
-    width, height = coded_size
+    width, height = size
     planes = []
     for offset, rows in ((0, height), (pitch * height, height // 2)):
         copy = api.CUDA_MEMCPY2D()
         copy.srcMemoryType = api.CU_MEMORYTYPE_DEVICE
         copy.srcDevice = pointer + offset
         copy.srcPitch = pitch
-        copy.WidthInBytes = width
+        copy.WidthInBytes = width * surface.sample_bytes
         copy.Height = rows
         planes.append(copy)
     return planes[0], planes[1]
@@ -272,9 +377,11 @@ class Interop:
 
     zero_copy = True
 
-    def __init__(self, cuda: api.Cuda, coded_size: tuple[int, int]) -> None:
+    def __init__(self, cuda: api.Cuda, size: tuple[int, int],
+                 surface: SurfaceFormat = SURFACES[8]) -> None:
         self.cuda = cuda
-        self.coded_size = coded_size
+        self.size = size
+        self.surface = surface
 
     def adopt(self, pair: TexturePair) -> None:
         """Register both textures with CUDA, as images it only ever overwrites."""
@@ -297,7 +404,8 @@ class Interop:
         cuda.check(cuda.cuGraphicsMapResources(2, pair.resources, None),
                    'cuGraphicsMapResources')
         try:
-            for index, plane in enumerate(plane_copies(pointer, pitch, self.coded_size)):
+            for index, plane in enumerate(
+                    plane_copies(pointer, pitch, self.size, self.surface)):
                 # The array a resource maps to may differ from one mapping to the next.
                 array = c_void_p()
                 cuda.check(cuda.cuGraphicsSubResourceGetMappedArray(
@@ -322,17 +430,20 @@ class Upload:
     """Copies a picture to host memory and uploads it to the textures.
 
     For an OpenGL context that renders on another GPU than the one decoding:
-    each picture crosses the bus twice, about 3 MB at 1080p.
+    each picture crosses the bus twice, about 3 MB at 1080p and 8 bits.
     """
 
     zero_copy = False
 
-    def __init__(self, cuda: api.Cuda, coded_size: tuple[int, int]) -> None:
+    def __init__(self, cuda: api.Cuda, size: tuple[int, int],
+                 surface: SurfaceFormat = SURFACES[8]) -> None:
         self.cuda = cuda
-        self.coded_size = coded_size
-        width, height = coded_size
-        self._luma = (c_ubyte * (width * height))()
-        self._chroma = (c_ubyte * (width * (height // 2)))()
+        self.size = size
+        self.surface = surface
+        self._sizes = surface.plane_sizes(size)
+        (width, height), (chroma_width, chroma_height) = self._sizes
+        self._luma = (surface.host_type * (width * height))()
+        self._chroma = (surface.host_type * (2 * chroma_width * chroma_height))()
 
     def adopt(self, pair: TexturePair) -> None:
         """Nothing to register: the textures are OpenGL's alone."""
@@ -340,17 +451,15 @@ class Upload:
     def copy(self, pair: TexturePair, pointer: int, pitch: int) -> None:
         """Copy the mapped picture at `pointer` out, then into `pair`'s textures."""
         cuda = self.cuda
-        width, height = self.coded_size
         buffers = (self._luma, self._chroma)
-        for plane, buffer in zip(plane_copies(pointer, pitch, self.coded_size), buffers,
-                                 strict=True):
+        copies = plane_copies(pointer, pitch, self.size, self.surface)
+        for plane, buffer in zip(copies, buffers, strict=True):
             plane.dstMemoryType = api.CU_MEMORYTYPE_HOST
             plane.dstHost = ctypes.addressof(buffer)
-            plane.dstPitch = width
+            plane.dstPitch = plane.WidthInBytes
             cuda.check(cuda.cuMemcpy2D(ctypes.byref(plane)), 'cuMemcpy2D',
                        'device memory to host memory')
-        uploads = ((pair.luma, GL_RED, (width, height), self._luma),
-                   (pair.chroma, GL_RG, (width // 2, height // 2), self._chroma))
+        uploads = zip(pair.planes, (GL_RED, GL_RG), self._sizes, buffers, strict=True)
         # A renderer may have left any of these set, and each changes what
         # glTexSubImage2D reads from the buffer.
         packing = {name: int(glGetIntegerv(name))
@@ -365,7 +474,7 @@ class Upload:
             for name, format, (plane_width, plane_height), buffer in uploads:
                 glBindTexture(GL_TEXTURE_2D, name)
                 glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, plane_width, plane_height,
-                                format, GL_UNSIGNED_BYTE, buffer)
+                                format, self.surface.kind, buffer)
         finally:
             glBindTexture(GL_TEXTURE_2D, texture)
             for name, value in packing.items():
@@ -388,41 +497,44 @@ class _Session:
     """
 
     def __init__(self, cuda: api.Cuda, cuvid: api.Cuvid, context: c_void_p,
-                 sequence: Sequence, transfer: Transfer, slots: int,
-                 deinterlace: int) -> None:
+                 sequence: Sequence, surface: SurfaceFormat, transfer: Transfer,
+                 slots: int, deinterlace: int) -> None:
         self.cuda = cuda
         self.cuvid = cuvid
         self.context = context
         self.sequence = sequence
+        self.surface = surface
         self.transfer = transfer
         self.decoder = c_void_p()
         # Every picture the parser holds may be shown by one flush, on top of
         # the frames the caller already keeps.
         self.outputs: Outputs[TexturePair] = Outputs(sequence.surfaces + slots, self._pair)
         width, height = sequence.coded_size
+        mapped_width, mapped_height = sequence.surface_size
         information = api.CUVIDDECODECREATEINFO(
             ulWidth=width, ulHeight=height, ulMaxWidth=width, ulMaxHeight=height,
-            ulTargetWidth=width, ulTargetHeight=height,
+            ulTargetWidth=mapped_width, ulTargetHeight=mapped_height,
             ulNumDecodeSurfaces=sequence.surfaces, ulNumOutputSurfaces=1,
             CodecType=sequence.codec, ChromaFormat=sequence.chroma_format,
-            bitDepthMinus8=sequence.bit_depth[0] - 8,
+            bitDepthMinus8=sequence.depth - 8,
             ulCreationFlags=api.cudaVideoCreate_PreferCUVID,
-            OutputFormat=api.cudaVideoSurfaceFormat_NV12,
+            OutputFormat=surface.surface,
             DeinterlaceMode=(api.cudaVideoDeinterlaceMode_Weave if sequence.progressive
                              else deinterlace))
         # The whole coded picture, unscaled: the visible rectangle is the
         # conversion pass's to apply, as it is for every backend.
-        information.display_area.right = width
-        information.display_area.bottom = height
+        information.display_area.right = mapped_width
+        information.display_area.bottom = mapped_height
         cuda.check(cuvid.cuvidCreateDecoder(ctypes.byref(self.decoder),
                                             ctypes.byref(information)),
                    'cuvidCreateDecoder',
-                   f'{width}x{height}, {sequence.surfaces} surfaces')
+                   f'{width}x{height} {surface.name}, {sequence.surfaces} surfaces')
 
     def _pair(self) -> TexturePair:
-        width, height = self.sequence.coded_size
-        pair = TexturePair(_plane_texture(GL_R8, width, height),
-                           _plane_texture(GL_RG8, width // 2, height // 2))
+        surface = self.surface
+        luma, chroma = surface.plane_sizes(self.sequence.surface_size)
+        pair = TexturePair(_plane_texture(surface.luma, *luma),
+                           _plane_texture(surface.chroma, *chroma))
         try:
             self.transfer.adopt(pair)
         except BaseException:
@@ -505,11 +617,13 @@ def _callback(method: Callable[..., int]) -> Callable[..., int]:
 
 
 class NVDECDecoder(Decoder):
-    """H.264 decoding on NVIDIA hardware, into OpenGL textures.
+    """Decoding on NVIDIA hardware, into OpenGL textures.
 
-    codec -- ``'h264'``
-    headers -- the stream's SPS and PPS as Annex-B, when the container keeps
-        them apart from the samples
+    codec -- ``'h264'``, ``'hevc'``, ``'vp9'`` or ``'av1'``, where the GPU
+        decodes it; :func:`pyopengl_video.decoders` lists them for this machine
+    headers -- the stream's configuration, when the container keeps it apart
+        from the samples: parameter sets as Annex-B for H.264 and HEVC, the
+        configuration OBUs for AV1
     size -- accepted for the registry; the stream's own size is used
     output_slots -- how many frames a caller may hold unreleased at once
     deinterlace -- how an interlaced stream's fields become frames:
@@ -518,10 +632,11 @@ class NVDECDecoder(Decoder):
         needs the current OpenGL context to render on the NVIDIA GPU; False
         to decode on the first NVIDIA GPU and copy through host memory
 
-    Each sample is one access unit: a picture and the units before it.
-    Frames come out in display order as ``'nv12'``
-    :class:`~pyopengl_video.decoder.DecodedFrame` objects, each holding its
-    own copy of the picture.
+    Each sample is one access unit, temporal unit or frame, as its container
+    holds it. Frames come out in display order as
+    :class:`~pyopengl_video.decoder.DecodedFrame` objects, ``'nv12'`` from an
+    8-bit stream and ``'p010'`` from a 10-bit one, each holding its own copy
+    of the picture.
     """
 
     def __init__(self, codec: str = 'h264', *, headers: bytes = b'',
@@ -533,21 +648,28 @@ class NVDECDecoder(Decoder):
             raise DecoderError(
                 f'the NVDEC decoder has no setting named {", ".join(sorted(unknown))}; '
                 'it takes headers, size, output_slots, deinterlace and interop')
-        if codec not in api.CODECS:
-            raise DecoderError(f'the NVDEC backend decodes h264, not {codec!r}')
+        name = codecs.canonical(codec)
+        if name not in api.CODECS:
+            raise DecoderError(
+                f'the NVDEC backend decodes {", ".join(sorted(api.CODECS))}, not {codec!r}')
         if deinterlace not in DEINTERLACE_MODES:
             raise DecoderError(
                 f'deinterlace is one of {", ".join(sorted(DEINTERLACE_MODES))}, '
                 f'not {deinterlace!r}')
         del size
-        self.codec = codec
+        self.codec = name
         self.output_slots = int(output_slots)
         self.zero_copy = bool(interop)
         self._deinterlace = DEINTERLACE_MODES[deinterlace]
         self._headers = bytes(headers)
         self._closed = False
-        self._sps: SequenceParameterSet | None = None
+        self._described: Description | None = None
         self._presentation = Presentation()
+        # VP9 alone: the reference slots, the coded frame the parser has been
+        # handed, and the sample whose timestamp a picture shown now takes.
+        self._slots = Slots() if name == codecs.VP9 else None
+        self._coding: Frame | None = None
+        self._showing: Sample | None = None
         self._session: _Session | None = None
         self._retired: list[_Session] = []
         self._lent: dict[DecodedFrame, tuple[_Session, TexturePair]] = {}
@@ -567,7 +689,7 @@ class NVDECDecoder(Decoder):
         self._device = self._choose_device(interop)
         self.device = self._cuda.device_name(self._device)
         self._context = self._cuda.context(self._device)
-        self._note_parameter_sets(self._headers)
+        self._note_description(self._headers)
 
     def __repr__(self) -> str:
         width, height = self.size
@@ -588,28 +710,30 @@ class NVDECDecoder(Decoder):
                 'interop=False to copy each picture through host memory')
         return devices[0]
 
-    def _note_parameter_sets(self, data: bytes) -> None:
-        """Keep the last sequence parameter set in `data`, for what the parser omits.
+    def _note_description(self, data: bytes) -> None:
+        """Keep what this package reads of the picture in `data`.
 
         The parser reports a sequence at its first picture, and never where
-        chroma samples sit. This package's own reading of the set gives the
-        size before the first sample and the whole colour description. Sets
-        are looked for in the headers, in key frames and in the first sample
-        decoded, which is where a stream carries them.
+        chroma samples sit. This package's own reading gives the size before
+        the first sample and the whole colour description
+        (:mod:`pyopengl_video.nvdec.description`). It is looked for in the
+        headers, in key frames and in the first sample decoded, which is
+        where a stream carries it.
         """
-        for unit in split_annexb(data):
-            if unit[0] & 0x1F != NAL_SPS:
-                continue
-            try:
-                self._sps = parse_sps(parse_nal(unit).rbsp)
-            except StreamError as error:
-                # The hardware may decode a set this package does not read.
-                log.debug('a sequence parameter set was not read here: %s', error)
-                self._sps = None
-                continue
-            if self._session is None:
-                self.size = self._sps.size
-                self.colour = colour_of(self._sps)
+        try:
+            found = describe(self.codec, data)
+        except StreamError as error:
+            # The hardware may decode a stream this package does not read.
+            log.debug('the %s description was not read here: %s',
+                      codecs.title(self.codec), error)
+            self._described = None
+            return
+        if found is None:
+            return
+        self._described = found
+        if self._session is None:
+            self.size = found.size
+            self.colour = found.colour
 
     # ------------------------------------------------------------ decoding
 
@@ -618,15 +742,61 @@ class NVDECDecoder(Decoder):
         self._check_open()
         data = bytes(sample.data)
         if sample.keyframe or not self._primed:
-            self._note_parameter_sets(data)
+            self._note_description(data)
         with self._cuda.current(self._context):
             if not self._primed:
                 self._primed = True
                 if self._headers:
                     self._parse(self._headers, 0)
             self._presentation.fed(sample)
-            return self._parse(data, api.CUVID_PKT_TIMESTAMP | api.CUVID_PKT_ENDOFPICTURE,
-                               sample.timestamp)
+            if self._slots is not None:
+                return self._decode_vp9(self._slots, sample, data)
+            return self._parse(data, PICTURE, sample.timestamp)
+
+    def _decode_vp9(self, slots: Slots, sample: Sample, data: bytes) -> list[DecodedFrame]:
+        """Decode one VP9 sample a frame at a time, showing again what it says to.
+
+        The parser is handed each coded frame by itself, so the picture it
+        decodes next is that frame's, and a frame shown again is shown between
+        the two coded frames it sits between.
+        """
+        try:
+            frames = slots.frames(data)
+        except StreamError as error:
+            # The hardware may decode what this package does not read: the
+            # parser takes the sample whole, and the slots are unknown.
+            log.debug('a VP9 sample was not read here: %s', error)
+            slots.forget()
+            frames = [Frame(data)]
+        ready: list[DecodedFrame] = []
+        self._showing = sample
+        try:
+            for frame in frames:
+                if frame.shows_slot is None:
+                    self._coding = frame
+                    ready += self._parse(frame.data, PICTURE, sample.timestamp)
+                else:
+                    ready += self._show_again(slots, frame.shows_slot, sample.timestamp)
+        except BaseException:
+            for lent in ready:
+                lent.release()
+            raise
+        finally:
+            self._showing = self._coding = None
+        return ready
+
+    def _show_again(self, slots: Slots, slot: int, timestamp: int) -> list[DecodedFrame]:
+        """The picture reference `slot` holds, as the frame shown at `timestamp`."""
+        picture = slots.picture(slot)
+        if picture is None or self._session is None:
+            log.warning('a VP9 frame shows reference slot %d again, and no frame '
+                        'decoded here was stored in it; the picture is not shown', slot)
+            self._presentation.shown(timestamp)
+            return []
+        self._show(api.CUVIDPARSERDISPINFO(picture_index=picture, progressive_frame=1),
+                   timestamp)
+        ready, self._ready = self._ready, []
+        return ready
 
     def flush(self) -> list[DecodedFrame]:
         """Return every frame still held back, at the end of a stream."""
@@ -654,6 +824,8 @@ class NVDECDecoder(Decoder):
             self._parser = c_void_p()
         self._presentation.restart()
         self._primed = False
+        if self._slots is not None:
+            self._slots.forget()
 
     def _parse(self, data: bytes, flags: int, timestamp: int = 0) -> list[DecodedFrame]:
         """Hand `data` to the parser; return the frames its callbacks produced."""
@@ -663,7 +835,7 @@ class NVDECDecoder(Decoder):
                 CodecType=api.CODECS[self.codec],
                 # The sequence callback answers with the count the stream needs.
                 ulMaxNumDecodeSurfaces=1,
-                ulMaxDisplayDelay=DISPLAY_DELAY)
+                ulMaxDisplayDelay=0 if self.codec in SHOWN_AS_PARSED else DISPLAY_DELAY)
             (parameters.pfnSequenceCallback, parameters.pfnDecodePicture,
              parameters.pfnDisplayPicture) = self._callbacks
             cuda.check(cuvid.cuvidCreateVideoParser(ctypes.byref(self._parser),
@@ -678,7 +850,8 @@ class NVDECDecoder(Decoder):
         try:
             if failure is not None:
                 raise failure
-            cuda.check(status, 'cuvidParseVideoData', f'{len(data)} bytes')
+            cuda.check(status, 'cuvidParseVideoData',
+                       f'the parser refused {len(data)} bytes of {codecs.title(self.codec)}')
         except BaseException:
             for frame in ready:
                 frame.release()
@@ -702,7 +875,7 @@ class NVDECDecoder(Decoder):
         cuda, cuvid = self._cuda, self._cuvid
         capabilities = api.CUVIDDECODECAPS(
             eCodecType=sequence.codec, eChromaFormat=sequence.chroma_format,
-            nBitDepthMinus8=sequence.bit_depth[0] - 8)
+            nBitDepthMinus8=sequence.depth - 8)
         cuda.check(cuvid.cuvidGetDecoderCaps(ctypes.byref(capabilities)),
                    'cuvidGetDecoderCaps')
         refusal = sequence.refusal(capabilities, self.device)
@@ -711,16 +884,21 @@ class NVDECDecoder(Decoder):
         previous, self._session = self._session, None
         if previous is not None:
             self._retire(previous)
+        if self._slots is not None:
+            # The pictures the slots named were the decoder's before.
+            self._slots.lose_pictures()
         log.debug('%s: decoding %dx%d with %d surfaces', self.device,
                   *sequence.coded_size, sequence.surfaces)
+        surface = sequence.surface_format
+        assert surface is not None, 'refusal() answers for a sequence with no surface format'
         transfer_type = Interop if self.zero_copy else Upload
-        self._session = _Session(cuda, cuvid, self._context, sequence,
-                                 transfer_type(cuda, sequence.coded_size),
+        self._session = _Session(cuda, cuvid, self._context, sequence, surface,
+                                 transfer_type(cuda, sequence.surface_size, surface),
                                  self.output_slots, self._deinterlace)
 
     def _describe(self, sequence: Sequence) -> None:
         self.size = sequence.size
-        described = colour_of(self._sps) if self._sps is not None else sequence.colour
+        described = self._described.colour if self._described is not None else sequence.colour
         self.colour = described.resolved(sequence.size[1])
 
     @_callback
@@ -730,16 +908,25 @@ class NVDECDecoder(Decoder):
         if session is None:
             raise DecoderError('the parser asked for a picture before it described a sequence')
         session.decode(parameters)
+        if self._slots is not None and self._coding is not None:
+            picture = ctypes.cast(parameters, ctypes.POINTER(api.CUVIDPICPARAMS)).contents
+            self._slots.decoded(self._coding, int(picture.CurrPicIdx))
         return 1
 
     @_callback
     def _on_display(self, _user: Any, information: Any) -> int:
         """A picture is due to be shown: copy it out before the parser reuses it."""
         picture = information.contents
-        duration = self._presentation.shown(picture.timestamp)
+        showing = self._showing
+        self._show(picture, picture.timestamp if showing is None else showing.timestamp)
+        return 1
+
+    def _show(self, picture: api.CUVIDPARSERDISPINFO, timestamp: int) -> None:
+        """Copy `picture` into a texture pair and lend it as the frame at `timestamp`."""
+        duration = self._presentation.shown(timestamp)
         session = self._session
         if duration is None or session is None:
-            return 1
+            return
         pair = session.outputs.take()
         if pair is None:
             held = [frame for frame, (owner, _) in self._lent.items() if owner is session]
@@ -754,12 +941,11 @@ class NVDECDecoder(Decoder):
             raise
         sequence = session.sequence
         frame = DecodedFrame(
-            timestamp=picture.timestamp, duration=duration, planes=pair.planes,
-            layout='nv12', texture_size=sequence.coded_size, visible=sequence.visible,
-            colour=self.colour, on_release=self._released)
+            timestamp=timestamp, duration=duration, planes=pair.planes,
+            layout=session.surface.layout, texture_size=sequence.surface_size,
+            visible=sequence.visible, colour=self.colour, on_release=self._released)
         self._lent[frame] = (session, pair)
         self._ready.append(frame)
-        return 1
 
     # ------------------------------------------------------------ lifetimes
 

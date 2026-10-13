@@ -12,7 +12,6 @@ import dataclasses
 from collections.abc import Sequence
 
 from pyopengl_video import codecs, obu
-from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecoderError, Sample
 from pyopengl_video.vaapi import api, av1_api
 from pyopengl_video.vaapi.av1_parse import (
@@ -27,6 +26,7 @@ from pyopengl_video.vaapi.av1_parse import (
     SequenceHeader,
     StreamError,
     Tile,
+    colour_of,
     parse_frame_header,
     parse_sequence_header,
     parse_tile_group,
@@ -39,10 +39,6 @@ __all__ = ['AV1Decoding', 'colour_of', 'format_for', 'picture_parameters',
 
 #: seq_profile values by name, for refusing a stream in words a reader knows.
 PROFILE_NAMES = {0: 'Main', 1: 'High', 2: 'Professional'}
-
-#: The chroma_sample_loc_type (H.273) each chroma_sample_position states:
-#: unknown and vertical are sited left, colocated is sited top left.
-CHROMA_LOCATIONS = {0: 0, 1: 0, 2: 2}
 
 #: The luma samples a frame's coded size is a multiple of (MiCols counts 4x4
 #: blocks and is even).
@@ -66,16 +62,6 @@ def format_for(sequence: SequenceHeader) -> Format:
         coded_size=(-(-width // BLOCK) * BLOCK, -(-height // BLOCK) * BLOCK),
         surfaces=(NUM_REF_FRAMES + 1) * each, depth=color.bit_depth,
         name=f'AV1 {name}')
-
-
-def colour_of(sequence: SequenceHeader) -> Colour:
-    """A sequence's colour description, the matrix chosen where it states none."""
-    color = sequence.color_config
-    return Colour(
-        matrix=color.matrix_coefficients, full_range=bool(color.color_range),
-        primaries=color.color_primaries, transfer=color.transfer_characteristics,
-        chroma_location=CHROMA_LOCATIONS.get(color.chroma_sample_position, 0),
-    ).resolved(sequence.size[1])
 
 
 def _film_grain(grain: FilmGrain, target: av1_api.VAFilmGrainStructAV1) -> None:

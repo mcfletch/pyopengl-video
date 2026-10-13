@@ -382,10 +382,13 @@ game is the game plus a blit.
 - **8-bit 4:2:0 in every codec.** HEVC Main and AV1 Main, from a `GL_RGBA8`
   texture. The largest frame is the hardware's for each codec:
   `backend.largest(codec)`.
-- **HEVC and AV1 on `nvenc`, and HEVC, AV1 and VP9 on `vpl`, have not been
-  run.** They are written from the vendors' headers, their structures are
-  checked against those headers, and their settings are tested without a
-  driver. H.264 has run on both.
+- **AV1 on `nvenc`, and HEVC, AV1 and VP9 on `vpl`, have not been run.** They
+  are written from the vendors' headers, their structures are checked against
+  those headers, and their settings are tested without a driver. H.264 has
+  run on both, and HEVC on `nvenc`: on an RTX 3060 Ti, with and without
+  B-frames, to 5120x2880, into MP4 files that `ffmpeg` and this package's
+  NVDEC decoder both read back. AV1 needs an RTX 40-series GPU or later; the
+  hardware cases in `tests/test_nvenc_encode_codecs.py` run for it there.
 - **AV1 on AMD pads the frame.** The VCN encoder codes a frame of at least
   128x128 whose size it rounds up to its own blocks, and writes the size asked
   for as the stream's render size. A 1920x1080 recording is a 1920x1082 frame

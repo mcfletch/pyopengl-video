@@ -21,6 +21,14 @@ from __future__ import annotations
 
 import dataclasses
 
+from pyopengl_video.colour import (
+    MATRIX_BT601,
+    MATRIX_BT709,
+    MATRIX_BT2020,
+    MATRIX_SMPTE240,
+    MATRIX_UNSPECIFIED,
+    Colour,
+)
 from pyopengl_video.vaapi.bits import BitReader
 from pyopengl_video.vaapi.h264 import StreamError
 
@@ -32,7 +40,8 @@ __all__ = [
     'KEY_FRAME', 'LAST_FRAME', 'LoopFilter', 'MAX_SEGMENTS', 'NON_KEY_FRAME',
     'NUM_REF_FRAMES', 'Quantisation', 'Reference', 'SEG_LVL_ALT_L',
     'SEG_LVL_ALT_Q', 'SEG_LVL_MAX', 'SEG_LVL_REF_FRAME', 'SEG_LVL_SKIP',
-    'SWITCHABLE', 'Segmentation', 'is_key_frame', 'parse_uncompressed_header',
+    'SWITCHABLE', 'Segmentation', 'colour_of', 'is_key_frame',
+    'parse_uncompressed_header',
     'split_superframe',
 ]
 
@@ -279,6 +288,30 @@ class FrameHeader:
         if self.intra or self.error_resilient_mode:
             return 0
         return self.frame_context_idx
+
+
+#: The H.273 matrix, primaries and transfer each VP9 colour space names. A
+#: colour space not listed states none of them.
+COLOUR_SPACES = {
+    CS_BT_601: (MATRIX_BT601, 2, 2),
+    CS_BT_709: (MATRIX_BT709, 1, 1),
+    CS_SMPTE_170: (MATRIX_BT601, 6, 6),
+    CS_SMPTE_240: (MATRIX_SMPTE240, 7, 7),
+    CS_BT_2020: (MATRIX_BT2020, 9, 2),
+}
+
+#: Chroma samples sit on the luma sample above and left of them, which is
+#: where VP9 puts them when nothing outside the stream says otherwise (7.2.2).
+CHROMA_COLOCATED = 2
+
+
+def colour_of(header: FrameHeader) -> Colour:
+    """A frame's colour description, the matrix chosen where it states none."""
+    matrix, primaries, transfer = COLOUR_SPACES.get(
+        header.colour.color_space, (MATRIX_UNSPECIFIED, 2, 2))
+    return Colour(matrix=matrix, full_range=bool(header.colour.color_range),
+                  primaries=primaries, transfer=transfer,
+                  chroma_location=CHROMA_COLOCATED).resolved(header.height)
 
 
 @dataclasses.dataclass(frozen=True)

@@ -23,6 +23,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 
+from pyopengl_video.colour import Colour
 from pyopengl_video.vaapi.bits import BitReader
 from pyopengl_video.vaapi.h264 import StreamError
 
@@ -31,7 +32,7 @@ __all__ = [
     'FrameState', 'LoopFilter', 'LoopRestoration', 'OperatingPoint',
     'Quantization', 'Reader', 'SavedFrame', 'Segmentation', 'SequenceHeader',
     'StreamError', 'Tile', 'TileGroup', 'TileInfo', 'TimingInfo',
-    'get_relative_dist', 'parse_frame_header', 'parse_sequence_header',
+    'colour_of', 'get_relative_dist', 'parse_frame_header', 'parse_sequence_header',
     'parse_tile_group', 'warp_valid',
 ]
 
@@ -446,6 +447,21 @@ def parse_sequence_header(payload: bytes) -> SequenceHeader:
         seq_force_integer_mv=integer_mv, order_hint_bits=order_hint_bits,
         enable_superres=superres, enable_cdef=cdef, enable_restoration=restoration,
         color_config=color, film_grain_params_present=reader.flag())
+
+
+#: The chroma_sample_loc_type (H.273) each chroma_sample_position states:
+#: unknown and vertical are sited left, colocated is sited top left.
+CHROMA_LOCATIONS = {0: 0, 1: 0, 2: 2}
+
+
+def colour_of(sequence: SequenceHeader) -> Colour:
+    """A sequence's colour description, the matrix chosen where it states none."""
+    color = sequence.color_config
+    return Colour(
+        matrix=color.matrix_coefficients, full_range=bool(color.color_range),
+        primaries=color.color_primaries, transfer=color.transfer_characteristics,
+        chroma_location=CHROMA_LOCATIONS.get(color.chroma_sample_position, 0),
+    ).resolved(sequence.size[1])
 
 
 # ------------------------------------------------------------- frame header

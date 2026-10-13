@@ -28,11 +28,11 @@ MP4, IVF and raw-stream readers are part of this package.
 
 | Backend | Hardware | Platform | Codecs | Picture handed over as | State |
 | --- | --- | --- | --- | --- | --- |
-| `nvdec` | NVIDIA | Linux | H.264 | CUDA memory copied on the GPU into two textures | working |
-| `nvdec` | NVIDIA | Windows | H.264 | the same | working, where the OpenGL context is on the NVIDIA GPU |
+| `nvdec` | NVIDIA | Linux | H.264, HEVC, VP9, AV1 | CUDA memory copied on the GPU into two textures | working |
+| `nvdec` | NVIDIA | Windows | H.264, HEVC, VP9, AV1 | the same | H.264 working, where the OpenGL context is on the NVIDIA GPU; the others the same code, untested |
 | `vaapi` | AMD, VCN | Linux | H.264, HEVC, AV1, VP9 | two DMA-BUF planes imported as textures | working |
 | `vaapi` | Intel, Gen9 and later | Linux | H.264, HEVC, AV1, VP9 | the same | the same code, untested |
-| `nvdec-copy` | NVIDIA | Linux, Windows | H.264 | CUDA memory copied through host memory into two textures | working |
+| `nvdec-copy` | NVIDIA | Linux, Windows | H.264, HEVC, VP9, AV1 | CUDA memory copied through host memory into two textures | H.264 working; the others working on Linux |
 | `vpl` | Intel, Gen9 and later | Windows | H.264, HEVC, VP9 | a Direct3D 11 texture converted to RGB on the GPU | working |
 
 The codecs are the ones the backend drives. A GPU decodes those its hardware
@@ -94,7 +94,10 @@ for backend in decoders():
 ```
 
 On a Radeon 8060S that is H.264 to 4096x4096, and HEVC, AV1 and VP9 to
-8192x4352.
+8192x4352. On an RTX 3060 Ti it is H.264 to 4096x4096, and HEVC, VP9 and AV1
+to 8192x8192, through `nvdec` and `nvdec-copy` alike. An NVIDIA GPU is asked
+which codecs it decodes the first time `decoders()` is called, which makes
+the CUDA context a decoder would otherwise make when it opens.
 
 ## Movies and players
 
@@ -262,16 +265,24 @@ error naming the feature.
 | AV1 | Main profile at 8 and 10 bits, and monochrome. Hidden and alt-ref frames, `show_existing_frame`, intra-only and switch frames, tiles, segmentation, quantiser matrices, loop restoration, global motion, super-resolution, film grain. | High and Professional profiles, a frame size that changes between key frames, layers above the base, tile list OBUs |
 | VP9 | Profile 0, and profile 2 at 10 bits. Superframes, hidden alt-ref frames, `show_existing_frame`, tile columns and rows, segmentation, lossless. | profiles 1 and 3, 12 bits, a frame whose size or depth differs from its key frame's |
 
-HEVC, AV1 and VP9 decode through `vaapi`. H.264 decodes through every
-backend, and they differ in this:
+Every backend decodes all four codecs, where the GPU has the decoder. On the
+NVDEC backends NVIDIA's parser reads the stream, so the features in the table
+are the hardware's, and what is refused is refused when the stream's first
+picture arrives: anything but 4:2:0 or monochrome, anything but 8 or 10 bits,
+and a codec, depth or size the GPU has no decoder for. The backends differ in
+this:
 
-| H.264 | `vaapi` | `nvdec`, `nvdec-copy` |
+| | `vaapi` | `nvdec`, `nvdec-copy` |
 | --- | --- | --- |
-| Interlaced streams (field pictures, MBAFF) | refused by name | decoded, one frame a sample, deinterlaced as `deinterlace` says |
-| Slice groups | refused by name | passed to the hardware, not tested |
-| Sizes | 64x64 to 4096x4096 on AMD VCN, as the driver reports them | 48x16 to 4096x4096 on an RTX 3060 Ti, as the driver reports them |
-| A picture under the smallest size | decodes into a minimum-size surface, and only its visible part is converted | refused by its size |
+| Interlaced H.264 (field pictures, MBAFF) | refused by name | decoded, one frame a sample, deinterlaced as `deinterlace` says |
+| H.264 slice groups | refused by name | passed to the hardware, not tested |
+| H.264 sizes | 64x64 to 4096x4096 on AMD VCN, as the driver reports them | 48x16 to 4096x4096 on an RTX 3060 Ti, as the driver reports them |
+| HEVC, VP9 and AV1 sizes | 64x64 to 8192x4352 on AMD VCN | 144x144 (HEVC) or 128x128 (VP9, AV1) to 8192x8192 on an RTX 3060 Ti |
+| A picture under the smallest size | decodes into a minimum-size surface, and only its visible part is converted; refused by its size in HEVC | refused by its size |
 | A picture over the largest size | refused by its size | refused by its size |
+| A VP9 or AV1 picture of an odd size | not tested | decoded into textures of the even size above it; `visible` is the picture |
+| When pictures come back | when their order is known | two samples later, so the hardware has finished them; VP9 with its sample |
+| A VP9 or AV1 frame whose size differs from its key frame's | refused by name | not tested |
 | When a stream is refused | at the first picture that uses the sequence | at the first picture that uses the sequence |
 
 `deinterlace='weave'` gives the two fields interleaved as they were coded,
@@ -281,15 +292,24 @@ of the picture by its motion. A progressive stream is not deinterlaced,
 whichever is named.
 
 - Each fixture stream under `tests/data/decode/` decodes to the bytes
-  `ffmpeg`'s software decoder gives, picture for picture, on AMD VCN, and
-  each H.264 one on an RTX 3060 Ti. The
+  `ffmpeg`'s software decoder gives, picture for picture, on AMD VCN. On an
+  RTX 3060 Ti each H.264 one does, and so does each stream of the other
+  codecs that is at least 144 samples each way: B-frame pyramids and open
+  groups in HEVC, hidden frames and frames shown again in VP9 and AV1, film
+  grain, super-resolution and monochrome in AV1, 10 bits in all three, and a
+  picture of an odd size in VP9 and AV1. The
   features x265 does not emit (tiles, long-term references, dependent slice
   segments) are parsed and tested without a driver, and no hardware decode
   has exercised them.
-- HEVC, AV1 and VP9 sizes are the driver's: 64x64 to 8192x4352 on AMD VCN. A
-  larger picture is refused by its size. An HEVC picture smaller than the
-  minimum is refused, since the AMD driver takes the picture size from the
-  surface.
+- An HEVC picture smaller than the minimum is refused on `vaapi`, since the
+  AMD driver takes the picture size from the surface.
+- NVIDIA's parser shows no picture for a VP9 frame that shows a reference
+  slot again, so the NVDEC backends follow the slots themselves and show it.
+  A stream decoded from a sample that is not a key frame has slots nothing
+  was read into; a frame shown again from one of those is left out, with a
+  warning in the log.
+- A sample that is not AV1 at all raises `DecoderError` on the NVDEC
+  backends. One that is not H.264, HEVC or VP9 produces no picture.
 - An AV1 picture is its coded frame. A stream whose render size differs from
   its frame size is shown at the frame size.
 
@@ -323,10 +343,23 @@ the textures is 0.1 ms of it. An NVDEC decoder makes a pair of output textures
 the first time none is free. The stream above played forward makes four
 pairs, and decoding creates none after that.
 
-The first NVDEC decoder in a process initialises CUDA, about 170 ms in all:
-65 ms the first time `decoders()` is asked and 100 ms when the decoder opens.
-The CUDA context then stays for the life of the process, so each later
-decoder opens in about 1 ms. A stream's first picture takes about 30 ms more,
+The other codecs at 1920x1080 and 60 fps, decoded and converted on the same
+card, in milliseconds a frame:
+
+| Stream | `nvdec` | `nvdec-copy` |
+| --- | --- | --- |
+| HEVC Main, 6 Mbit/s | 0.6 | 2.4 |
+| HEVC Main 10, 6 Mbit/s | 0.6 | 4.5 |
+| VP9 profile 0, 6 Mbit/s | 1.0 | 2.7 |
+| AV1 Main, 6 Mbit/s | 0.6 | 2.6 |
+
+A 10-bit picture is two bytes a sample, so `nvdec-copy` moves twice as much
+through host memory for it.
+
+The first use of NVDEC in a process initialises CUDA and makes its context,
+which is most of the 250 ms the first `decoders()` call takes on a machine
+with an NVIDIA GPU. The context then stays for the life of the process, the
+first decoder opens in about 25 ms and each later one in about 1 ms. A stream's first picture takes about 30 ms more,
 which is the driver creating its hardware decoder. Closing a decoder returns
 in about 1 ms: the driver's own teardown takes up to 240 ms, and runs on a
 thread of its own so the thread that draws does not wait for it.

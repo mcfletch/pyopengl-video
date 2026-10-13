@@ -149,6 +149,23 @@
           "ulMaxDisplayDelay": 16,
           "ulMaxNumDecodeSurfaces": 4
         },
+        "CUVIDPICPARAMS": {
+          "CodecSpecific": 184,
+          "CurrPicIdx": 8,
+          "FrameHeightInMbs": 4,
+          "PicWidthInMbs": 0,
+          "Reserved": 72,
+          "bottom_field_flag": 16,
+          "field_pic_flag": 12,
+          "intra_pic_flag": 60,
+          "nBitstreamDataLen": 24,
+          "nNumSlices": 40,
+          "pBitstreamData": 32,
+          "pSliceDataOffsets": 48,
+          "ref_pic_flag": 56,
+          "second_field": 20,
+          "timestamp": 64
+        },
         "CUVIDPROCPARAMS": {
           "Reserved": 64,
           "Reserved1": 52,
@@ -181,6 +198,7 @@
         "CUVIDEOFORMAT": 64,
         "CUVIDPARSERDISPINFO": 24,
         "CUVIDPARSERPARAMS": 136,
+        "CUVIDPICPARAMS": 4280,
         "CUVIDPROCPARAMS": 264,
         "CUVIDSOURCEDATAPACKET": 24
       }
@@ -307,6 +325,23 @@
           "ulMaxDisplayDelay": 16,
           "ulMaxNumDecodeSurfaces": 4
         },
+        "CUVIDPICPARAMS": {
+          "CodecSpecific": 184,
+          "CurrPicIdx": 8,
+          "FrameHeightInMbs": 4,
+          "PicWidthInMbs": 0,
+          "Reserved": 72,
+          "bottom_field_flag": 16,
+          "field_pic_flag": 12,
+          "intra_pic_flag": 60,
+          "nBitstreamDataLen": 24,
+          "nNumSlices": 40,
+          "pBitstreamData": 32,
+          "pSliceDataOffsets": 48,
+          "ref_pic_flag": 56,
+          "second_field": 20,
+          "timestamp": 64
+        },
         "CUVIDPROCPARAMS": {
           "Reserved": 64,
           "Reserved1": 52,
@@ -339,6 +374,7 @@
         "CUVIDEOFORMAT": 64,
         "CUVIDPARSERDISPINFO": 24,
         "CUVIDPARSERPARAMS": 136,
+        "CUVIDPICPARAMS": 4280,
         "CUVIDPROCPARAMS": 264,
         "CUVIDSOURCEDATAPACKET": 32
       }

@@ -6,7 +6,9 @@ encoder may produce, so the suite carries streams from the reference software
 encoders that use B-frame pyramids, weighted prediction, several slices or
 tiles a picture, scaling matrices and open groups of pictures. One interlaced
 H.264 stream is listed apart from those, for the decoders that take interlaced
-video.
+video. So are the ``large`` streams: every picture of them is at least 144
+samples each way, which is the smallest an NVIDIA decoder takes in HEVC (128
+in VP9 and AV1), where most of the rest are smaller to keep the suite small.
 
 ``ffmpeg`` writes them with the encoder each :class:`Stream` names, and
 ``ffmpeg``'s software decoder records the MD5 of each decoded picture, in
@@ -21,6 +23,11 @@ Run it from the project directory, for every codec or for the ones named::
 
     python tools/make_decode_fixtures.py
     python tools/make_decode_fixtures.py hevc av1
+
+A stream already written with the settings listed here is kept as it is, since
+an encoder run twice does not always write the same bytes and the committed
+stream is the one the suite has been run against. ``--rewrite`` writes every
+stream again.
 """
 from __future__ import annotations
 
@@ -61,8 +68,9 @@ class Stream:
         the decoded luma with chroma at the mid value, which is what a decoder
         writing 4:2:0 surfaces holds.
     group -- the part of the codec's table the stream is listed in:
-        ``'streams'``, or ``'interlaced'`` for a stream a decoder of
-        progressive frames refuses
+        ``'streams'``, ``'interlaced'`` for a stream a decoder of progressive
+        frames refuses, or ``'large'`` for one no smaller than the smallest
+        picture every decoder here takes
     """
 
     codec: str
@@ -90,8 +98,23 @@ class Stream:
 
     @property
     def frame_bytes(self) -> int:
+        """The bytes of one reference picture: luma, then a chroma pair for every two samples."""
         width, height = self.size
-        return width * height * 3 // 2 * (1 if self.depth == 8 else 2)
+        samples = width * height + 2 * ((width + 1) // 2) * ((height + 1) // 2)
+        return samples * (1 if self.depth == 8 else 2)
+
+    @property
+    def source(self) -> str:
+        """The ``lavfi`` source the stream is coded from.
+
+        The test source makes pictures of an even size, so one of an odd size
+        is cut from the even size above it.
+        """
+        width, height = self.size
+        even = f'testsrc2=size={width + width % 2}x{height + height % 2}:rate=30'
+        if (width % 2 or height % 2):
+            return f'{even},crop={width}:{height}:0:0:exact=1'
+        return even
 
 
 def x264(size: tuple[int, int], frames: int, profile: str, parameters: str,
@@ -106,28 +129,28 @@ def x264(size: tuple[int, int], frames: int, profile: str, parameters: str,
 
 
 def vpx(size: tuple[int, int], frames: int, options: str, *, depth: int = 8,
-        mp4: bool = False, two_pass: bool = False) -> Stream:
+        mp4: bool = False, two_pass: bool = False, group: str = 'streams') -> Stream:
     return Stream('vp9', size, frames, ('-c:v', 'libvpx-vp9', *options.split()),
-                  '.ivf', depth=depth, mp4=mp4, two_pass=two_pass)
+                  '.ivf', depth=depth, mp4=mp4, two_pass=two_pass, group=group)
 
 
 def x265(size: tuple[int, int], frames: int, parameters: str, *, depth: int = 8,
          mp4: bool = False, before: tuple[str, ...] = (),
-         files: tuple[tuple[str, str], ...] = ()) -> Stream:
+         files: tuple[tuple[str, str], ...] = (), group: str = 'streams') -> Stream:
     """An HEVC stream from libx265; `before` are options ahead of the encoder's."""
     tag = ('-tag:v', 'hvc1') if mp4 else ()
     return Stream('hevc', size, frames,
                   (*before, '-c:v', 'libx265', *tag, '-x265-params',
                    f'log-level=error:{parameters}'),
                   '.h265', depth=depth, mp4=mp4,
-                  to_stream=('-bsf:v', 'hevc_mp4toannexb'), files=files)
+                  to_stream=('-bsf:v', 'hevc_mp4toannexb'), files=files, group=group)
 
 
 def av1(size: tuple[int, int], frames: int, options: str, *, depth: int = 8,
-        mp4: bool = False, monochrome: bool = False) -> Stream:
+        mp4: bool = False, monochrome: bool = False, group: str = 'streams') -> Stream:
     """An AV1 stream; `options` name the encoder, ahead of its settings."""
     return Stream('av1', size, frames, tuple(options.split()), '.ivf', depth=depth,
-                  mp4=mp4, monochrome=monochrome)
+                  mp4=mp4, monochrome=monochrome, group=group)
 
 
 def hevc_scaling_lists() -> str:
@@ -290,6 +313,56 @@ STREAMS: dict[str, Stream] = {
         (72, 40), 12, '-pix_fmt gray -c:v libaom-av1 -cpu-used 5 -b:v 80k -g 6',
         monochrome=True),
     'av1_still': av1((64, 36), 1, '-c:v libaom-av1 -cpu-used 5 -still-picture 1'),
+    # The large streams: the settings of the ones above that decide how a
+    # picture is held and shown, at 144 samples or more each way. One stream
+    # each of VP9 and AV1 is of an odd size, which those two codecs allow.
+    'hevc_large_bpyramid': x265(
+        (180, 148), 30,
+        'bframes=4:b-pyramid=1:ref=4:weightp=1:weightb=1:open-gop=0:'
+        'keyint=15:min-keyint=15:scenecut=0:info=0',
+        mp4=True, before=('-vf', 'fade=in:0:14'), group='large'),
+    'hevc_large_open_gop': x265(
+        (164, 146), 30,
+        'open-gop=1:bframes=3:ref=3:keyint=10:min-keyint=10:scenecut=0', group='large'),
+    'hevc_large_main10': x265(
+        (178, 150), 20,
+        'bframes=3:b-pyramid=1:ref=3:weightp=1:weightb=1:keyint=10:min-keyint=10:'
+        'scenecut=0:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:'
+        'range=limited:chromaloc=2', depth=10, before=('-vf', 'fade=in:0:14'),
+        group='large'),
+    'vp9_large_altref': vpx(
+        (150, 146), 30,
+        '-b:v 200k -g 15 -auto-alt-ref 1 -lag-in-frames 12 -frame-parallel 0',
+        mp4=True, two_pass=True, group='large'),
+    'vp9_large_show_existing': vpx(
+        (146, 144), 30,
+        '-b:v 180k -g 15 -auto-alt-ref 6 -lag-in-frames 12 -frame-parallel 0',
+        two_pass=True, group='large'),
+    'vp9_large_profile2': vpx(
+        (154, 146), 20, '-profile:v 2 -b:v 150k -g 10', depth=10, group='large'),
+    'vp9_large_odd': vpx((151, 145), 12, '-b:v 150k -g 6', group='large'),
+    'av1_large_altref': av1(
+        (150, 146), 30,
+        '-c:v libaom-av1 -cpu-used 4 -b:v 200k -g 15 -lag-in-frames 14 -auto-alt-ref 1',
+        mp4=True, group='large'),
+    'av1_large_grain': av1(
+        (146, 144), 20,
+        '-c:v libaom-av1 -cpu-used 5 -b:v 180k -g 10 -aom-params film-grain-test=3',
+        group='large'),
+    'av1_large_grain10': av1(
+        (154, 146), 20,
+        '-c:v libaom-av1 -cpu-used 5 -b:v 180k -g 10 -aom-params film-grain-test=7',
+        depth=10, group='large'),
+    'av1_large_superres': av1(
+        (160, 144), 20,
+        '-c:v libsvtav1 -preset 8 -g 10 '
+        '-svtav1-params superres-mode=1:superres-denom=12:superres-kf-denom=12',
+        group='large'),
+    'av1_large_monochrome': av1(
+        (148, 144), 12, '-pix_fmt gray -c:v libaom-av1 -cpu-used 5 -b:v 120k -g 6',
+        monochrome=True, group='large'),
+    'av1_large_odd': av1(
+        (151, 145), 12, '-c:v libaom-av1 -cpu-used 6 -b:v 150k -g 6', group='large'),
 }
 
 
@@ -323,8 +396,7 @@ def coding_options(stream: Stream) -> tuple[str, ...]:
 def encode(name: str, stream: Stream) -> Path:
     """Write the elementary stream; one with an MP4 goes through its MP4 first."""
     path = DESTINATION / f'{name}{stream.suffix}'
-    width, height = stream.size
-    video = ['-f', 'lavfi', '-i', f'testsrc2=size={width}x{height}:rate=30']
+    video = ['-f', 'lavfi', '-i', stream.source]
     coding = ['-frames:v', str(stream.frames), '-pix_fmt', stream.pixel_format,
               *coding_options(stream)]
     if stream.two_pass:
@@ -380,14 +452,46 @@ def monochrome_md5s(path: Path, stream: Stream) -> list[str]:
             for start in range(0, len(raw), size)]
 
 
-def write_table(codec: str, version: str) -> None:
-    """Write every stream of `codec` and the table that lists them."""
+def recorded_tables(codec: str) -> dict[str, dict]:
+    """The codec's table as it was last written, by group; empty where there is none."""
+    path = DESTINATION / f'{codec}.json'
+    if not path.exists():
+        return {}
+    return {group: table for group, table in json.loads(path.read_text()).items()
+            if isinstance(table, dict)}
+
+
+def kept(name: str, stream: Stream, recorded: dict[str, dict]) -> dict | None:
+    """The recorded entry of a stream already written with these settings, or None."""
+    entry = recorded.get(stream.group, {}).get(name)
+    files = [DESTINATION / f'{name}{stream.suffix}']
+    if stream.mp4:
+        files.append(files[0].with_suffix('.mp4'))
+    if entry is None or not all(path.exists() for path in files):
+        return None
+    same = (entry['size'] == list(stream.size) and entry['depth'] == stream.depth
+            and entry['coding'] == ' '.join(stream.coding)
+            and len(entry['md5']) == stream.frames)
+    return entry if same else None
+
+
+def write_table(codec: str, version: str, rewrite: bool = False) -> None:
+    """Write the streams of `codec` not yet written, and the table that lists them all.
+
+    rewrite -- write every stream again, the ones already there included
+    """
+    recorded = {} if rewrite else recorded_tables(codec)
     tables: dict[str, dict] = {'streams': {}}
     for name, stream in STREAMS.items():
         if stream.codec != codec:
             continue
-        path = encode(name, stream)
         table = tables.setdefault(stream.group, {})
+        entry = kept(name, stream, recorded)
+        if entry is not None:
+            table[name] = entry
+            print(f'{entry["file"]}: kept')
+            continue
+        path = encode(name, stream)
         table[name] = {
             'size': list(stream.size),
             'depth': stream.depth,
@@ -409,7 +513,8 @@ def main(argv: list[str]) -> int:
         print('ffmpeg is needed to write the fixtures')
         return 2
     known = sorted({stream.codec for stream in STREAMS.values()})
-    wanted = argv[1:] or known
+    rewrite = '--rewrite' in argv
+    wanted = [name for name in argv[1:] if name != '--rewrite'] or known
     unknown = sorted(set(wanted) - set(known))
     if unknown:
         print(f'no fixtures are listed for {", ".join(unknown)}; '
@@ -418,7 +523,7 @@ def main(argv: list[str]) -> int:
     DESTINATION.mkdir(parents=True, exist_ok=True)
     version = run(['ffmpeg', '-version']).decode().splitlines()[0]
     for codec in wanted:
-        write_table(codec, version)
+        write_table(codec, version, rewrite)
     return 0
 
 

@@ -1,11 +1,12 @@
-"""The NVDEC decoder on real hardware, into real OpenGL textures.
+"""The NVDEC decoder on real hardware, into real OpenGL textures: H.264.
 
 H.264 decoding is exact, so every picture of the x264 fixtures must come out
 of the GPU with the bytes ffmpeg's software decoder produced, read back from
 the textures the decoder hands out. Both ways of getting a picture into a
 texture are held to that: the copy on the GPU and the copy through host
-memory. NVENC's streams are decoded too, which is the round trip the encode
-plan asked for.
+memory. NVENC's streams are decoded too, in every codec the GPU both encodes
+and decodes, which is the round trip the encode plan asked for. The other
+codecs' reference streams are in ``test_nvdec_codecs.py``.
 """
 import ctypes
 import json
@@ -38,9 +39,9 @@ from OpenGL.GL import (
     glPixelStorei,
 )
 
-from pyopengl_video import DecoderError, decoders, open_decoder
+from pyopengl_video import DecoderError, decoders, nvdec, nvenc, open_decoder
 from pyopengl_video.annexb import AnnexBReader
-from pyopengl_video.colour import MATRIX_BT601
+from pyopengl_video.colour import MATRIX_BT601, MATRIX_BT709
 from pyopengl_video.convert import NV12Converter, create_output_texture
 from pyopengl_video.decoder import Sample
 from pyopengl_video.mp4 import MP4Reader, MP4Writer
@@ -71,9 +72,15 @@ def samples_of(name, start=0, stop=None):
 
 
 @pytest.fixture(params=[True, False], ids=['on-the-gpu', 'through-host-memory'])
-def decoder(request):
-    """A decoder for each way a picture reaches its textures."""
-    made = NVDECDecoder(interop=request.param)
+def interop(request):
+    """Each way a picture reaches its textures."""
+    return request.param
+
+
+@pytest.fixture
+def decoder(interop):
+    """An H.264 decoder for each way a picture reaches its textures."""
+    made = NVDECDecoder(interop=interop)
     yield made
     made.close()
 
@@ -424,6 +431,13 @@ def read_rgb(texture, size):
     return picture[::-1, :, :3].astype(int)
 
 
+def encodes(codec):
+    """Skip the test unless the GPU behind the context encodes and decodes `codec`."""
+    if codec not in nvenc.session_codecs() or codec not in nvdec.decoder_codecs():
+        pytest.skip(f'this NVIDIA GPU does not both encode and decode {codec}')
+    return codec
+
+
 @pytest.mark.usefixtures('nvenc_available')
 class TestRoundTrip:
     """NVENC's stream, decoded and converted back to RGB."""
@@ -431,9 +445,11 @@ class TestRoundTrip:
     SIZE = (320, 240)
 
     @pytest.mark.parametrize('bframes', [0, 2])
-    def test_what_was_encoded_comes_back(self, decoder, upload_texture, bframes):
+    @pytest.mark.parametrize('codec', ['h264', 'hevc', 'av1'])
+    def test_what_was_encoded_comes_back(self, interop, upload_texture, codec, bframes):
         frames = [gradient_frame(*self.SIZE, phase=index) for index in range(12)]
-        packets = encode(frames, self.SIZE, upload_texture, gop=10, bframes=bframes)
+        packets = encode(frames, self.SIZE, upload_texture, codec=encodes(codec), gop=10,
+                         bframes=bframes)
         converter = NV12Converter()
         target = create_output_texture(*self.SIZE)
         errors = {}
@@ -444,6 +460,7 @@ class TestRoundTrip:
             difference = read_rgb(target, self.SIZE) - frames[frame.timestamp // TICK][..., :3]
             errors[frame.timestamp // TICK] = float(np.abs(difference).mean())
 
+        decoder = NVDECDecoder(codec, interop=interop)
         try:
             for index, packet in enumerate(packets):
                 sample = Sample(packet.data, packet.timestamp, packet.duration,
@@ -452,7 +469,10 @@ class TestRoundTrip:
                     compare(frame)
             for frame in decoder.flush():
                 compare(frame)
+            # NVENC states BT.709 at any size, and the decoder reads it back.
+            assert decoder.colour.matrix == MATRIX_BT709
         finally:
+            decoder.close()
             converter.close()
             glDeleteTextures([target])
         assert sorted(errors) == list(range(len(frames)))
@@ -462,11 +482,13 @@ class TestRoundTrip:
 @pytest.mark.usefixtures('nvenc_available')
 class TestPlayingOnTheGPU:
     @pytest.mark.parametrize('backend', ['nvdec', 'nvdec-copy'])
-    def test_a_recording_plays_back_frame_by_frame(self, tmp_path, upload_texture, backend):
+    @pytest.mark.parametrize('codec', ['h264', 'hevc', 'av1'])
+    def test_a_recording_plays_back_frame_by_frame(self, tmp_path, upload_texture, codec,
+                                                   backend):
         size = (320, 240)
         frames = [gradient_frame(*size, phase=index * 3) for index in range(20)]
         path = tmp_path / 'recorded.mp4'
-        encoder = NVENCEncoder(*size, fps=30, bitrate=8_000_000, gop=8)
+        encoder = NVENCEncoder(*size, codec=encodes(codec), fps=30, bitrate=8_000_000, gop=8)
         source = upload_texture(frames[0])
         try:
             handles = [encoder.new_input() for _ in range(encoder.input_slots)]
@@ -481,6 +503,7 @@ class TestPlayingOnTheGPU:
             encoder.close()
 
         with Movie.open(path) as movie:
+            assert movie.codec == codec
             playing = movie.player(backend=backend)
             try:
                 for index in [*range(20), 3, 15, 0]:

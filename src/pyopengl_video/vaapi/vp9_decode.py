@@ -12,24 +12,12 @@ import logging
 from collections.abc import Sequence
 
 from pyopengl_video import codecs
-from pyopengl_video.colour import (
-    MATRIX_BT601,
-    MATRIX_BT709,
-    MATRIX_BT2020,
-    MATRIX_SMPTE240,
-    MATRIX_UNSPECIFIED,
-    Colour,
-)
+from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecoderError, Sample
 from pyopengl_video.vaapi import api, vp9_api
 from pyopengl_video.vaapi.control import Buffer, DecodeControl, DecodeSession, Format
 from pyopengl_video.vaapi.h264 import StreamError
 from pyopengl_video.vaapi.vp9_parse import (
-    CS_BT_601,
-    CS_BT_709,
-    CS_BT_2020,
-    CS_SMPTE_170,
-    CS_SMPTE_240,
     INTRA_FRAME,
     MAX_SEGMENTS,
     NUM_REF_FRAMES,
@@ -39,6 +27,7 @@ from pyopengl_video.vaapi.vp9_parse import (
     SEG_LVL_SKIP,
     DecodingState,
     FrameHeader,
+    colour_of,
     is_key_frame,
     parse_uncompressed_header,
     split_superframe,
@@ -61,21 +50,6 @@ SAMPLINGS = {(1, 1): '4:2:0', (1, 0): '4:2:2', (0, 1): '4:4:0', (0, 0): '4:4:4'}
 
 MAX_LOOP_FILTER = 63
 MAX_Q_INDEX = 255
-
-#: The H.273 matrix, primaries and transfer each VP9 colour space names. A
-#: colour space not listed states none of them.
-COLOUR_SPACES = {
-    CS_BT_601: (MATRIX_BT601, 2, 2),
-    CS_BT_709: (MATRIX_BT709, 1, 1),
-    CS_SMPTE_170: (MATRIX_BT601, 6, 6),
-    CS_SMPTE_240: (MATRIX_SMPTE240, 7, 7),
-    CS_BT_2020: (MATRIX_BT2020, 9, 2),
-}
-
-#: Chroma samples sit on the luma sample above and left of them, which is
-#: where VP9 puts them when nothing outside the stream says otherwise (7.2.2).
-CHROMA_COLOCATED = 2
-
 
 def profile_for(header: FrameHeader) -> int:
     """The libva profile a frame decodes under; refuses what is not decoded here."""
@@ -224,15 +198,6 @@ def slice_parameters(header: FrameHeader, size: int) -> vp9_api.VASliceParameter
          target.chroma_ac_quant_scale, target.chroma_dc_quant_scale) = quantiser_scales(
              header, segment)
     return parameters
-
-
-def colour_of(header: FrameHeader) -> Colour:
-    """A frame's colour description, the matrix chosen where it states none."""
-    matrix, primaries, transfer = COLOUR_SPACES.get(
-        header.colour.color_space, (MATRIX_UNSPECIFIED, 2, 2))
-    return Colour(matrix=matrix, full_range=bool(header.colour.color_range),
-                  primaries=primaries, transfer=transfer,
-                  chroma_location=CHROMA_COLOCATED).resolved(header.height)
 
 
 # ------------------------------------------------------------ the layer

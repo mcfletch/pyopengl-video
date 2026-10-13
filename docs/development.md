@@ -69,6 +69,8 @@ src/pyopengl_video/
     nvenc/encoder.py    the encoder: register, map, encode, lock, unmap
     nvdec/api.py    ctypes over NVDEC and the CUDA driver API it decodes into
     nvdec/decoder.py    the decoder: parser callbacks, the copy into textures
+    nvdec/description.py    the picture size and colour read here, for each codec
+    nvdec/vp9.py    the VP9 reference slots, for a frame shown again
     vpl/api.py      ctypes over oneVPL: packed structures, status names, entry points
     vpl/allocator.py    the Direct3D 11 surfaces the runtime allocates through us
     vpl/encoder.py  the encoder: shared textures in, a stream out
@@ -376,8 +378,8 @@ every `VA*` constant in the binding modules.
 
 Decoding these codecs is exact, so every correct decoder produces the same
 bytes. The hardware tests (`tests/test_vaapi_decode.py`,
-`test_nvdec_decode.py`, `test_hevc_decode.py`, `test_av1_decode.py`,
-`test_vp9_decode.py`) decode each
+`test_nvdec_decode.py`, `test_nvdec_codecs.py`, `test_hevc_decode.py`,
+`test_av1_decode.py`, `test_vp9_decode.py`) decode each
 stream under `tests/data/decode/` and read the planes back from the textures:
 NV12 from an 8-bit stream, P010 from a 10-bit one. Each picture's MD5 must
 equal the one `ffmpeg`'s software decoder recorded. The streams come from
@@ -385,11 +387,18 @@ x264, x265, libaom, SVT-AV1 and libvpx, and use what our encoders do not
 write: B-frame pyramids, weighted prediction, several slices or tiles a
 picture, scaling matrices, hidden frames, film grain and open groups of
 pictures. One interlaced H.264 stream is recorded apart from those, under
-`interlaced` in its table, for the NVDEC backends.
-`python tools/make_decode_fixtures.py` rewrites every stream and
-checksum, and `python tools/make_decode_fixtures.py hevc av1` those codecs
-alone. Each codec has its own table, `tests/data/decode/<codec>.json`. The
-suite needs neither `ffmpeg` nor the tool.
+`interlaced` in its table, for the NVDEC backends. So are the HEVC, VP9 and
+AV1 streams under `large`: each is at least 144 samples each way, the
+smallest picture an NVIDIA decoder takes in HEVC (128 in VP9 and AV1), where
+most of the others are smaller. `test_nvdec_codecs.py` decodes those, and
+checks that a smaller one is refused by its size.
+`python tools/make_decode_fixtures.py` writes the streams listed in it that
+are not yet under `tests/data/decode/`, with their checksums, and
+`python tools/make_decode_fixtures.py hevc av1` those codecs alone. A stream
+already written with the settings listed is kept, since an encoder run twice
+does not always write the same bytes; `--rewrite` writes every stream again.
+Each codec has its own table, `tests/data/decode/<codec>.json`. The suite
+needs neither `ffmpeg` nor the tool.
 
 A parser is checked against `ffmpeg -bsf:v trace_headers`, which prints every
 header field of a stream as a reference parser reads it. The values are
@@ -439,14 +448,19 @@ calls them before it returns:
   hardware decoder at the coded size, and answers with the number of decode
   surfaces the parser may cycle through.
 - the decode callback, for each picture in decoding order. Its parameters go
-  to `cuvidDecodePicture` unread.
+  to `cuvidDecodePicture` as the parser built them.
 - the display callback, for each picture in display order, with the timestamp
   of the sample it came from.
 
 The parser reuses a picture as soon as the display callback returns, so the
 copy out happens inside it: `cuvidMapVideoFrame64` gives the address and pitch
-of an NV12 picture, and each plane is copied by `cuMemcpy2D` into a texture.
-Chroma starts one coded height of rows below luma. The `nvdec` backend's
+of the picture, and each plane is copied by `cuMemcpy2D` into a texture.
+Chroma starts one picture height of rows below luma. An 8-bit stream is
+decoded to NV12 and a 10-bit one to P016, two bytes a sample with the sample
+in the high bits, which is P010's layout; `SURFACES` in `nvdec/decoder.py`
+holds the two. The picture is mapped at its coded size made even each way:
+VP9 and AV1 code pictures of odd sizes, and the decoder scales a picture
+asked for at one. The `nvdec` backend's
 textures are registered with `cuGraphicsGLRegisterImage` and mapped around the
 copy, which stays on the GPU; `nvdec-copy` copies to host memory and uploads
 with `glTexSubImage2D`.
@@ -459,12 +473,34 @@ A seek destroys the parser and makes a new one, which holds no references.
 The new parser reports the sequence again, and a sequence equal to the one
 in use keeps its hardware decoder and its textures.
 
+The parser reads H.264, HEVC, VP9 and AV1, and one `NVDECDecoder` serves all
+four. Two things come from this package's own parsers instead
+(`nvdec/description.py`): the picture size before the first sample, and the
+colour description. The parser never reports where chroma samples sit, and
+for VP9 it reports no colour at all.
+
+VP9 has two more differences, both in `nvdec/vp9.py` and the decoder's
+`_decode_vp9`:
+
+- The parser shows no picture for a frame that is `show_existing_frame`. The
+  decoder reads each frame's header for the reference slots it is stored in,
+  takes the picture it was decoded into from the decode callback
+  (`CUVIDPICPARAMS.CurrPicIdx`), and maps the slot's picture itself when a
+  frame says to show it again. Each frame of a superframe is handed to the
+  parser by itself, so the next decode callback is that frame's.
+- Once a sample has held more than one frame, the parser times each picture
+  by another sample than its own. VP9 has no reordering, so the parser is
+  given no display delay and a picture shown takes the timestamp of the
+  sample being parsed.
+
 What the decoder decides without a driver is in plain objects, tested in
 `tests/test_nvdec.py` on any machine: `Sequence` (what a stream needs and what
 refuses it), `Presentation` (durations, and the leading pictures dropped after
-a seek), `Outputs` (the texture pairs lent and returned) and `plane_copies`.
-`tests/test_nvdec_decode.py` is the checksum comparison on the hardware, for
-both ways of copying.
+a seek), `Outputs` (the texture pairs lent and returned), `SurfaceFormat` and
+`plane_copies`. `tests/test_nvdec_description.py` and `tests/test_nvdec_vp9.py`
+cover the two modules above the same way. `tests/test_nvdec_decode.py` (H.264)
+and `tests/test_nvdec_codecs.py` (HEVC, VP9 and AV1) are the checksum
+comparison on the hardware, for both ways of copying.
 
 ## Style and licensing
 
