@@ -48,8 +48,11 @@ libva has no driver for the GPU in this container, so what a VA driver does
 with a bad value was not observed. "Reaches the driver" below means the value
 was read back from the ctypes buffer handed to the device.
 
-No segmentation fault or abort was provoked through a decoder. One native
-crash was found, in the Annex-B reader (C3).
+Native crashes found: three ways to a segmentation fault through NVDEC's AV1
+decoding (N1 to N3), one through an NVENC input handle (N5), one in ctypes for
+a null function-table entry (N9), a hang at exit (N4), and a SIGBUS in the
+Annex-B reader (C3). H.264, HEVC and VP9 through NVDEC, and every codec through
+the VA-API control layers, raised the package's errors and nothing else.
 
 ## Status
 
@@ -263,8 +266,36 @@ and `DecoderError`.
 
 ### N. NVENC and NVDEC
 
-Review in progress when this was written; findings are added below as they
-arrive.
+Run on the RTX 3060 Ti here, driver 580.178.04, NVENC API 13.0. About 3,000
+mutated H.264, HEVC and VP9 streams through NVDEC, on both transfers, raised
+the package's errors and nothing else. AV1 did not survive: every batch of
+mutated AV1 ended in a segmentation fault inside `libnvcuvid` within five
+cases. The saved inputs and the backtraces are kept with the review's scratch
+files and are named in the tests that hold each fix.
+
+| Id | Where | Finding | Status |
+|---|---|---|---|
+| N1 | `nvdec/decoder.py` `_on_decode` | **Segmentation fault.** An AV1 stream whose first decoded sample is not a key frame (after `reset()`, from a truncated file, or from a container that misstates `keyframe`) makes NVIDIA's parser build a picture whose reference indexes are 0xFF or name a picture the hardware never decoded; the callback passes it to `cuvidDecodePicture` unchanged and the driver dereferences it. 14 of 15 fixture and start-point combinations crash, with no mutation at all. | Open |
+| N2 | `nvdec/decoder.py` `_on_decode` | **Segmentation fault.** A truncated AV1 temporal unit gives `nBitstreamDataLen = 0xFFFFFFF4`, and `cuvidDecodePicture` copies that many bytes. | Open |
+| N3 | `cuvidParseVideoData` | **Segmentation fault inside NVIDIA's parser**, with no callback of this package on the stack: one flipped bit in an AV1 sequence header (`order_hint_bits` 7 to 5) makes it read at the payload pointer plus a 32-bit offset from the stream. `describe()` and `obu.split` accept the packet. | Open |
+| N4 | `nvenc/encoder.py` `close`, `__del__` | **The process hangs at exit.** `close()` sets `_closed` and then releases with no `try`: a failure (OpenGL already torn down at interpreter shutdown, or no context current) skips `nvEncDestroyEncoder` for good, and the driver's exit handler then waits on a worker thread that never finishes. | Open |
+| N5 | `nvenc/encoder.py` `encode` | **Segmentation fault.** A handle another encoder registered, or one from a closed encoder, is passed to `nvEncMapInputResource`. | Open |
+| N6 | `nvdec/decoder.py` `_show`, `copy_out` | `picture_index` is not checked against the surfaces the decoder was made with. When a sequence keeps its size and changes its buffer count, the parser's queued pictures are mapped from the new decoder: the caller is lent a frame of driver fill, 43 times in 550 cases. | Open |
+| N7 | `nvdec/decoder.py` `_open` | A refused sequence leaves the old session in place, and the new sequence's pictures are handed to the old decoder. | Open |
+| N8 | `nvenc/encoder.py` `encode` | A submission is queued before the status of `nvEncEncodePicture` is read; after a failure the next call returns an empty packet with an earlier timestamp. | Open |
+| N9 | `nvenc/api.py` | A function-table entry is wrapped in its prototype with no test for null; calling a null one is a segmentation fault in ctypes. A driver older than the header leaves the newer entries null. | Open |
+| N10 | `nvdec/decoder.py` | Plane textures are made and deleted with no record of their context (the hazard V2 fixed elsewhere): with no context current `close()` leaks them silently, and the host-memory transfer returns a frame whose textures were never made. | Open |
+| N11 | `nvenc/encoder.py` | Output buffers of pending submissions are never destroyed at close; a `_read` or `_acquire_output` that raises leaves a mapping behind. | Open |
+| N12 | `nvenc/encoder.py` | `fps=(1, 0)` raises `ZeroDivisionError`; `bframes=-10` gives `input_slots = -8`; a bit rate or group length of 2^40 is truncated into a 32-bit field. | Open |
+| N13 | `tests/nvenc_abi.json`, `tests/nvdec_abi.json` | Bit-field positions are not recorded: 107 bit-fields in nine structures. | Open |
+| N14 | `nvdec/decoder.py` `Upload.copy` | `GL_UNPACK_SWAP_BYTES` is not reset, so a renderer that left it set gets 10-bit uploads byte-swapped. | Open |
+
+Sound: all 43 CUDA, cuvid and NVENC entry points carry their types; every NVENC
+structure passed has its `version` set; the three parser callbacks are held for
+the parser's life, trap every exception and re-raise it after the parser
+returns, and keep nothing the parser lent them; every copy out of a mapped
+picture is sized from the same sequence as its destination; the CUDA context
+stack is balanced after decode, a raising flush, reset and close.
 
 ## Still open
 
