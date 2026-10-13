@@ -270,7 +270,7 @@ def picture_parameters(sequence: SequenceHeader, header: FrameHeader,
         for index, value in enumerate(header.gm_params[ref]):
             warp.wmmat[index] = value
         warp.invalid = int(not warp_valid(header.gm_params[ref]))
-    return parameters.target  # type: ignore[no-any-return]  # the structure Checked wraps
+    return parameters.target
 
 
 def tile_parameters(tile: Tile) -> av1_api.VASliceParameterBufferAV1:
@@ -281,7 +281,7 @@ def tile_parameters(tile: Tile) -> av1_api.VASliceParameterBufferAV1:
     parameters.slice_data_flag = api.VA_SLICE_DATA_FLAG_ALL
     parameters.tile_row = tile.row
     parameters.tile_column = tile.column
-    return parameters.target  # type: ignore[no-any-return]  # the structure Checked wraps
+    return parameters.target
 
 
 # ------------------------------------------------------------ the layer

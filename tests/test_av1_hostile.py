@@ -298,6 +298,16 @@ class TestColourConfig:
             color = sequence.parsed().color_config
             assert (color.subsampling_x, color.subsampling_y) == (0, 0)
 
+    def test_the_reserved_chroma_sample_position_is_refused(self):
+        assert Sequence(chroma_sample_position=2).parsed().color_config.chroma_sample_position == 2
+        with pytest.raises(StreamError, match='chroma_sample_position'):
+            Sequence(chroma_sample_position=3).parsed()
+
+    def test_a_reduced_header_is_a_still_picture_s(self):
+        """seq_profile 0, still_picture 0, reduced_still_picture_header 1."""
+        with pytest.raises(StreamError, match='still'):
+            parse_sequence_header(bytes([0b00001000, 0, 0, 0, 0, 0, 0, 0]))
+
     def test_an_identity_matrix_is_444(self):
         with pytest.raises(StreamError, match='identity'):
             Sequence(colour=(9, 16, 0)).parsed()

@@ -279,7 +279,7 @@ with MP4Reader('movie.mp4') as movie:
   converted, held for OpenGL until the frame is released. The picture sits at `visible`, first row at the top, inside
   textures of `texture_size`. Release every frame: a decoder with all its
   textures lent raises `DecoderError` naming the frames held. A caller may
-  hold `output_slots` frames at once, 4 by default and 1 to 64 on VA-API. On
+  hold `output_slots` frames at once, 4 by default and 1 to 64. On
   VA-API the textures are the decode surfaces themselves; on NVDEC and oneVPL
   each frame is a copy of the picture in textures of its own.
 - `NV12Converter.convert(frame, target)` draws a frame of any layout into
@@ -300,9 +300,29 @@ with MP4Reader('movie.mp4') as movie:
   refused. When a stream changes to a size the device refuses, the decoder
   holds no surfaces and refuses each picture until a sequence begins that the
   device takes.
+- An NVDEC decoder copies each picture into textures of the OpenGL context
+  it was opened in. `decode()` and `flush()` raise `DecoderError` with
+  another context current, or none, and decode again once its own is.
+- An NVDEC decoder reads each picture NVIDIA's parser builds before the
+  hardware is handed it. A picture that states more bitstream than the
+  parser was fed, names a surface the decoder was not made with, or predicts
+  from a picture the hardware has not decoded raises `DecoderError` and is
+  not decoded. A stream that changes to a sequence the GPU refuses leaves
+  the decoder with no hardware decoder until a sequence begins that it takes.
+- An AV1 sample is read by this package's own parser before NVIDIA's on the
+  NVDEC backends. A sample that breaks the AV1 specification raises
+  `DecoderError` and is not handed over. Decoding then waits for the next
+  key frame that is shown, and the samples before it return no frames; so do
+  the samples before the first key frame of a stream, and those after a
+  `reset()`. An OBU with no size field, a tile list OBU and a frame that
+  ends in another sample than it began in are refused. NVIDIA's parser is
+  handed the temporal delimiter, the sequence headers, the frame headers and
+  the tile groups of a sample; its metadata and padding OBUs are left out,
+  and so are those of an MP4's `av1C` configuration.
 - Close a decoder and an `NV12Converter` with the OpenGL context they were
   made in current. A VA-API decoder releases its libva objects, the display
-  and the render node whichever context is current; its textures, and the
+  and the render node whichever context is current, and an NVDEC decoder its
+  parser and its hardware decoders; a decoder's textures, and the
   converter's program and framebuffers, are objects of that one context. With
   another current, or none, they are kept, `DecoderError` says so, and
   closing again with the right context current gives them back.
@@ -367,7 +387,13 @@ whichever is named.
   was read into; a frame shown again from one of those is left out, with a
   warning in the log.
 - A sample that is not AV1 at all raises `DecoderError` on the NVDEC
-  backends. One that is not H.264, HEVC or VP9 produces no picture.
+  backends, as does one that breaks the AV1 specification: NVIDIA's AV1
+  parser is handed only what this package's own has read. One that is not
+  H.264, HEVC or VP9 produces no picture.
+- When a stream changes to a sequence of another size with no flush, the
+  pictures NVIDIA's parser still held of the sequence before are shown after
+  their decoder has gone. The NVDEC backends leave those out, with a warning
+  in the log.
 - An AV1 picture is its coded frame. A stream whose render size differs from
   its frame size is shown at the frame size.
 
@@ -376,7 +402,9 @@ whichever is named.
 A decoder raises `DecoderError`. On VA-API it carries libva's, the DMA-BUF
 shim's or the parser's error as its cause. On NVDEC a failed driver call is a
 `CUDAError`, a `DecoderError` with the driver's `status`, its `name` (such as
-`CUDA_ERROR_INVALID_VALUE`) and the `call` that returned it.
+`CUDA_ERROR_INVALID_VALUE`) and the `call` that returned it. A picture or an
+AV1 sample the NVDEC backends refuse before the driver sees it is a plain
+`DecoderError`, with the parser's `StreamError` as its cause for a sample.
 `DecoderUnavailable` means no backend here
 decodes the stream. Its message includes each unavailable backend's reason.
 `EncoderError` and `DecoderError` share the base `VideoError`, so one
@@ -442,7 +470,17 @@ with an NVIDIA GPU. The context then stays for the life of the process, the
 first decoder opens in about 25 ms and each later one in about 1 ms. A stream's first picture takes about 30 ms more,
 which is the driver creating its hardware decoder. Closing a decoder returns
 in about 1 ms: the driver's own teardown takes up to 240 ms, and runs on a
-thread of its own so the thread that draws does not wait for it.
+thread of its own so the thread that draws does not wait for it. Hardware
+decoders are made and destroyed one at a time, so a stream whose first
+picture arrives while another decoder is being torn down waits for that to
+finish: about 260 ms for a decoder opened as the only other one in the
+process closes, in any codec. The driver makes an H.264 decoder wait that long
+by itself, and an HEVC one 170 ms. To change movies without the wait, decode
+the new movie's first frame before closing the old player: a decoder torn
+down while another is open takes 36 ms, and the new one is already made.
+
+Reading an AV1 sample before NVIDIA's parser does takes about 0.06 ms a
+sample for a 150x146 stream, on the thread that decodes.
 
 ## Threading
 

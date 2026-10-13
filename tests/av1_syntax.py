@@ -58,6 +58,7 @@ class Sequence:
     operating_points: tuple[int, ...] = (0,)
     colour: tuple[int, int, int] | None = None
     color_range: int = 0
+    chroma_sample_position: int = 0
 
     def payload(self):
         """The sequence header OBU's payload."""
@@ -111,7 +112,7 @@ class Sequence:
                     writer.flag(self.subsampling[1])
             if self.profile == 0 or (self.profile == 2 and self.twelve_bit
                                      and self.subsampling == (1, 1)):
-                writer.f(0, 2)                  # chroma_sample_position
+                writer.f(self.chroma_sample_position, 2)
         if not self.mono_chrome:
             writer.flag(0)                      # separate_uv_delta_q
         writer.flag(self.film_grain)

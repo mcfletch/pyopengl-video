@@ -21,6 +21,12 @@ of its channel), as :data:`SURFACES` lists. Two transfers do the copy:
 - :class:`Upload` copies the picture to host memory and uploads it, for a
   context on another vendor's GPU.
 
+The parser is not trusted with what it builds. Each picture it asks to have
+decoded is read first (:mod:`pyopengl_video.nvdec.guard`), and one that
+states more bitstream than the parser was fed, or predicts from a picture the
+hardware never decoded, is refused. An AV1 sample is read by this package's
+own parser before NVIDIA's sees it (:mod:`pyopengl_video.nvdec.av1`).
+
 What the decoder decides without a driver is in :class:`Sequence`,
 :class:`Presentation`, :class:`Outputs` and :func:`plane_copies`, which the
 suite checks on any machine. :mod:`pyopengl_video.nvdec.description` reads the
@@ -58,6 +64,7 @@ from OpenGL.GL import (
     GL_UNPACK_ROW_LENGTH,
     GL_UNPACK_SKIP_PIXELS,
     GL_UNPACK_SKIP_ROWS,
+    GL_UNPACK_SWAP_BYTES,
     GL_UNSIGNED_BYTE,
     GL_UNSIGNED_SHORT,
     glBindBuffer,
@@ -71,14 +78,16 @@ from OpenGL.GL import (
     glTexSubImage2D,
 )
 
-from pyopengl_video import codecs
+from pyopengl_video import bounds, codecs
 from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecodedFrame, Decoder, DecoderError, Sample
-from pyopengl_video.nvdec import api
+from pyopengl_video.glcontext import Owner
+from pyopengl_video.nvdec import api, guard
+from pyopengl_video.nvdec.av1 import Gate
 from pyopengl_video.nvdec.description import Description, describe
 from pyopengl_video.nvdec.vp9 import Frame, Slots
 from pyopengl_video.presentation import Outputs, Presentation
-from pyopengl_video.vaapi.h264 import StreamError
+from pyopengl_video.teardown import release_all
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +98,10 @@ __all__ = ['DEFAULT_OUTPUT_SLOTS', 'DEINTERLACE_MODES', 'Interop', 'NVDECDecoder
 #: How many decoded frames a caller may hold at once, unless it says otherwise.
 #: A player converts each frame as it arrives and holds none for long.
 DEFAULT_OUTPUT_SLOTS = 4
+
+#: The most frames a caller may ask to hold at once: each is a pair of
+#: textures the size of the picture.
+MOST_OUTPUT_SLOTS = 64
 
 #: How an interlaced picture becomes one frame, by the name a caller gives:
 #: ``'weave'`` interleaves the two fields as they were coded, ``'bob'`` scales
@@ -290,6 +303,16 @@ class Sequence:
         if macroblocks > capabilities.nMaxMBCount:
             return (f'a {width}x{height} picture is {macroblocks} macroblocks, and '
                     f'{device} decodes up to {int(capabilities.nMaxMBCount)}')
+        if self.surfaces < 1:
+            return 'the parser asks for a decoder with no decode surfaces'
+        left, top, visible_width, visible_height = self.visible
+        surface_width, surface_height = self.surface_size
+        if not (left >= 0 and top >= 0 and visible_width >= 1 and visible_height >= 1
+                and left + visible_width <= surface_width
+                and top + visible_height <= surface_height):
+            return (f'the parser states a visible picture of {visible_width}x'
+                    f'{visible_height} at ({left}, {top}), which is not inside the '
+                    f'{surface_width}x{surface_height} it is decoded at')
         return ''
 
 
@@ -354,6 +377,10 @@ class Transfer(Protocol):
 def _plane_texture(internal_format: int, width: int, height: int) -> int:
     """An immutable plane texture, leaving the 2D binding as it was."""
     texture = int(glGenTextures(1))
+    if not texture:
+        raise DecoderError(
+            'OpenGL made no texture for a decoded picture: no OpenGL context is '
+            'current on this thread')
     previous = int(glGetIntegerv(GL_TEXTURE_BINDING_2D))
     glBindTexture(GL_TEXTURE_2D, texture)
     try:
@@ -461,10 +488,13 @@ class Upload:
                        'device memory to host memory')
         uploads = zip(pair.planes, (GL_RED, GL_RG), self._sizes, buffers, strict=True)
         # A renderer may have left any of these set, and each changes what
-        # glTexSubImage2D reads from the buffer.
+        # glTexSubImage2D reads from the buffer: where a row begins, and the
+        # order of the two bytes of a 16-bit sample. The rest of the pixel
+        # store applies to bitmaps and to three-dimensional images.
         packing = {name: int(glGetIntegerv(name))
                    for name in (GL_UNPACK_ALIGNMENT, GL_UNPACK_ROW_LENGTH,
-                                GL_UNPACK_SKIP_ROWS, GL_UNPACK_SKIP_PIXELS)}
+                                GL_UNPACK_SKIP_ROWS, GL_UNPACK_SKIP_PIXELS,
+                                GL_UNPACK_SWAP_BYTES)}
         unpack_buffer = int(glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING))
         texture = int(glGetIntegerv(GL_TEXTURE_BINDING_2D))
         try:
@@ -494,17 +524,31 @@ class _Session:
     The decoder is made when the parser reports the sequence. Texture pairs
     are made as they are first needed (:class:`Outputs`), and each is kept for
     the session's life.
+
+    owner -- the OpenGL context the textures are made in
+    decoded -- the pictures the hardware decoder has decoded, by index, which
+        are the ones a later picture may predict from and the ones that may
+        be shown
     """
+
+    #: Held while a hardware decoder is made or destroyed, in any session. A
+    #: decoder is destroyed on a thread of its own (:meth:`stop`), so without
+    #: it the next one is made while that is under way, and the driver has
+    #: faulted inside ``cuvidDestroyDecoder`` with a second destroy and a
+    #: ``cuvidCreateDecoder`` running beside it.
+    lifecycle = threading.Lock()
 
     def __init__(self, cuda: api.Cuda, cuvid: api.Cuvid, context: c_void_p,
                  sequence: Sequence, surface: SurfaceFormat, transfer: Transfer,
-                 slots: int, deinterlace: int) -> None:
+                 slots: int, deinterlace: int, owner: Owner) -> None:
         self.cuda = cuda
         self.cuvid = cuvid
         self.context = context
         self.sequence = sequence
         self.surface = surface
         self.transfer = transfer
+        self.owner = owner
+        self.decoded: set[int] = set()
         self.decoder = c_void_p()
         # Every picture the parser holds may be shown by one flush, on top of
         # the frames the caller already keeps.
@@ -525,9 +569,10 @@ class _Session:
         # conversion pass's to apply, as it is for every backend.
         information.display_area.right = mapped_width
         information.display_area.bottom = mapped_height
-        cuda.check(cuvid.cuvidCreateDecoder(ctypes.byref(self.decoder),
-                                            ctypes.byref(information)),
-                   'cuvidCreateDecoder',
+        with self.lifecycle:
+            status = cuvid.cuvidCreateDecoder(ctypes.byref(self.decoder),
+                                              ctypes.byref(information))
+        cuda.check(status, 'cuvidCreateDecoder',
                    f'{width}x{height} {surface.name}, {sequence.surfaces} surfaces')
 
     def _pair(self) -> TexturePair:
@@ -543,14 +588,41 @@ class _Session:
             raise
         return pair
 
-    def decode(self, parameters: int) -> None:
-        """Hand one picture's parameters, as the parser built them, to the hardware."""
-        self.cuda.check(self.cuvid.cuvidDecodePicture(self.decoder, parameters),
-                        'cuvidDecodePicture')
+    def decode(self, picture: api.CUVIDPICPARAMS, fed: int) -> None:
+        """Hand one picture's parameters, as the parser built them, to the hardware.
+
+        fed -- the bytes handed to the parser that no picture has yet been
+            decoded from
+
+        Raises :class:`DecoderError` for a picture :func:`guard.refusal`
+        names a fault in, which the hardware is then not handed.
+        """
+        codec = self.sequence.codec
+        refused = guard.refusal(picture, codec=codec, surfaces=self.sequence.surfaces,
+                                decoded=self.decoded, fed=fed)
+        # The parser takes the picture as decoded into whatever happens here,
+        # so what its index held before is no longer a picture to predict from.
+        targets = guard.targets(codec, picture)
+        self.decoded.difference_update(targets)
+        if refused:
+            raise DecoderError(f'a picture NVIDIA\'s parser built is refused: {refused}')
+        self.cuda.check(
+            self.cuvid.cuvidDecodePicture(self.decoder, ctypes.byref(picture)),
+            'cuvidDecodePicture')
+        self.decoded.update(targets)
+
+    def forget_pictures(self) -> None:
+        """Hold no decoded picture: the parser that named them was replaced."""
+        self.decoded.clear()
 
     def copy_out(self, picture: api.CUVIDPARSERDISPINFO, pair: TexturePair) -> None:
         """Copy a displayed picture into `pair`, waiting for its decode to finish."""
         cuda, cuvid = self.cuda, self.cuvid
+        index = int(picture.picture_index)
+        if not 0 <= index < self.sequence.surfaces:
+            raise DecoderError(
+                f'the parser shows picture {index} of a decoder made with '
+                f'{self.sequence.surfaces}')
         processing = api.CUVIDPROCPARAMS(
             progressive_frame=picture.progressive_frame,
             top_field_first=picture.top_field_first,
@@ -574,46 +646,83 @@ class _Session:
         on an RTX 3060 Ti. It needs the CUDA context and no OpenGL, so it runs
         on a thread of its own and the thread that draws does not wait for it.
         The interpreter joins the thread before it exits.
+
+        Decoders are destroyed one at a time, and none is made while one is
+        being destroyed (:attr:`lifecycle`): a sequence that begins while a
+        decoder is still going waits for it.
         """
         decoder, self.decoder = self.decoder, c_void_p()
+        self.decoded.clear()
         if decoder:
             threading.Thread(target=self._destroy, args=(decoder,),
                              name='nvdec-destroy').start()
 
     def _destroy(self, decoder: c_void_p) -> None:
-        with self.cuda.current(self.context):
+        with self.lifecycle, self.cuda.current(self.context):
             self.cuvid.cuvidDestroyDecoder(decoder)
 
+    @property
+    def closed(self) -> bool:
+        """Whether :meth:`close` has released everything the session held."""
+        return not self.decoder and not self.outputs.made
+
     def close(self) -> None:
-        """Destroy the decoder and give back every texture pair."""
-        self.stop()
+        """Destroy the decoder and give back every texture pair.
+
+        The hardware decoder is destroyed whichever OpenGL context is
+        current. The textures are objects of the context the session was made
+        in: with another current, or none, they are kept, registered with
+        CUDA as they were, and :class:`DecoderError` says so once the decoder
+        is gone. Closing again with the session's own context current
+        releases them.
+        """
+        release_all(self.stop, self._release_textures)
+
+    def _release_textures(self) -> None:
+        if not self.outputs.made:
+            return
+        self.owner.require("an NVDEC decoder's plane textures", DecoderError)
+        pairs = self.outputs.drain()
+        release_all(functools.partial(self._forget, pairs),
+                    functools.partial(glDeleteTextures,
+                                      [texture for pair in pairs for texture in pair.planes]))
+
+    def _forget(self, pairs: list[TexturePair]) -> None:
         with self.cuda.current(self.context):
-            for pair in self.outputs.made:
+            for pair in pairs:
                 self.transfer.forget(pair)
-        textures = [texture for pair in self.outputs.made for texture in pair.planes]
-        if textures:
-            glDeleteTextures(textures)
-        self.outputs.made.clear()
 
 
 # ------------------------------------------------------------------ decoder
 
 
-def _callback(method: Callable[..., int]) -> Callable[..., int]:
+def _callback(*, shows: bool = False) -> Callable[[Callable[..., int]], Callable[..., int]]:
     """Make a method safe to call from the parser.
+
+    shows -- the callback shows a picture that has already been decoded, so
+        its failure leaves the pictures the stream predicts from as they were
 
     An exception cannot cross the C frames between the parser and
     :meth:`NVDECDecoder._parse`, so it is kept, the parse is failed by
     returning 0, and ``_parse`` raises it once the parser has returned.
     """
-    @functools.wraps(method)
-    def trapping(self: NVDECDecoder, *arguments: Any) -> int:
-        try:
-            return method(self, *arguments)
-        except BaseException as error:  # noqa: BLE001 - re-raised by _parse, outside the C frames
-            self._failure = self._failure or error
-            return 0
-    return trapping
+    def wrap(method: Callable[..., int]) -> Callable[..., int]:
+        @functools.wraps(method)
+        def trapping(self: NVDECDecoder, *arguments: Any) -> int:
+            try:
+                return method(self, *arguments)
+            except BaseException as error:  # noqa: BLE001 - re-raised by _parse, outside the C frames
+                if self._failure is None:
+                    self._failure, self._failed_showing = error, shows
+                return 0
+        return trapping
+    return wrap
+
+
+#: What a decode or a flush with the wrong OpenGL context current is told.
+WRONG_CONTEXT = (
+    'the OpenGL context this decoder was opened in is not current on this '
+    'thread, and its pictures are copied into textures of that context')
 
 
 class NVDECDecoder(Decoder):
@@ -637,6 +746,16 @@ class NVDECDecoder(Decoder):
     :class:`~pyopengl_video.decoder.DecodedFrame` objects, ``'nv12'`` from an
     8-bit stream and ``'p010'`` from a 10-bit one, each holding its own copy
     of the picture.
+
+    The decoder belongs to the OpenGL context current when it is made:
+    :meth:`decode` and :meth:`flush` raise :class:`DecoderError` with another
+    context current, or none.
+
+    An AV1 stream is read by this package's parser before NVIDIA's
+    (:class:`pyopengl_video.nvdec.av1.Gate`). A sample that breaks the AV1
+    specification raises :class:`DecoderError` and is not decoded, and the
+    samples from there to the next key frame are passed over, as are those
+    before the first key frame of a stream or after a :meth:`reset`.
     """
 
     def __init__(self, codec: str = 'h264', *, headers: bytes = b'',
@@ -658,11 +777,18 @@ class NVDECDecoder(Decoder):
                 f'not {deinterlace!r}')
         del size
         self.codec = name
-        self.output_slots = int(output_slots)
+        self.output_slots = bounds.whole(output_slots, 'output_slots', 1,
+                                         MOST_OUTPUT_SLOTS, DecoderError)
         self.zero_copy = bool(interop)
         self._deinterlace = DEINTERLACE_MODES[deinterlace]
         self._headers = bytes(headers)
         self._closed = False
+        #: The context the plane textures are made in, and deleted in.
+        self._owner = Owner.current()
+        #: AV1 alone: what reads each sample before NVIDIA's parser does.
+        self._gate = Gate() if name == codecs.AV1 else None
+        if self._gate is not None:
+            self._headers = self._gate.configure(self._headers)
         self._described: Description | None = None
         self._presentation = Presentation()
         # VP9 alone: the reference slots, the coded frame the parser has been
@@ -675,6 +801,13 @@ class NVDECDecoder(Decoder):
         self._lent: dict[DecodedFrame, tuple[_Session, TexturePair]] = {}
         self._ready: list[DecodedFrame] = []
         self._failure: BaseException | None = None
+        #: Whether that failure was in showing a picture and not in decoding one.
+        self._failed_showing = False
+        #: The bytes handed to the parser that no picture has been decoded
+        #: from, which is the most a picture's bitstream can be.
+        self._unconsumed = 0
+        #: Whether the parser handed the hardware a picture in the call under way.
+        self._pictured = False
         self._parser = c_void_p()
         self._primed = False
         # The parser keeps the addresses of these, so they live as long as it does.
@@ -722,8 +855,9 @@ class NVDECDecoder(Decoder):
         """
         try:
             found = describe(self.codec, data)
-        except StreamError as error:
-            # The hardware may decode a stream this package does not read.
+        except Exception as error:  # noqa: BLE001 - whatever a parser raises of bytes it does not read, the description is not had
+            # The hardware may decode a stream of H.264, HEVC or VP9 that
+            # this package does not read; an AV1 one never gets this far.
             log.debug('the %s description was not read here: %s',
                       codecs.title(self.codec), error)
             self._described = None
@@ -740,7 +874,16 @@ class NVDECDecoder(Decoder):
     def decode(self, sample: Sample) -> list[DecodedFrame]:
         """Decode one access unit; return the frames now ready, in display order."""
         self._check_open()
+        self._require_context()
         data = bytes(sample.data)
+        if self._gate is not None:
+            admitted = self._gate.admit(data)
+            if admitted is None:
+                log.debug('an AV1 sample at %d is passed over: decoding starts at a '
+                          'key frame that is shown', sample.timestamp)
+            if not admitted:
+                return []
+            data = admitted
         if sample.keyframe or not self._primed:
             self._note_description(data)
         with self._cuda.current(self._context):
@@ -762,7 +905,7 @@ class NVDECDecoder(Decoder):
         """
         try:
             frames = slots.frames(data)
-        except StreamError as error:
+        except Exception as error:  # noqa: BLE001 - whatever the parser raises of a sample it does not read, the slots are unknown
             # The hardware may decode what this package does not read: the
             # parser takes the sample whole, and the slots are unknown.
             log.debug('a VP9 sample was not read here: %s', error)
@@ -801,6 +944,7 @@ class NVDECDecoder(Decoder):
     def flush(self) -> list[DecodedFrame]:
         """Return every frame still held back, at the end of a stream."""
         self._check_open()
+        self._require_context()
         with self._cuda.current(self._context):
             try:
                 return self._parse(b'', api.CUVID_PKT_ENDOFSTREAM)
@@ -824,8 +968,15 @@ class NVDECDecoder(Decoder):
             self._parser = c_void_p()
         self._presentation.restart()
         self._primed = False
+        self._unconsumed = 0
+        if self._session is not None:
+            # A new parser numbers its pictures from nothing.
+            self._session.forget_pictures()
         if self._slots is not None:
             self._slots.forget()
+        if self._gate is not None:
+            self._gate.restart()
+            self._gate.configure(self._headers)
 
     def _parse(self, data: bytes, flags: int, timestamp: int = 0) -> list[DecodedFrame]:
         """Hand `data` to the parser; return the frames its callbacks produced."""
@@ -844,15 +995,25 @@ class NVDECDecoder(Decoder):
         packet = api.CUVIDSOURCEDATAPACKET(
             flags=flags, payload_size=len(data), timestamp=timestamp,
             payload=ctypes.cast(ctypes.c_char_p(data), c_void_p) if data else None)
+        self._unconsumed += len(data)
+        self._pictured = False
         status = cuvid.cuvidParseVideoData(self._parser, ctypes.byref(packet))
+        if self._pictured:
+            self._unconsumed = 0
         ready, self._ready = self._ready, []
         failure, self._failure = self._failure, None
+        showing, self._failed_showing = self._failed_showing, False
         try:
             if failure is not None:
                 raise failure
             cuda.check(status, 'cuvidParseVideoData',
                        f'the parser refused {len(data)} bytes of {codecs.title(self.codec)}')
         except BaseException:
+            if self._gate is not None and not showing:
+                # A picture the frames after this one predict from was not
+                # decoded. One that was decoded and could not be shown leaves
+                # the references whole, and the stream decodes on.
+                self._gate.lose()
             for frame in ready:
                 frame.release()
             raise
@@ -860,7 +1021,7 @@ class NVDECDecoder(Decoder):
 
     # ------------------------------------------------- the parser's callbacks
 
-    @_callback
+    @_callback()
     def _on_sequence(self, _user: Any, format: Any) -> int:
         """A sequence begins: make its decoder, unless the one in use suits it."""
         sequence = Sequence.of(format.contents)
@@ -872,6 +1033,25 @@ class NVDECDecoder(Decoder):
         return max(sequence.surfaces, 1)
 
     def _open(self, sequence: Sequence) -> None:
+        """Replace the session with one for `sequence`.
+
+        The session before is retired whatever becomes of the new one: the
+        pictures of a sequence that is refused are not handed to the decoder
+        of the sequence before it. It is retired once the new decoder has
+        been made, so that making it does not wait for the old one to go.
+        """
+        previous, self._session = self._session, None
+        if self._slots is not None:
+            # The pictures the slots named were the decoder's before.
+            self._slots.lose_pictures()
+        try:
+            self._session = self._make_session(sequence)
+        finally:
+            if previous is not None:
+                self._retire(previous)
+
+    def _make_session(self, sequence: Sequence) -> _Session:
+        """A session for `sequence`; :class:`DecoderError` where the GPU does not decode it."""
         cuda, cuvid = self._cuda, self._cuvid
         capabilities = api.CUVIDDECODECAPS(
             eCodecType=sequence.codec, eChromaFormat=sequence.chroma_format,
@@ -879,41 +1059,37 @@ class NVDECDecoder(Decoder):
         cuda.check(cuvid.cuvidGetDecoderCaps(ctypes.byref(capabilities)),
                    'cuvidGetDecoderCaps')
         refusal = sequence.refusal(capabilities, self.device)
-        if refusal:
-            raise DecoderError(refusal)
-        previous, self._session = self._session, None
-        if previous is not None:
-            self._retire(previous)
-        if self._slots is not None:
-            # The pictures the slots named were the decoder's before.
-            self._slots.lose_pictures()
+        surface = sequence.surface_format
+        if refusal or surface is None:
+            raise DecoderError(refusal or 'the stream decodes to no surface format')
         log.debug('%s: decoding %dx%d with %d surfaces', self.device,
                   *sequence.coded_size, sequence.surfaces)
-        surface = sequence.surface_format
-        assert surface is not None, 'refusal() answers for a sequence with no surface format'
         transfer_type = Interop if self.zero_copy else Upload
-        self._session = _Session(cuda, cuvid, self._context, sequence, surface,
-                                 transfer_type(cuda, sequence.surface_size, surface),
-                                 self.output_slots, self._deinterlace)
+        return _Session(cuda, cuvid, self._context, sequence, surface,
+                        transfer_type(cuda, sequence.surface_size, surface),
+                        self.output_slots, self._deinterlace, self._owner)
 
     def _describe(self, sequence: Sequence) -> None:
         self.size = sequence.size
         described = self._described.colour if self._described is not None else sequence.colour
         self.colour = described.resolved(sequence.size[1])
 
-    @_callback
-    def _on_decode(self, _user: Any, parameters: int) -> int:
-        """A picture is ready to decode: the hardware takes it as the parser built it."""
+    @_callback()
+    def _on_decode(self, _user: Any, parameters: Any) -> int:
+        """A picture is ready to decode: the hardware takes it once it has been read here."""
         session = self._session
         if session is None:
             raise DecoderError('the parser asked for a picture before it described a sequence')
-        session.decode(parameters)
+        if not parameters:
+            raise DecoderError('the parser asked for a picture and gave no parameters')
+        picture = parameters.contents
+        session.decode(picture, self._unconsumed)
+        self._pictured = True
         if self._slots is not None and self._coding is not None:
-            picture = ctypes.cast(parameters, ctypes.POINTER(api.CUVIDPICPARAMS)).contents
             self._slots.decoded(self._coding, int(picture.CurrPicIdx))
         return 1
 
-    @_callback
+    @_callback(shows=True)
     def _on_display(self, _user: Any, information: Any) -> int:
         """A picture is due to be shown: copy it out before the parser reuses it."""
         picture = information.contents
@@ -926,6 +1102,13 @@ class NVDECDecoder(Decoder):
         duration = self._presentation.shown(timestamp)
         session = self._session
         if duration is None or session is None:
+            return
+        index = int(picture.picture_index)
+        if index not in session.decoded:
+            # The parser holds pictures back, and shows the ones it held for
+            # the sequence before from whichever decoder is there now.
+            log.warning('the parser shows picture %d at %d, which this decoder has '
+                        'not decoded; the picture is not shown', index, timestamp)
             return
         pair = session.outputs.take()
         if pair is None:
@@ -950,38 +1133,73 @@ class NVDECDecoder(Decoder):
     # ------------------------------------------------------------ lifetimes
 
     def _released(self, frame: DecodedFrame) -> None:
-        owner, pair = self._lent.pop(frame)
+        held = self._lent.pop(frame, None)
+        if held is None:
+            return
+        owner, pair = held
         owner.outputs.give(pair)
         if owner in self._retired and not self._lends_from(owner):
-            self._retired.remove(owner)
-            owner.close()
+            self._retire(owner)
 
     def _lends_from(self, session: _Session) -> bool:
         return any(owner is session for owner, _ in self._lent.values())
 
     def _retire(self, session: _Session) -> None:
-        """Stop a session's decoder; keep its textures while frames of them are held."""
-        if self._lends_from(session):
+        """Stop a session's decoder; keep its textures while they cannot be deleted.
+
+        That is while frames of them are held, and while the context that
+        owns them is not the one current: :meth:`close` deletes them then.
+        """
+        if session in self._retired:
+            self._retired.remove(session)
+        if self._lends_from(session) or not self._owner.is_current():
             session.stop()
-            self._retired.append(session)
         else:
             session.close()
+        if not session.closed:
+            self._retired.append(session)
 
     def close(self) -> None:
-        """Release the decoder, the parser and the textures, frames lent included."""
-        if self._closed:
-            return
+        """Release the decoder, the parser and the textures, frames lent included.
+
+        Every release runs whatever the others do. The parser and the
+        hardware decoders are released whichever OpenGL context is current.
+        The plane textures are objects of the context the decoder was opened
+        in: with another current, or none, they are kept,
+        :class:`DecoderError` says so, and closing again with the decoder's
+        own context current releases them. Closing a decoder that has
+        nothing left to release does nothing.
+        """
         self._closed = True
-        for frame in list(self._lent):
+        release_all(self._release_frames, self._close_parser, self._close_sessions)
+
+    def _release_frames(self) -> None:
+        lent, self._lent = self._lent, {}
+        self._ready = []
+        for frame in lent:
             frame.release()
-        with self._cuda.current(self._context):
-            self._restart()
-        for session in [*self._retired, *([self._session] if self._session else [])]:
-            session.close()
-        self._retired = []
+
+    def _close_parser(self) -> None:
+        if self._parser:
+            with self._cuda.current(self._context):
+                self._restart()
+        # Dropped to break the cycle through the bound methods; the parser
+        # that held their addresses is gone.
+        self._callbacks = ()  # type: ignore[assignment]  # nothing reads them once the parser is destroyed
+
+    def _close_sessions(self) -> None:
+        sessions = [*self._retired, *([self._session] if self._session else [])]
         self._session = None
-        self._callbacks = ()  # type: ignore[assignment]  # dropped to break the cycle through the bound methods
+        self._retired = []
+        try:
+            release_all(*(session.close for session in sessions))
+        finally:
+            self._retired = [session for session in sessions if not session.closed]
 
     def _check_open(self) -> None:
         if self._closed:
             raise DecoderError('this decoder has been closed')
+
+    def _require_context(self) -> None:
+        if not self._owner.is_current():
+            raise DecoderError(WRONG_CONTEXT)

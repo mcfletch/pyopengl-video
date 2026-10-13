@@ -89,3 +89,9 @@ class Outputs(Generic[Pair]):
     def give(self, pair: Pair) -> None:
         """Take back a pair that was lent."""
         self._free.append(pair)
+
+    def drain(self) -> list[Pair]:
+        """Every pair made, which this then holds none of."""
+        made, self.made = self.made, []
+        self._free.clear()
+        return made

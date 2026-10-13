@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import warnings
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from OpenGL.GL import GL_RENDERER, GL_TEXTURE_2D, glGetString
 
-from pyopengl_video import codecs, inputs
+from pyopengl_video import bounds, codecs, inputs
 from pyopengl_video.encoder import (
     DEFAULT_BITS_PER_PIXEL,
     Encoder,
@@ -39,6 +40,7 @@ from pyopengl_video.encoder import (
 )
 from pyopengl_video.nvenc import api
 from pyopengl_video.nvenc.api import DIRECTX_PLATFORM
+from pyopengl_video.teardown import release_all
 
 if TYPE_CHECKING:
     from pyopengl_video.nvenc.direct3d import Direct3DInputs
@@ -46,9 +48,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-__all__ = ['NVENCEncoder', 'InputHandle', 'DEFAULT_BITS_PER_PIXEL',
-           'DIRECTX_PLATFORM', 'RegisteredInput', 'SPARE_OUTPUT_BUFFERS', 'configure_codec', 'current_gl_renderer',
-           'open_session', 'session_codecs', 'unsupported_device_detail']
+__all__ = ['NVENCEncoder', 'InputHandle', 'DEFAULT_BITS_PER_PIXEL', 'DIRECTX_PLATFORM',
+           'LARGEST_SIDE', 'MOST_BFRAMES', 'RegisteredInput', 'SPARE_OUTPUT_BUFFERS',
+           'configure_codec', 'current_gl_renderer', 'open_session', 'session_codecs',
+           'unsupported_device_detail']
 
 #: The statuses that mean the device was not one the encoder could use, as
 #: opposed to the driver being out of sessions or failing for its own reasons.
@@ -60,6 +63,34 @@ DEVICE_STATUSES = frozenset(
 #: How many compressed-output buffers to keep, over and above the frames the
 #: encoder may hold for reordering.
 SPARE_OUTPUT_BUFFERS = 4
+
+#: The longest side asked of a session. The GPU's own limit for the codec is
+#: lower, and :func:`session_codecs` gives it once a session is open.
+LARGEST_SIDE = bounds.FIELD_16
+
+#: The most B-pictures between two reference pictures asked of a session: one
+#: fewer than the sixteen frames a decoder's picture buffer holds. A GPU's own
+#: limit is lower, and its driver refuses a count above it.
+MOST_BFRAMES = 15
+
+#: The largest bit rate, in bits a second: the peak a variable-rate stream is
+#: allowed is half as much again, and that is a 32-bit field.
+MOST_BITRATE = bounds.FIELD_32 * 2 // 3
+
+#: The largest frame-rate numerator: H.264 counts time in fields, so twice the
+#: numerator is written to a 32-bit field.
+MOST_RATE_NUMERATOR = bounds.FIELD_32 // 2
+
+#: The longest group of pictures. One more is the value the interface reads
+#: as a group that never ends.
+MOST_GOP = api.NVENC_INFINITE_GOPLENGTH - 1
+
+#: The largest timestamp and duration, which are 64-bit fields.
+MOST_TIME = (1 << 64) - 1
+
+#: The least a compressed picture is allowed to be before its length is
+#: disbelieved; a picture is otherwise held to its size uncompressed.
+LEAST_PICTURE_LIMIT = 1 << 20
 
 
 def current_gl_renderer() -> str | None:
@@ -247,6 +278,11 @@ class RegisteredInput(inputs.InputHandle):
             self.release = None
         super().close()
 
+    @property
+    def released(self) -> bool:
+        """Whether :meth:`close` has given back every OpenGL object the handle held."""
+        return not self._held()
+
 
 @dataclass
 class InputHandle(RegisteredInput):
@@ -308,6 +344,18 @@ class NVENCEncoder(Encoder):
     Once open, :attr:`input_slots` says how many textures to cycle through.
     Obtain each with :meth:`new_input`, which works on both platforms; on
     Windows it is the only way, since the textures are Direct3D resources.
+
+    The size, the frame rate, the bit rate, the group length and the
+    B-picture count are each held to what the session's fields carry, and one
+    outside is refused with an
+    :class:`~pyopengl_video.encoder.EncoderError` before a session is opened:
+    a side from 1 to :data:`LARGEST_SIDE`, `bframes` from 0 to
+    :data:`MOST_BFRAMES`, `gop` and `bitrate` of 1 or more.
+
+    :meth:`close` ends the session whatever else it finds. An encoder that
+    is collected without it ends its session too and warns with a
+    ``ResourceWarning``; the textures and framebuffers of its inputs are
+    OpenGL objects and are left to their context.
     """
 
     codec = 'h264'
@@ -324,6 +372,17 @@ class NVENCEncoder(Encoder):
                  preset: str = 'p4', tuning: str = 'high_quality',
                  rate_control: str = 'vbr', gop: int | None = None,
                  bframes: int = 0, adapter: d3d11.Adapter | None = None):
+        # Set first, so that a constructor that raises leaves an object whose
+        # close() and destructor have nothing to do.
+        self._closed = True
+        self.session = ctypes.c_void_p()
+        self._registered: list[Any] = []
+        self._pending: deque[_Submission] = deque()
+        self._free_output: list[ctypes.c_void_p] = []
+        #: Packets read out by a drain that then raised, for the next to return.
+        self._read_out: list[Packet] = []
+        self.direct3d: Direct3DInputs | None = None
+        self.buffer_format = api.NV_ENC_BUFFER_FORMAT_ABGR
         if adapter is not None and not DIRECTX_PLATFORM:
             raise EncoderError(
                 'an adapter can be named only on Windows, where a session is '
@@ -335,35 +394,46 @@ class NVENCEncoder(Encoder):
                 f'the NVENC backend encodes {", ".join(sorted(api.CODEC_GUIDS))}, '
                 f'not {codec!r}')
         self.codec = codec
-        self.size = (int(width), int(height))
+        self.size = bounds.frame_size(width, height, most=(LARGEST_SIDE, LARGEST_SIDE),
+                                      error=EncoderError)
         self.frame_rate = self._as_ratio(fps)
-        self.bframes = int(bframes)
+        self.bframes = bounds.whole(bframes, 'bframes', 0, MOST_BFRAMES, EncoderError)
         self.reorders_frames = self.bframes > 0
         rate_num, rate_den = self.frame_rate
-        self.gop = int(gop) if gop is not None else max(1, round(2 * rate_num / rate_den))
-        self.bitrate = int(bitrate) if bitrate is not None else self._default_bitrate()
+        self.gop = bounds.whole(
+            gop if gop is not None else min(MOST_GOP, max(1, round(2 * rate_num / rate_den))),
+            'gop', 1, MOST_GOP, EncoderError)
+        self.bitrate = bounds.whole(
+            bitrate if bitrate is not None
+            else min(MOST_BITRATE, max(1, self._default_bitrate())),
+            'bitrate', 1, MOST_BITRATE, EncoderError)
 
         self.api = api.NvEncodeAPI.load()
         self._closed = False
-        self._registered: list[Any] = []
-        self._pending: deque[_Submission] = deque()
-        self.session = ctypes.c_void_p()
-        self.direct3d: Direct3DInputs | None = None
-        self.buffer_format = api.NV_ENC_BUFFER_FORMAT_ABGR
         try:
             self.session = self._open_session(adapter)
             self._require_codec()
             self._initialise(preset, tuning, rate_control)
             self._free_output = [self._create_bitstream_buffer()
                                  for _ in range(self.bframes + SPARE_OUTPUT_BUFFERS)]
-        except Exception:
+        except BaseException:
             self.close()
             raise
 
 
     # ---------------------------------------------------------------- setup
 
-    _as_ratio = staticmethod(frame_rate_ratio)
+    @staticmethod
+    def _as_ratio(fps: float | tuple[int, int]) -> tuple[int, int]:
+        """`fps` as a ratio whose terms the session's 32-bit fields carry."""
+        try:
+            ratio = frame_rate_ratio(fps)
+        except (TypeError, ValueError, OverflowError):
+            raise EncoderError(f'a frame rate of {fps!r} cannot be coded') from None
+        numerator, denominator = bounds.frame_rate(ratio, EncoderError)
+        bounds.whole(numerator, "the frame rate's numerator", 1, MOST_RATE_NUMERATOR,
+                     EncoderError)
+        return numerator, denominator
 
     def _default_bitrate(self) -> int:
         return default_bitrate(self.size, self.frame_rate)
@@ -494,7 +564,7 @@ class NVENCEncoder(Encoder):
             shared.registration = self._register_resource(
                 api.NV_ENC_INPUT_RESOURCE_TYPE_DIRECTX,
                 ctypes.cast(shared.resource.pointer, ctypes.c_void_p), 0)
-        except Exception:
+        except BaseException:
             shared.close()
             raise
         return self._adopt(shared)
@@ -507,13 +577,15 @@ class NVENCEncoder(Encoder):
         encoders read Direct3D textures and take no others: call
         :meth:`new_input` there.
         """
+        self._require_open()
         if DIRECTX_PLATFORM:
             raise EncoderError(
                 'this encoder reads a Direct3D surface, so it cannot take a texture '
                 'made elsewhere; call new_input() for one it can read')
-        target = GL_TEXTURE_2D if target is None else target
-        description = api.NV_ENC_INPUT_RESOURCE_OPENGL_TEX(
-            texture=int(texture), target=int(target))
+        texture = bounds.whole(texture, 'the texture name', 1, bounds.FIELD_32, EncoderError)
+        target = bounds.whole(GL_TEXTURE_2D if target is None else target,
+                              'the texture target', 1, bounds.FIELD_32, EncoderError)
+        description = api.NV_ENC_INPUT_RESOURCE_OPENGL_TEX(texture=texture, target=target)
         # For an OpenGL texture the pitch is the width in components, not bytes
         # of a row of some allocation: four for RGBA.
         registration = self._register_resource(
@@ -567,9 +639,15 @@ class NVENCEncoder(Encoder):
 
         An encoder with B-pictures or lookahead holds frames back, so an empty
         list is an ordinary answer and the packets arrive a few calls later.
+
+        `handle` is one this encoder's :meth:`register` or :meth:`new_input`
+        returned; any other is refused, since the driver reads the resource a
+        handle names without checking whose it is.
         """
         self._require_open()
-        duration = self.frame_duration(duration)
+        timestamp = bounds.whole(timestamp, 'the timestamp', 0, MOST_TIME, EncoderError)
+        duration = bounds.whole(self.frame_duration(duration), 'the duration', 0,
+                                MOST_TIME, EncoderError)
 
         if not any(kept is handle for kept in self._registered):
             raise EncoderError(
@@ -587,7 +665,7 @@ class NVENCEncoder(Encoder):
         mapped = self._map(handle)
         try:
             output = self._acquire_output()
-        except Exception:
+        except BaseException:
             self._unmap(mapped)
             raise
         picture = api.NV_ENC_PIC_PARAMS()
@@ -598,17 +676,19 @@ class NVENCEncoder(Encoder):
         picture.outputBitstream = output
         picture.bufferFmt = self.buffer_format
         picture.pictureStruct = api.NV_ENC_PIC_STRUCT_FRAME
-        picture.inputTimeStamp = int(timestamp)
-        picture.inputDuration = int(duration)
+        picture.inputTimeStamp = timestamp
+        picture.inputDuration = duration
         if force_idr:
             picture.encodePicFlags = api.NV_ENC_PIC_FLAG_FORCEIDR
 
         status = self.api.nvEncEncodePicture(self.session, ctypes.byref(picture))
         if status not in (api.NV_ENC_SUCCESS, api.NV_ENC_ERR_NEED_MORE_INPUT):
-            # Nothing was submitted, so nothing is left waiting for a picture.
-            self._unmap(mapped)
-            self._free_output.append(output)
-            self.api.check(status, 'nvEncEncodePicture', self.session)
+            # The encoder took no picture, so there is none to read out later.
+            try:
+                self.api.check(status, 'nvEncEncodePicture', self.session)
+            finally:
+                self._unmap(mapped)
+                self._free_output.append(output)
         self._pending.append(_Submission(output=output, mapped=mapped, handle=handle))
         if status == api.NV_ENC_ERR_NEED_MORE_INPUT:
             return []
@@ -617,11 +697,8 @@ class NVENCEncoder(Encoder):
     def flush(self) -> list[Packet]:
         """End the stream and return the pictures the encoder was still holding."""
         self._require_open()
-        picture = api.NV_ENC_PIC_PARAMS()
-        picture.version = self.api.struct_version(7, big=True)
-        picture.encodePicFlags = api.NV_ENC_PIC_FLAG_EOS
         self.api.check(
-            self.api.nvEncEncodePicture(self.session, ctypes.byref(picture)),
+            self.api.nvEncEncodePicture(self.session, ctypes.byref(self._end_of_stream())),
             'nvEncEncodePicture(EOS)', self.session)
         return self._drain()
 
@@ -645,33 +722,80 @@ class NVENCEncoder(Encoder):
         return bytes(buffer[:written.value])
 
     def close(self) -> None:
-        """Release the session and everything registered against it."""
-        if getattr(self, '_closed', True):
-            return
+        """Release the session and everything registered against it.
+
+        Every release runs whatever the others do. The session is ended
+        whichever OpenGL context is current, and the inputs' handles are
+        closed to the encoder with it. The textures and framebuffers of
+        :meth:`new_input` are objects of the context they were made in: with
+        another current, or none, they are kept and
+        :class:`~pyopengl_video.encoder.EncoderError` says so once the session
+        is gone; closing again with their own context current deletes them.
+        Closing an encoder that has nothing left to release does nothing.
+        """
         self._closed = True
-        for submission in self._pending:
+        release_all(self._end_stream, self._unmap_pending, self._destroy_outputs,
+                    self._unregister_inputs, self._destroy_session, self._close_inputs,
+                    self._close_direct3d)
+
+    def _end_stream(self) -> None:
+        """Have the encoder finish the pictures it holds, before their buffers go.
+
+        A picture held back for reordering keeps the address of the output
+        buffer it will be written to, and the session reaches for it as it is
+        destroyed. Ending the stream writes every such picture out first.
+        """
+        if self.session and self._pending:
+            self.api.nvEncEncodePicture(self.session, ctypes.byref(self._end_of_stream()))
+
+    def _end_of_stream(self) -> api.NV_ENC_PIC_PARAMS:
+        """The picture parameters that say no more pictures follow."""
+        picture = api.NV_ENC_PIC_PARAMS()
+        picture.version = self.api.struct_version(7, big=True)
+        picture.encodePicFlags = api.NV_ENC_PIC_FLAG_EOS
+        return picture
+
+    def _unmap_pending(self) -> None:
+        pending, self._pending = self._pending, deque()
+        self._read_out = []
+        if not self.session:
+            return
+        # Kept for _destroy_outputs, which runs whether or not an unmap fails.
+        self._free_output += [submission.output for submission in pending]
+        for submission in pending:
             self._unmap(submission.mapped)
-        self._pending.clear()
-        for buffer in getattr(self, '_free_output', []):
-            self.api.nvEncDestroyBitstreamBuffer(self.session, buffer)
-        self._free_output = []
-        # Closing an input deletes its OpenGL objects, which raises where no
-        # context is current -- a destructor running after the window is gone.
-        # The session is a limited driver resource and the Direct3D device is a
-        # GPU allocation, so they are released whatever the inputs do.
+
+    def _destroy_outputs(self) -> None:
+        buffers, self._free_output = self._free_output, []
+        if self.session:
+            for buffer in buffers:
+                self.api.nvEncDestroyBitstreamBuffer(self.session, buffer)
+
+    def _unregister_inputs(self) -> None:
+        """Give back every registration, before any input's texture is freed."""
+        for handle in self._registered:
+            registration, handle.registration = handle.registration, None
+            handle.release = None
+            if registration and self.session:
+                self.api.nvEncUnregisterResource(self.session, registration)
+
+    def _destroy_session(self) -> None:
+        session, self.session = self.session, ctypes.c_void_p()
+        if session:
+            self.api.nvEncDestroyEncoder(session)
+
+    def _close_inputs(self) -> None:
+        """Close every input; one that keeps OpenGL objects is closed again next time."""
+        handles, self._registered = self._registered, []
         try:
-            for handle in list(self._registered):
-                handle.close()
+            release_all(*(handle.close for handle in handles))
         finally:
-            self._registered = []
-            try:
-                if self.session:
-                    self.api.nvEncDestroyEncoder(self.session)
-                    self.session = ctypes.c_void_p()
-            finally:
-                if self.direct3d is not None:
-                    self.direct3d.close()
-                    self.direct3d = None
+            self._registered = [handle for handle in handles if not handle.released]
+
+    def _close_direct3d(self) -> None:
+        inputs, self.direct3d = self.direct3d, None
+        if inputs is not None:
+            inputs.close()
 
     # ------------------------------------------------------------ internals
 
@@ -699,15 +823,20 @@ class NVENCEncoder(Encoder):
         return self._create_bitstream_buffer()
 
     def _drain(self) -> list[Packet]:
-        """Read out every picture the encoder has finished, oldest first."""
-        packets = []
+        """Read out every picture the encoder has finished, oldest first.
+
+        A submission stays pending until its picture has been read, so one
+        whose read raises is still mapped, still holds its output buffer and
+        is read again by the next drain; the packets read before it are
+        returned then too.
+        """
         while self._pending:
-            submission = self._pending.popleft()
-            try:
-                packets.append(self._read(submission.output))
-            finally:
-                self._unmap(submission.mapped)
-                self._free_output.append(submission.output)
+            submission = self._pending[0]
+            self._read_out.append(self._read(submission.output))
+            self._pending.popleft()
+            self._unmap(submission.mapped)
+            self._free_output.append(submission.output)
+        packets, self._read_out = self._read_out, []
         return packets
 
     def _read(self, output: ctypes.c_void_p) -> Packet:
@@ -719,7 +848,16 @@ class NVENCEncoder(Encoder):
             self.api.nvEncLockBitstream(self.session, ctypes.byref(lock)),
             'nvEncLockBitstream', self.session)
         try:
-            data = ctypes.string_at(lock.bitstreamBufferPtr, lock.bitstreamSizeInBytes)
+            # The buffer is the driver's and its size is not reported, so the
+            # length is held to what a picture of this size can come to.
+            width, height = self.size
+            _, length = bounds.span(
+                0, lock.bitstreamSizeInBytes, max(width * height * 4, LEAST_PICTURE_LIMIT),
+                "the compressed picture in the driver's buffer", EncoderError)
+            if length and not lock.bitstreamBufferPtr:
+                raise EncoderError(
+                    f'the driver reports a picture of {length} bytes at a null address')
+            data = ctypes.string_at(lock.bitstreamBufferPtr, length)
             keyframe = lock.pictureType in (api.NV_ENC_PIC_TYPE_IDR, api.NV_ENC_PIC_TYPE_I)
             return Packet(data=data, timestamp=lock.outputTimeStamp,
                           duration=lock.outputDuration, keyframe=keyframe)
@@ -729,11 +867,18 @@ class NVENCEncoder(Encoder):
                 'nvEncUnlockBitstream', self.session)
 
     def __del__(self) -> None:
-        # A recording that ended in an exception should still give the session
-        # back; the driver limits how many are open at once. A destructor has
-        # nowhere to raise to, so whatever went wrong is logged and dropped.
+        # Collection runs on whichever thread, with whichever OpenGL context,
+        # the collector is in, so nothing here touches OpenGL: a name deleted
+        # in another context is that context's own object. The session is
+        # ended, since the driver waits at exit for one that is still open.
+        if getattr(self, '_closed', True):
+            return
+        self._closed = True
+        warnings.warn(f'{type(self).__name__} was collected without close(); the '
+                      'textures and framebuffers of its inputs are left to their '
+                      'context', ResourceWarning, stacklevel=2)
         try:
-            self.close()
-        except Exception as error:            # noqa: BLE001  # pragma: no cover
-            log.debug('closing the encoder from its destructor failed: %r', error)
-
+            release_all(self._end_stream, self._unmap_pending, self._destroy_outputs,
+                        self._unregister_inputs, self._destroy_session)
+        except Exception:
+            log.debug('releasing a collected encoder failed', exc_info=True)

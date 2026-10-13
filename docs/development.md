@@ -73,6 +73,8 @@ src/pyopengl_video/
     nvenc/encoder.py    the encoder: register, map, encode, lock, unmap
     nvdec/api.py    ctypes over NVDEC and the CUDA driver API it decodes into
     nvdec/decoder.py    the decoder: parser callbacks, the copy into textures
+    nvdec/guard.py  what a picture is held to before the hardware decodes it
+    nvdec/av1.py    the gate that reads each AV1 sample before NVIDIA's parser
     nvdec/description.py    the picture size and colour read here, for each codec
     nvdec/vp9.py    the VP9 reference slots, for a frame shown again
     vpl/api.py      ctypes over oneVPL: packed structures, status names, entry points
@@ -95,8 +97,9 @@ src/pyopengl_video/
     vaapi/av1.py, av1_parse.py, av1_decode.py, av1_encode.py
     vaapi/vp9_parse.py, vp9_tables.py, vp9_decode.py
 tests/
-    nvenc_abi.json  sizes and offsets recorded from NVIDIA's header
-    nvdec_abi.json  the same for NVDEC and CUDA, in the Linux and Windows layouts
+    nvenc_abi.json  sizes, offsets, nested members and bit-fields recorded from NVIDIA's header
+    nvdec_abi.json  the same for NVDEC and CUDA, in the Linux and Windows layouts, plus constant values
+    nvidia_child.py scenarios on NVIDIA hardware that run in a process of their own
     vpl_abi.json    the same, from the oneVPL headers
     vpl_runtime.py  stand-ins for the oneVPL runtime, Direct3D and WGL, for any platform
     va_abi.json     the same, from the libva headers, plus nested members, bit-fields and constant values
@@ -132,6 +135,37 @@ interface grows. A union is sized by its largest arm, which may be an arm this
 binding does not declare — `NV_ENC_CODEC_PIC_PARAMS` is one, and it aligns to
 eight because the arm it does not declare holds pointers.
 
+A driver leaves a function-table entry it does not implement null, and one
+older than these declarations has none of the newer calls. `api.bind` gives
+such an entry a function that raises `NVENCError` naming it, so nothing is
+called through address zero.
+
+The order of release is the driver's. `NVENCEncoder.close()` runs these in
+turn through `teardown.release_all`, each whatever the others do:
+
+1. end the stream (`NV_ENC_PIC_FLAG_EOS`), when pictures are still held for
+   reordering. A held picture keeps the address of the output buffer it will
+   be written to, and a session destroyed after that buffer reads freed
+   memory;
+2. unmap the inputs of those pictures;
+3. destroy every output buffer, the held pictures' included;
+4. unregister the inputs;
+5. `nvEncDestroyEncoder`. A session left open keeps a worker thread of the
+   driver alive, and the driver's exit handler waits for it: the process
+   does not exit;
+6. delete the textures and framebuffers of `new_input()`, which is the one
+   step that needs their OpenGL context current.
+
+`__del__` runs the first five. A submission is queued only when
+`nvEncEncodePicture` answers success or `NV_ENC_ERR_NEED_MORE_INPUT`, and it
+stays queued until its picture has been read.
+
+`tests/test_nvenc_release.py` runs each of those in a child process
+(`tests/nvidia_child.py`) that has to exit inside its time limit, since what
+they guard against is a segmentation fault or a process that never exits.
+`tests/test_nvenc_limits.py` holds the argument ranges and the function table,
+with no GPU, and the failed submission and failed read on hardware.
+
 ## The ABI harness
 
 A hand-written binding to a large C ABI fails silently: a field at the wrong
@@ -139,8 +173,9 @@ offset reads a bitrate out of a frame rate, and nothing reports an error. So the
 layout is checked by machine.
 
 `tools/record_nvenc_abi.py` writes a small C program that prints `sizeof` for
-every structure the binding declares and `offsetof` for every field, compiles it
-against a real `nvEncodeAPI.h`, and records the answers in
+every structure the binding declares, `offsetof` for every field and every
+member of a structure inside one, and the bytes each bit-field covers. It
+compiles the program against a real `nvEncodeAPI.h` and records the answers in
 `tests/nvenc_abi.json`. `tests/test_nvenc_abi.py` then checks the binding
 against that file — with no compiler, no driver and no GPU, so the layout is
 verified everywhere the tests run.
@@ -152,10 +187,12 @@ header:
 python tools/record_nvenc_abi.py path/to/nvEncodeAPI.h
 ```
 
-It prints which structures the binding disagrees with, so a mismatch is visible
-before the tests run. `test_every_declared_structure_is_recorded` fails if a
-structure is added to the binding and the recording is not refreshed, so an
-unchecked structure cannot slip in.
+It prints which structures, members and bit-fields the binding disagrees
+with, so a mismatch is visible before the tests run.
+`test_every_declared_structure_and_union_is_recorded` fails if a structure is
+added to the binding and the recording is not refreshed, and
+`test_every_member_of_every_recorded_structure_is_recorded` does the same for
+a field, so neither goes unchecked.
 
 The header is NVIDIA's, distributed under the MIT licence in
 [nv-codec-headers](https://github.com/FFmpeg/nv-codec-headers). It is not
@@ -171,8 +208,14 @@ python tools/record_nvdec_abi.py path/to/nv-codec-headers/include/ffnvcodec
 
 Two of those structures are made of `unsigned long`, which is eight bytes on
 Linux and four on Windows. The tool records both layouts from one compiler,
-and `tests/test_nvdec_abi.py` checks the one the running interpreter uses, so
-the Windows layout is held on Windows without a compiler there.
+the Windows one with `-mms-bitfields` so that bit-fields are packed as
+Microsoft's compiler packs them, and `tests/test_nvdec_abi.py` checks the one
+the running interpreter uses, so the Windows layout is held on Windows without
+a compiler there. The picture parameters of each codec (`CUVIDH264PICPARAMS`,
+`CUVIDHEVCPICPARAMS`, `CUVIDVP9PICPARAMS`, `CUVIDAV1PICPARAMS`) are declared
+whole and recorded with the rest, since the decoder reads them before the
+hardware does. Both tests also check that every function the binding calls
+has `argtypes` and a `restype`, and that none is called past the binding.
 
 The libva and oneVPL headers are treated the same way, and are MIT too.
 `tools/record_va_abi.py` does the same for libva and **also records the value of
@@ -520,7 +563,8 @@ calls them before it returns:
   hardware decoder at the coded size, and answers with the number of decode
   surfaces the parser may cycle through.
 - the decode callback, for each picture in decoding order. Its parameters go
-  to `cuvidDecodePicture` as the parser built them.
+  to `cuvidDecodePicture` as the parser built them, once `nvdec/guard.py` has
+  read them.
 - the display callback, for each picture in display order, with the timestamp
   of the sample it came from.
 
@@ -540,6 +584,82 @@ with `glTexSubImage2D`.
 An exception cannot cross the C frames between a callback and the caller of
 `cuvidParseVideoData`. Each callback keeps the exception and returns 0, and
 the decoder raises it once the parser has returned.
+
+`cuvidDecodePicture` checks nothing of the picture it is handed: it copies
+`nBitstreamDataLen` bytes, decodes into picture `CurrPicIdx` and predicts from
+the pictures the codec's parameters name. A session keeps the set of picture
+indexes its hardware decoder has decoded, and `guard.refusal` holds each
+picture to three rules before the call:
+
+- its bitstream is no longer than the bytes handed to the parser since the
+  last sample a picture was decoded from. A truncated AV1 temporal unit gives
+  a length of 0xFFFFFFF4;
+- `CurrPicIdx`, and for AV1 `decodePicIdx`, is a surface the decoder was made
+  with;
+- every picture it predicts from is in the set: the seven `ref_frame` entries
+  of an AV1 inter frame, the three reference indexes of a VP9 one, the
+  `dpb` entries of an H.264 picture and the `RefPicIdx` entries of an HEVC
+  one that name a picture. An AV1 frame joined after its key frame names
+  picture 0xFF, or one the hardware never decoded.
+
+A picture decoded into is taken out of the set until its decode succeeds, and
+the set is emptied when the parser is replaced. The display callback shows
+only a picture in the set, so the pictures a parser held for a sequence that
+has since been replaced are left out. A sequence the GPU refuses retires the
+session of the sequence before, so its pictures have no decoder to reach.
+
+None of that helps where NVIDIA's parser faults by itself: one bit of an AV1
+sequence header (`order_hint_bits` 7 to 5) makes it read past the sample
+inside `cuvidParseVideoData`, with no callback on the stack. So an AV1 sample
+is read first by `nvdec/av1.py`. `Gate` is a plain object with no driver in
+it. It reads the temporal unit as section 7 of the AV1 specification does,
+through `vaapi/av1_parse.py`: every OBU with its size field, each frame
+header against the sequence header and the eight reference slots, each tile
+group's sizes against its bytes, a redundant frame header against the header
+it repeats, and the padding after each header. A sample that passes is handed
+over. One that does not raises `DecoderError`, and the gate then passes
+samples over until a key frame that is shown, as it does at the start of a
+stream and after a seek: the frames between predict from one that was not
+decoded. A sample NVIDIA's parser or the hardware refuses after the gate
+admitted it puts the gate in the same state.
+
+Two rules follow from what the two parsers do with the same bytes:
+
+- NVIDIA's parser is handed what the gate read and nothing else.
+  `Gate.admit` returns the temporal delimiter, the sequence headers, the
+  frame headers and the tile groups, each OBU written out again with its
+  header in the form a container stores. Metadata, padding and OBUs of a
+  reserved type are left out: the decoding process ignores them, the gate
+  does not read them, and a metadata OBU with no payload ahead of a frame
+  header ends the process inside NVIDIA's parser, once in some thousands of
+  such samples. The configuration a container keeps apart is reduced to its
+  sequence headers the same way.
+- A header the two parsers read differently is refused. A sequence header in
+  the reduced form of a still picture that says it is no still picture is
+  read here as 1x1 at 8 bits and by NVIDIA's parser as 4:4:4 at 16, so the
+  frames after it would be checked against a sequence the hardware is not
+  decoding. So is one with a stray bit after its trailing bits. In
+  `nvdec/av1.py`, `_check_sequence` holds the rules of the specification
+  that `av1_parse.parse_sequence_header` reads past, and
+  `_check_sequence_ending` and `_check_frame_ending` hold the trailing bits
+  and the byte alignment after a header, which a header read to the wrong
+  length leaves wrong. `parse_sequence_header` does not say where a header
+  ended, so `_sequence_header_bits` finds the end from what the parser reads:
+  the last byte it needs, and the last bit of that byte whose value changes
+  the result. A `header_bits` on `SequenceHeader`, as `FrameHeader` has,
+  would replace it.
+
+The cases are in `tests/test_nvdec_av1_gate.py`, which needs no GPU, and the
+inputs that ended the process are decoded on hardware, each in a child
+process, by `tests/test_nvdec_hostile.py`. `tests/test_fuzz_nvdec.py` runs
+mutated streams of all four codecs the same way.
+
+Hardware decoders are destroyed on a thread of their own, since the driver's
+call takes up to 240 ms. `_Session.lifecycle` is a lock held around
+`cuvidCreateDecoder` and `cuvidDestroyDecoder`, so no decoder is made while
+one is being destroyed and two are not destroyed at once. The driver has
+faulted inside `cuvidDestroyDecoder` with a second destroy and a create
+running beside it, once in some twelve thousand mutated streams.
 
 A seek destroys the parser and makes a new one, which holds no references.
 The new parser reports the sequence again, and a sequence equal to the one
@@ -569,10 +689,22 @@ What the decoder decides without a driver is in plain objects, tested in
 `tests/test_nvdec.py` on any machine: `Sequence` (what a stream needs and what
 refuses it), `Presentation` (durations, and the leading pictures dropped after
 a seek), `Outputs` (the texture pairs lent and returned), `SurfaceFormat` and
-`plane_copies`. `tests/test_nvdec_description.py` and `tests/test_nvdec_vp9.py`
-cover the two modules above the same way. `tests/test_nvdec_decode.py` (H.264)
+`plane_copies`, and the lock that orders decoders being made and destroyed.
+`tests/test_nvdec_description.py`, `tests/test_nvdec_vp9.py`,
+`tests/test_nvdec_guard.py` and `tests/test_nvdec_av1_gate.py` cover their
+modules the same way. `tests/test_nvdec_decode.py` (H.264)
 and `tests/test_nvdec_codecs.py` (HEVC, VP9 and AV1) are the checksum
-comparison on the hardware, for both ways of copying.
+comparison on the hardware, for both ways of copying, and
+`tests/test_nvdec_context.py` is what the decoder does with another OpenGL
+context current, with a picture it never decoded and with a sequence it
+refused.
+
+A case that can end the process runs in a child. `tests/nvidia_child.py`
+holds the scenarios, each a function named on the child's command line, and
+`nvidia_child.run()` says how the child ended: its exit status, the signal
+that killed it, or that it had to be stopped at its time limit. A new
+scenario for a crash or a hang goes there, and its test asserts on
+`Outcome.clean()`.
 
 ## Style and licensing
 

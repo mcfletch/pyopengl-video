@@ -350,12 +350,11 @@ class TestRefusedStreams:
         assert decoder.flush() == []
 
     def test_bytes_that_are_no_av1_are_refused_and_a_stream_decodes_after(self, decoder_for):
-        """NVIDIA's AV1 parser fails a sample it cannot split into OBUs."""
+        """A sample that is no run of OBUs is refused before NVIDIA's parser is handed it."""
         decoder = decoder_for('av1')
         assert decoder.decode(Sample(b'', 0, 0, True, 0)) == []
-        with pytest.raises(DecoderError, match='the parser refused 950 bytes of AV1'):
+        with pytest.raises(DecoderError, match='the AV1 sample is refused'):
             decoder.decode(Sample(b'not a stream at all' * 50, 0, 0, True, 0))
-        decoder.reset()
         name = 'av1_large_altref'
         assert decode_all(decoder, samples_of(name)) == expected(name)
 

@@ -21,6 +21,7 @@ import os
 import struct
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
@@ -31,7 +32,9 @@ __all__ = ['ContainerError', 'Cursor', 'FileBytes']
 _DOUBLE = {'big': struct.Struct('>d'), 'little': struct.Struct('<d')}
 
 #: Whether the platform reads at an offset in one call. Windows does not.
-_HAS_PREAD = hasattr(os, 'pread')
+#: ``os.pread`` where the platform has it, which Windows does not.
+_PREAD: Callable[[int, int, int], bytes] | None = getattr(os, 'pread', None)
+_HAS_PREAD = _PREAD is not None
 
 
 class ContainerError(VideoError, ValueError):
@@ -223,7 +226,9 @@ class FileBytes:
         """`count` bytes at `offset`, or fewer where the file ends first."""
         pieces: list[bytes] = []
         while count:
-            piece = os.pread(descriptor, count, offset)
+            if _PREAD is None:
+                raise OSError('this platform has no positioned read')
+            piece = _PREAD(descriptor, count, offset)
             if not piece:
                 break
             pieces.append(piece)

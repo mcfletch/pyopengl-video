@@ -133,7 +133,7 @@ def picture_parameters(header: FrameHeader, slots: Sequence[int | None],
     parameters.segment_pred_probs[:] = segmentation.pred_probs
     parameters.profile = header.profile
     parameters.bit_depth = colour.bit_depth
-    return parameters.target  # type: ignore[no-any-return]  # the structure Checked wraps
+    return parameters.target
 
 
 def _clip(value: int, most: int) -> int:
@@ -215,7 +215,7 @@ def slice_parameters(header: FrameHeader, size: int) -> vp9_api.VASliceParameter
         (target.luma_ac_quant_scale, target.luma_dc_quant_scale,
          target.chroma_ac_quant_scale, target.chroma_dc_quant_scale) = quantiser_scales(
              header, segment)
-    return parameters.target  # type: ignore[no-any-return]  # the structure Checked wraps
+    return parameters.target
 
 
 # ------------------------------------------------------------ the layer

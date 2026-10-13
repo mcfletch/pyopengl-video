@@ -7,6 +7,7 @@ what discovery says of a machine.
 """
 import contextlib
 import ctypes
+import threading
 
 import pytest
 from OpenGL.GL import GL_R8, GL_R16, GL_RG8, GL_RG16, GL_UNSIGNED_BYTE, GL_UNSIGNED_SHORT
@@ -16,6 +17,7 @@ from pyopengl_video import decoder as decoder_module
 from pyopengl_video import nvdec
 from pyopengl_video.colour import Colour
 from pyopengl_video.decoder import DecoderError, Sample
+from pyopengl_video.glcontext import Owner
 from pyopengl_video.nvdec import api
 from pyopengl_video.nvdec.decoder import (
     DEINTERLACE_MODES,
@@ -24,6 +26,7 @@ from pyopengl_video.nvdec.decoder import (
     Outputs,
     Presentation,
     Sequence,
+    _Session,
     plane_copies,
 )
 
@@ -31,18 +34,22 @@ DEVICE = 'a test GPU'
 
 
 def video_format(**changes):
-    """A 1080p High stream as the parser reports one, with `changes` applied."""
+    """A 1080p High stream as the parser reports one, with `changes` applied.
+
+    The whole coded picture is shown, less the eight rows that fill out the
+    last macroblocks of 1080.
+    """
     format = api.CUVIDEOFORMAT(
         codec=api.cudaVideoCodec_H264, progressive_sequence=1,
         min_num_decode_surfaces=9, coded_width=1920, coded_height=1088,
         chroma_format=api.cudaVideoChromaFormat_420)
-    format.display_area.right = 1920
-    format.display_area.bottom = 1080
     signal = format.video_signal_description
     signal.matrix_coefficients = signal.color_primaries = 2
     signal.transfer_characteristics = 2
     for name, value in changes.items():
         setattr(format, name, value)
+    format.display_area.right = format.coded_width
+    format.display_area.bottom = 1080 if format.coded_height == 1088 else format.coded_height
     return format
 
 
@@ -200,6 +207,26 @@ class TestRefusal:
         reason = self.refusal(nMaxMBCount=8000)
         assert '8160 macroblocks' in reason and '8000' in reason
 
+    def test_a_sequence_that_asks_for_no_surfaces_is_refused(self):
+        assert self.refusal(video_format(min_num_decode_surfaces=0)) == (
+            'the parser asks for a decoder with no decode surfaces')
+
+    @pytest.mark.parametrize('area', [
+        (0, 0, 1921, 1080), (0, 0, 1920, 1089), (-8, 0, 1912, 1080), (0, -8, 1920, 1072),
+        (8, 0, 1928, 1080), (0, 0, 0, 1080), (0, 0, 1920, 0), (100, 100, 50, 50),
+    ])
+    def test_a_visible_picture_outside_what_is_decoded_is_refused(self, area):
+        """D5: the visible rectangle is where the conversion pass reads the textures."""
+        format = video_format()
+        display = format.display_area
+        display.left, display.top, display.right, display.bottom = area
+        assert 'which is not inside the 1920x1088 it is decoded at' in self.refusal(format)
+
+    def test_a_visible_picture_may_reach_the_column_an_odd_width_is_padded_with(self):
+        format = video_format(codec=api.cudaVideoCodec_AV1, coded_width=161, coded_height=91)
+        assert Sequence.of(format).surface_size == (162, 92)
+        assert self.refusal(format) == ''
+
 
 def sample(timestamp, duration=3000):
     return Sample(b'', timestamp, duration, False, 0)
@@ -287,6 +314,16 @@ class TestOutputs:
         assert [outputs.take(), outputs.take(), outputs.take()] == [0, 1, None]
         assert outputs.made == [0, 1]
 
+    def test_draining_hands_over_every_pair_and_keeps_none(self):
+        outputs = self.outputs()
+        first, second = outputs.take(), outputs.take()
+        outputs.give(first)
+        assert outputs.drain() == [first, second]
+        assert outputs.made == []
+        assert outputs.drain() == []
+        # Nothing given back before is lent again: the next pair is a new one.
+        assert outputs.take() == 2
+
 
 class TestPlaneCopies:
     def test_luma_is_the_whole_surface_from_its_first_row(self):
@@ -334,6 +371,17 @@ class TestSettings:
     def test_an_unknown_deinterlacer_lists_the_ones_there_are(self):
         with pytest.raises(DecoderError, match='adaptive, bob, weave'):
             NVDECDecoder(deinterlace='blend')
+
+    @pytest.mark.parametrize('slots', [0, -1, 65, 2.5, '4'])
+    def test_a_count_of_output_slots_outside_1_to_64_is_refused(self, slots):
+        with pytest.raises(DecoderError, match='output_slots is'):
+            NVDECDecoder(output_slots=slots)
+
+    @pytest.mark.parametrize('headers', [b'\xff' * 12, b'not a sequence header'])
+    def test_an_av1_configuration_that_is_not_one_is_refused(self, headers):
+        """The configuration is handed to NVIDIA's parser too, so it is read first."""
+        with pytest.raises(DecoderError, match='the AV1 configuration is refused'):
+            NVDECDecoder('av1', headers=headers)
 
     def test_the_three_deinterlacers_are_the_drivers(self):
         assert DEINTERLACE_MODES == {
@@ -593,3 +641,81 @@ class TestRegistry:
         with pytest.raises(pyopengl_video.DecoderUnavailable,
                            match='does not render on an NVIDIA GPU'):
             pyopengl_video.open_decoder('h264', backend='nvdec')
+
+
+class LifecycleCuvid:
+    """A decoder library whose create and destroy calls note when each began and ended."""
+
+    def __init__(self):
+        self.events = []
+        self.destroying = threading.Event()
+        self.finish = threading.Event()
+
+    def cuvidCreateDecoder(self, decoder, _information):
+        self.events.append('create')
+        ctypes.cast(decoder, ctypes.POINTER(ctypes.c_void_p))[0] = 1
+        return api.CUDA_SUCCESS
+
+    def cuvidDestroyDecoder(self, _decoder):
+        self.events.append('destroy begins')
+        self.destroying.set()
+        self.finish.wait(10)
+        self.events.append('destroy ends')
+        return api.CUDA_SUCCESS
+
+
+class LifecycleCuda:
+    def check(self, status, _call, _detail=''):
+        assert status == api.CUDA_SUCCESS
+
+    @contextlib.contextmanager
+    def current(self, _context):
+        yield
+
+
+class TestDecoderLifecycle:
+    """A decoder is destroyed on a thread, and none is made while one is going."""
+
+    @staticmethod
+    def session(cuvid):
+        sequence = Sequence.of(video_format())
+        return _Session(LifecycleCuda(), cuvid, ctypes.c_void_p(), sequence, SURFACES[8],
+                        transfer=None, slots=1,
+                        deinterlace=api.cudaVideoDeinterlaceMode_Weave, owner=Owner(None))
+
+    def test_a_decoder_is_not_made_until_the_one_being_destroyed_has_gone(self):
+        cuvid = LifecycleCuvid()
+        first = self.session(cuvid)
+        first.stop()
+        assert cuvid.destroying.wait(10)
+        making = threading.Thread(target=self.session, args=(cuvid,))
+        making.start()
+        making.join(0.2)
+        assert making.is_alive(), 'the second decoder was made beside the destroy'
+        assert cuvid.events == ['create', 'destroy begins']
+        cuvid.finish.set()
+        making.join(10)
+        assert cuvid.events == ['create', 'destroy begins', 'destroy ends', 'create']
+
+    def test_two_decoders_are_destroyed_one_after_the_other(self):
+        cuvid = LifecycleCuvid()
+        first, second = self.session(cuvid), self.session(cuvid)
+        first.stop()
+        assert cuvid.destroying.wait(10)
+        second.stop()
+        cuvid.finish.set()
+        for thread in threading.enumerate():
+            if thread.name == 'nvdec-destroy':
+                thread.join(10)
+        assert cuvid.events == ['create', 'create', 'destroy begins', 'destroy ends',
+                                'destroy begins', 'destroy ends']
+
+    def test_a_stopped_session_holds_no_decoder_and_no_decoded_picture(self):
+        cuvid = LifecycleCuvid()
+        cuvid.finish.set()
+        session = self.session(cuvid)
+        session.decoded.update({0, 1})
+        session.stop()
+        assert not session.decoder
+        assert session.decoded == set()
+        assert session.closed

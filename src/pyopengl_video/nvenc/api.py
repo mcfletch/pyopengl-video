@@ -37,7 +37,7 @@ from ctypes import (
     c_uint64,
     c_void_p,
 )
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pyopengl_video.encoder import EncoderError
 
@@ -134,6 +134,7 @@ STATUS_NAMES = (
 )
 NV_ENC_SUCCESS = 0
 NV_ENC_ERR_NEED_MORE_INPUT = STATUS_NAMES.index('ERR_NEED_MORE_INPUT')
+NV_ENC_ERR_UNIMPLEMENTED = STATUS_NAMES.index('ERR_UNIMPLEMENTED')
 
 
 class NVENCError(EncoderError):
@@ -780,6 +781,34 @@ PROTOTYPES = {
 }
 
 
+def bind(functions: NV_ENCODE_API_FUNCTION_LIST,
+         driver_version: tuple[int, int] = HEADER_VERSION) -> dict[str, Callable[..., Any]]:
+    """The calls of :data:`PROTOTYPES`, each bound to its entry of `functions`.
+
+    driver_version -- the interface version the driver reports, for a message
+
+    A driver leaves an entry it does not implement null: one older than these
+    declarations has none of the newer calls. Such an entry is bound to a
+    function that raises :class:`NVENCError` naming it, since calling through
+    a null entry ends the process.
+    """
+    bound: dict[str, Callable[..., Any]] = {}
+    for name, prototype in PROTOTYPES.items():
+        address = getattr(functions, name)
+        bound[name] = prototype(address) if address else _absent(name, driver_version)
+    return bound
+
+
+def _absent(name: str, driver_version: tuple[int, int]) -> Callable[..., Any]:
+    """What stands in for a function-table entry the driver left null."""
+    def absent(*_arguments: Any) -> Any:
+        raise NVENCError(
+            NV_ENC_ERR_UNIMPLEMENTED, name,
+            "the driver's function table has no entry for it; the driver "
+            'implements interface version {}.{}'.format(*driver_version))
+    return absent
+
+
 class NvEncodeAPI:
     """The driver's encoder interface: one instance per process is enough.
 
@@ -817,8 +846,8 @@ class NvEncodeAPI:
         self.driver_version = self._max_supported_version()
         self.version = min(HEADER_VERSION, self.driver_version)
         self.functions = self._create_instance()
-        for name, prototype in PROTOTYPES.items():
-            setattr(self, name, prototype(getattr(self.functions, name)))
+        for name, function in bind(self.functions, self.driver_version).items():
+            setattr(self, name, function)
 
     @classmethod
     def load(cls) -> NvEncodeAPI:
@@ -830,6 +859,7 @@ class NvEncodeAPI:
     def _max_supported_version(self) -> tuple[int, int]:
         """The newest interface version the installed driver understands."""
         self.library.NvEncodeAPIGetMaxSupportedVersion.argtypes = [POINTER(c_uint32)]
+        self.library.NvEncodeAPIGetMaxSupportedVersion.restype = c_int
         packed = c_uint32()
         status = self.library.NvEncodeAPIGetMaxSupportedVersion(ctypes.byref(packed))
         if status != NV_ENC_SUCCESS:
@@ -856,6 +886,7 @@ class NvEncodeAPI:
         functions.version = self.struct_version(2)
         self.library.NvEncodeAPICreateInstance.argtypes = [
             POINTER(NV_ENCODE_API_FUNCTION_LIST)]
+        self.library.NvEncodeAPICreateInstance.restype = c_int
         status = self.library.NvEncodeAPICreateInstance(ctypes.byref(functions))
         if status != NV_ENC_SUCCESS:
             raise NVENCError(status, 'NvEncodeAPICreateInstance')

@@ -1,5 +1,1908 @@
 {
+  "bits": {
+    "NVENC_EXTERNAL_ME_HINT_COUNTS_PER_BLOCKTYPE": {
+      "numCandsPerBlk16x16": {
+        "at": 0,
+        "bytes": "0f"
+      },
+      "numCandsPerBlk16x8": {
+        "at": 0,
+        "bytes": "f0"
+      },
+      "numCandsPerBlk8x16": {
+        "at": 1,
+        "bytes": "0f"
+      },
+      "numCandsPerBlk8x8": {
+        "at": 1,
+        "bytes": "f0"
+      },
+      "numCandsPerSb": {
+        "at": 2,
+        "bytes": "ff"
+      },
+      "reserved": {
+        "at": 3,
+        "bytes": "ff"
+      }
+    },
+    "NV_ENC_CODEC_CONFIG": {
+      "av1Config.chromaFormatIDC": {
+        "at": 16,
+        "bytes": "8001"
+      },
+      "av1Config.disableSeqHdr": {
+        "at": 16,
+        "bytes": "10"
+      },
+      "av1Config.enableBitstreamPadding": {
+        "at": 17,
+        "bytes": "02"
+      },
+      "av1Config.enableCustomTileConfig": {
+        "at": 17,
+        "bytes": "04"
+      },
+      "av1Config.enableDecoderModelInfo": {
+        "at": 16,
+        "bytes": "04"
+      },
+      "av1Config.enableFilmGrainParams": {
+        "at": 17,
+        "bytes": "08"
+      },
+      "av1Config.enableFrameIdNumbers": {
+        "at": 16,
+        "bytes": "08"
+      },
+      "av1Config.enableIntraRefresh": {
+        "at": 16,
+        "bytes": "40"
+      },
+      "av1Config.enableLTR": {
+        "at": 17,
+        "bytes": "10"
+      },
+      "av1Config.enableTemporalSVC": {
+        "at": 17,
+        "bytes": "20"
+      },
+      "av1Config.enableTimingInfo": {
+        "at": 16,
+        "bytes": "02"
+      },
+      "av1Config.outputAnnexBFormat": {
+        "at": 16,
+        "bytes": "01"
+      },
+      "av1Config.outputMasteringDisplay": {
+        "at": 17,
+        "bytes": "80"
+      },
+      "av1Config.outputMaxCll": {
+        "at": 17,
+        "bytes": "40"
+      },
+      "av1Config.repeatSeqHdr": {
+        "at": 16,
+        "bytes": "20"
+      },
+      "av1Config.reserved": {
+        "at": 18,
+        "bytes": "fcff"
+      },
+      "av1Config.reserved4": {
+        "at": 18,
+        "bytes": "03"
+      },
+      "h264Config.disableSPSPPS": {
+        "at": 0,
+        "bytes": "80"
+      },
+      "h264Config.disableSVCPrefixNalu": {
+        "at": 2,
+        "bytes": "04"
+      },
+      "h264Config.enableConstrainedEncoding": {
+        "at": 1,
+        "bytes": "08"
+      },
+      "h264Config.enableFillerDataInsertion": {
+        "at": 2,
+        "bytes": "02"
+      },
+      "h264Config.enableIntraRefresh": {
+        "at": 1,
+        "bytes": "04"
+      },
+      "h264Config.enableLTR": {
+        "at": 1,
+        "bytes": "40"
+      },
+      "h264Config.enableScalabilityInfoSEI": {
+        "at": 2,
+        "bytes": "08"
+      },
+      "h264Config.enableStereoMVC": {
+        "at": 0,
+        "bytes": "02"
+      },
+      "h264Config.enableTemporalSVC": {
+        "at": 0,
+        "bytes": "01"
+      },
+      "h264Config.enableTimeCode": {
+        "at": 2,
+        "bytes": "20"
+      },
+      "h264Config.enableVFR": {
+        "at": 1,
+        "bytes": "20"
+      },
+      "h264Config.hierarchicalBFrames": {
+        "at": 0,
+        "bytes": "08"
+      },
+      "h264Config.hierarchicalPFrames": {
+        "at": 0,
+        "bytes": "04"
+      },
+      "h264Config.outputAUD": {
+        "at": 0,
+        "bytes": "40"
+      },
+      "h264Config.outputBufferingPeriodSEI": {
+        "at": 0,
+        "bytes": "10"
+      },
+      "h264Config.outputFramePackingSEI": {
+        "at": 1,
+        "bytes": "01"
+      },
+      "h264Config.outputPictureTimingSEI": {
+        "at": 0,
+        "bytes": "20"
+      },
+      "h264Config.outputRecoveryPointSEI": {
+        "at": 1,
+        "bytes": "02"
+      },
+      "h264Config.qpPrimeYZeroTransformBypassFlag": {
+        "at": 1,
+        "bytes": "80"
+      },
+      "h264Config.repeatSPSPPS": {
+        "at": 1,
+        "bytes": "10"
+      },
+      "h264Config.reservedBitFields": {
+        "at": 2,
+        "bytes": "c0ff"
+      },
+      "h264Config.singleSliceIntraRefresh": {
+        "at": 2,
+        "bytes": "10"
+      },
+      "h264Config.useConstrainedIntraPred": {
+        "at": 2,
+        "bytes": "01"
+      },
+      "hevcConfig.chromaFormatIDC": {
+        "at": 17,
+        "bytes": "06"
+      },
+      "hevcConfig.disableDeblockAcrossSliceBoundary": {
+        "at": 16,
+        "bytes": "02"
+      },
+      "hevcConfig.disableSPSPPS": {
+        "at": 16,
+        "bytes": "40"
+      },
+      "hevcConfig.enableAlphaLayerEncoding": {
+        "at": 18,
+        "bytes": "01"
+      },
+      "hevcConfig.enableConstrainedEncoding": {
+        "at": 17,
+        "bytes": "80"
+      },
+      "hevcConfig.enableFillerDataInsertion": {
+        "at": 17,
+        "bytes": "40"
+      },
+      "hevcConfig.enableIntraRefresh": {
+        "at": 17,
+        "bytes": "01"
+      },
+      "hevcConfig.enableLTR": {
+        "at": 16,
+        "bytes": "20"
+      },
+      "hevcConfig.enableMVHEVC": {
+        "at": 18,
+        "bytes": "20"
+      },
+      "hevcConfig.enableRefPicListModification": {
+        "at": 19,
+        "bytes": "04"
+      },
+      "hevcConfig.enableTemporalSVC": {
+        "at": 18,
+        "bytes": "10"
+      },
+      "hevcConfig.outputAUD": {
+        "at": 16,
+        "bytes": "10"
+      },
+      "hevcConfig.outputBufferingPeriodSEI": {
+        "at": 16,
+        "bytes": "04"
+      },
+      "hevcConfig.outputHevc3DReferenceDisplayInfo": {
+        "at": 18,
+        "bytes": "40"
+      },
+      "hevcConfig.outputMasteringDisplay": {
+        "at": 19,
+        "bytes": "01"
+      },
+      "hevcConfig.outputMaxCll": {
+        "at": 18,
+        "bytes": "80"
+      },
+      "hevcConfig.outputPictureTimingSEI": {
+        "at": 16,
+        "bytes": "08"
+      },
+      "hevcConfig.outputRecoveryPointSEI": {
+        "at": 18,
+        "bytes": "04"
+      },
+      "hevcConfig.outputTimeCodeSEI": {
+        "at": 18,
+        "bytes": "08"
+      },
+      "hevcConfig.repeatSPSPPS": {
+        "at": 16,
+        "bytes": "80"
+      },
+      "hevcConfig.reserved": {
+        "at": 19,
+        "bytes": "f8"
+      },
+      "hevcConfig.reserved0": {
+        "at": 19,
+        "bytes": "02"
+      },
+      "hevcConfig.reserved3": {
+        "at": 17,
+        "bytes": "38"
+      },
+      "hevcConfig.singleSliceIntraRefresh": {
+        "at": 18,
+        "bytes": "02"
+      },
+      "hevcConfig.useConstrainedIntraPred": {
+        "at": 16,
+        "bytes": "01"
+      }
+    },
+    "NV_ENC_CONFIG": {
+      "encodeCodecConfig.av1Config.chromaFormatIDC": {
+        "at": 184,
+        "bytes": "8001"
+      },
+      "encodeCodecConfig.av1Config.disableSeqHdr": {
+        "at": 184,
+        "bytes": "10"
+      },
+      "encodeCodecConfig.av1Config.enableBitstreamPadding": {
+        "at": 185,
+        "bytes": "02"
+      },
+      "encodeCodecConfig.av1Config.enableCustomTileConfig": {
+        "at": 185,
+        "bytes": "04"
+      },
+      "encodeCodecConfig.av1Config.enableDecoderModelInfo": {
+        "at": 184,
+        "bytes": "04"
+      },
+      "encodeCodecConfig.av1Config.enableFilmGrainParams": {
+        "at": 185,
+        "bytes": "08"
+      },
+      "encodeCodecConfig.av1Config.enableFrameIdNumbers": {
+        "at": 184,
+        "bytes": "08"
+      },
+      "encodeCodecConfig.av1Config.enableIntraRefresh": {
+        "at": 184,
+        "bytes": "40"
+      },
+      "encodeCodecConfig.av1Config.enableLTR": {
+        "at": 185,
+        "bytes": "10"
+      },
+      "encodeCodecConfig.av1Config.enableTemporalSVC": {
+        "at": 185,
+        "bytes": "20"
+      },
+      "encodeCodecConfig.av1Config.enableTimingInfo": {
+        "at": 184,
+        "bytes": "02"
+      },
+      "encodeCodecConfig.av1Config.outputAnnexBFormat": {
+        "at": 184,
+        "bytes": "01"
+      },
+      "encodeCodecConfig.av1Config.outputMasteringDisplay": {
+        "at": 185,
+        "bytes": "80"
+      },
+      "encodeCodecConfig.av1Config.outputMaxCll": {
+        "at": 185,
+        "bytes": "40"
+      },
+      "encodeCodecConfig.av1Config.repeatSeqHdr": {
+        "at": 184,
+        "bytes": "20"
+      },
+      "encodeCodecConfig.av1Config.reserved": {
+        "at": 186,
+        "bytes": "fcff"
+      },
+      "encodeCodecConfig.av1Config.reserved4": {
+        "at": 186,
+        "bytes": "03"
+      },
+      "encodeCodecConfig.h264Config.disableSPSPPS": {
+        "at": 168,
+        "bytes": "80"
+      },
+      "encodeCodecConfig.h264Config.disableSVCPrefixNalu": {
+        "at": 170,
+        "bytes": "04"
+      },
+      "encodeCodecConfig.h264Config.enableConstrainedEncoding": {
+        "at": 169,
+        "bytes": "08"
+      },
+      "encodeCodecConfig.h264Config.enableFillerDataInsertion": {
+        "at": 170,
+        "bytes": "02"
+      },
+      "encodeCodecConfig.h264Config.enableIntraRefresh": {
+        "at": 169,
+        "bytes": "04"
+      },
+      "encodeCodecConfig.h264Config.enableLTR": {
+        "at": 169,
+        "bytes": "40"
+      },
+      "encodeCodecConfig.h264Config.enableScalabilityInfoSEI": {
+        "at": 170,
+        "bytes": "08"
+      },
+      "encodeCodecConfig.h264Config.enableStereoMVC": {
+        "at": 168,
+        "bytes": "02"
+      },
+      "encodeCodecConfig.h264Config.enableTemporalSVC": {
+        "at": 168,
+        "bytes": "01"
+      },
+      "encodeCodecConfig.h264Config.enableTimeCode": {
+        "at": 170,
+        "bytes": "20"
+      },
+      "encodeCodecConfig.h264Config.enableVFR": {
+        "at": 169,
+        "bytes": "20"
+      },
+      "encodeCodecConfig.h264Config.hierarchicalBFrames": {
+        "at": 168,
+        "bytes": "08"
+      },
+      "encodeCodecConfig.h264Config.hierarchicalPFrames": {
+        "at": 168,
+        "bytes": "04"
+      },
+      "encodeCodecConfig.h264Config.outputAUD": {
+        "at": 168,
+        "bytes": "40"
+      },
+      "encodeCodecConfig.h264Config.outputBufferingPeriodSEI": {
+        "at": 168,
+        "bytes": "10"
+      },
+      "encodeCodecConfig.h264Config.outputFramePackingSEI": {
+        "at": 169,
+        "bytes": "01"
+      },
+      "encodeCodecConfig.h264Config.outputPictureTimingSEI": {
+        "at": 168,
+        "bytes": "20"
+      },
+      "encodeCodecConfig.h264Config.outputRecoveryPointSEI": {
+        "at": 169,
+        "bytes": "02"
+      },
+      "encodeCodecConfig.h264Config.qpPrimeYZeroTransformBypassFlag": {
+        "at": 169,
+        "bytes": "80"
+      },
+      "encodeCodecConfig.h264Config.repeatSPSPPS": {
+        "at": 169,
+        "bytes": "10"
+      },
+      "encodeCodecConfig.h264Config.reservedBitFields": {
+        "at": 170,
+        "bytes": "c0ff"
+      },
+      "encodeCodecConfig.h264Config.singleSliceIntraRefresh": {
+        "at": 170,
+        "bytes": "10"
+      },
+      "encodeCodecConfig.h264Config.useConstrainedIntraPred": {
+        "at": 170,
+        "bytes": "01"
+      },
+      "encodeCodecConfig.hevcConfig.chromaFormatIDC": {
+        "at": 185,
+        "bytes": "06"
+      },
+      "encodeCodecConfig.hevcConfig.disableDeblockAcrossSliceBoundary": {
+        "at": 184,
+        "bytes": "02"
+      },
+      "encodeCodecConfig.hevcConfig.disableSPSPPS": {
+        "at": 184,
+        "bytes": "40"
+      },
+      "encodeCodecConfig.hevcConfig.enableAlphaLayerEncoding": {
+        "at": 186,
+        "bytes": "01"
+      },
+      "encodeCodecConfig.hevcConfig.enableConstrainedEncoding": {
+        "at": 185,
+        "bytes": "80"
+      },
+      "encodeCodecConfig.hevcConfig.enableFillerDataInsertion": {
+        "at": 185,
+        "bytes": "40"
+      },
+      "encodeCodecConfig.hevcConfig.enableIntraRefresh": {
+        "at": 185,
+        "bytes": "01"
+      },
+      "encodeCodecConfig.hevcConfig.enableLTR": {
+        "at": 184,
+        "bytes": "20"
+      },
+      "encodeCodecConfig.hevcConfig.enableMVHEVC": {
+        "at": 186,
+        "bytes": "20"
+      },
+      "encodeCodecConfig.hevcConfig.enableRefPicListModification": {
+        "at": 187,
+        "bytes": "04"
+      },
+      "encodeCodecConfig.hevcConfig.enableTemporalSVC": {
+        "at": 186,
+        "bytes": "10"
+      },
+      "encodeCodecConfig.hevcConfig.outputAUD": {
+        "at": 184,
+        "bytes": "10"
+      },
+      "encodeCodecConfig.hevcConfig.outputBufferingPeriodSEI": {
+        "at": 184,
+        "bytes": "04"
+      },
+      "encodeCodecConfig.hevcConfig.outputHevc3DReferenceDisplayInfo": {
+        "at": 186,
+        "bytes": "40"
+      },
+      "encodeCodecConfig.hevcConfig.outputMasteringDisplay": {
+        "at": 187,
+        "bytes": "01"
+      },
+      "encodeCodecConfig.hevcConfig.outputMaxCll": {
+        "at": 186,
+        "bytes": "80"
+      },
+      "encodeCodecConfig.hevcConfig.outputPictureTimingSEI": {
+        "at": 184,
+        "bytes": "08"
+      },
+      "encodeCodecConfig.hevcConfig.outputRecoveryPointSEI": {
+        "at": 186,
+        "bytes": "04"
+      },
+      "encodeCodecConfig.hevcConfig.outputTimeCodeSEI": {
+        "at": 186,
+        "bytes": "08"
+      },
+      "encodeCodecConfig.hevcConfig.repeatSPSPPS": {
+        "at": 184,
+        "bytes": "80"
+      },
+      "encodeCodecConfig.hevcConfig.reserved": {
+        "at": 187,
+        "bytes": "f8"
+      },
+      "encodeCodecConfig.hevcConfig.reserved0": {
+        "at": 187,
+        "bytes": "02"
+      },
+      "encodeCodecConfig.hevcConfig.reserved3": {
+        "at": 185,
+        "bytes": "38"
+      },
+      "encodeCodecConfig.hevcConfig.singleSliceIntraRefresh": {
+        "at": 186,
+        "bytes": "02"
+      },
+      "encodeCodecConfig.hevcConfig.useConstrainedIntraPred": {
+        "at": 184,
+        "bytes": "01"
+      },
+      "rcParams.aqStrength": {
+        "at": 77,
+        "bytes": "f0"
+      },
+      "rcParams.disableBadapt": {
+        "at": 76,
+        "bytes": "80"
+      },
+      "rcParams.disableIadapt": {
+        "at": 76,
+        "bytes": "40"
+      },
+      "rcParams.enableAQ": {
+        "at": 76,
+        "bytes": "08"
+      },
+      "rcParams.enableExtLookahead": {
+        "at": 78,
+        "bytes": "01"
+      },
+      "rcParams.enableInitialRCQP": {
+        "at": 76,
+        "bytes": "04"
+      },
+      "rcParams.enableLookahead": {
+        "at": 76,
+        "bytes": "20"
+      },
+      "rcParams.enableMaxQP": {
+        "at": 76,
+        "bytes": "02"
+      },
+      "rcParams.enableMinQP": {
+        "at": 76,
+        "bytes": "01"
+      },
+      "rcParams.enableNonRefP": {
+        "at": 77,
+        "bytes": "04"
+      },
+      "rcParams.enableTemporalAQ": {
+        "at": 77,
+        "bytes": "01"
+      },
+      "rcParams.reservedBitField1": {
+        "at": 76,
+        "bytes": "10"
+      },
+      "rcParams.reservedBitFields": {
+        "at": 78,
+        "bytes": "feff"
+      },
+      "rcParams.strictGOPTarget": {
+        "at": 77,
+        "bytes": "08"
+      },
+      "rcParams.zeroReorderDelay": {
+        "at": 77,
+        "bytes": "02"
+      }
+    },
+    "NV_ENC_CONFIG_AV1": {
+      "chromaFormatIDC": {
+        "at": 16,
+        "bytes": "8001"
+      },
+      "disableSeqHdr": {
+        "at": 16,
+        "bytes": "10"
+      },
+      "enableBitstreamPadding": {
+        "at": 17,
+        "bytes": "02"
+      },
+      "enableCustomTileConfig": {
+        "at": 17,
+        "bytes": "04"
+      },
+      "enableDecoderModelInfo": {
+        "at": 16,
+        "bytes": "04"
+      },
+      "enableFilmGrainParams": {
+        "at": 17,
+        "bytes": "08"
+      },
+      "enableFrameIdNumbers": {
+        "at": 16,
+        "bytes": "08"
+      },
+      "enableIntraRefresh": {
+        "at": 16,
+        "bytes": "40"
+      },
+      "enableLTR": {
+        "at": 17,
+        "bytes": "10"
+      },
+      "enableTemporalSVC": {
+        "at": 17,
+        "bytes": "20"
+      },
+      "enableTimingInfo": {
+        "at": 16,
+        "bytes": "02"
+      },
+      "outputAnnexBFormat": {
+        "at": 16,
+        "bytes": "01"
+      },
+      "outputMasteringDisplay": {
+        "at": 17,
+        "bytes": "80"
+      },
+      "outputMaxCll": {
+        "at": 17,
+        "bytes": "40"
+      },
+      "repeatSeqHdr": {
+        "at": 16,
+        "bytes": "20"
+      },
+      "reserved": {
+        "at": 18,
+        "bytes": "fcff"
+      },
+      "reserved4": {
+        "at": 18,
+        "bytes": "03"
+      }
+    },
+    "NV_ENC_CONFIG_H264": {
+      "disableSPSPPS": {
+        "at": 0,
+        "bytes": "80"
+      },
+      "disableSVCPrefixNalu": {
+        "at": 2,
+        "bytes": "04"
+      },
+      "enableConstrainedEncoding": {
+        "at": 1,
+        "bytes": "08"
+      },
+      "enableFillerDataInsertion": {
+        "at": 2,
+        "bytes": "02"
+      },
+      "enableIntraRefresh": {
+        "at": 1,
+        "bytes": "04"
+      },
+      "enableLTR": {
+        "at": 1,
+        "bytes": "40"
+      },
+      "enableScalabilityInfoSEI": {
+        "at": 2,
+        "bytes": "08"
+      },
+      "enableStereoMVC": {
+        "at": 0,
+        "bytes": "02"
+      },
+      "enableTemporalSVC": {
+        "at": 0,
+        "bytes": "01"
+      },
+      "enableTimeCode": {
+        "at": 2,
+        "bytes": "20"
+      },
+      "enableVFR": {
+        "at": 1,
+        "bytes": "20"
+      },
+      "hierarchicalBFrames": {
+        "at": 0,
+        "bytes": "08"
+      },
+      "hierarchicalPFrames": {
+        "at": 0,
+        "bytes": "04"
+      },
+      "outputAUD": {
+        "at": 0,
+        "bytes": "40"
+      },
+      "outputBufferingPeriodSEI": {
+        "at": 0,
+        "bytes": "10"
+      },
+      "outputFramePackingSEI": {
+        "at": 1,
+        "bytes": "01"
+      },
+      "outputPictureTimingSEI": {
+        "at": 0,
+        "bytes": "20"
+      },
+      "outputRecoveryPointSEI": {
+        "at": 1,
+        "bytes": "02"
+      },
+      "qpPrimeYZeroTransformBypassFlag": {
+        "at": 1,
+        "bytes": "80"
+      },
+      "repeatSPSPPS": {
+        "at": 1,
+        "bytes": "10"
+      },
+      "reservedBitFields": {
+        "at": 2,
+        "bytes": "c0ff"
+      },
+      "singleSliceIntraRefresh": {
+        "at": 2,
+        "bytes": "10"
+      },
+      "useConstrainedIntraPred": {
+        "at": 2,
+        "bytes": "01"
+      }
+    },
+    "NV_ENC_CONFIG_HEVC": {
+      "chromaFormatIDC": {
+        "at": 17,
+        "bytes": "06"
+      },
+      "disableDeblockAcrossSliceBoundary": {
+        "at": 16,
+        "bytes": "02"
+      },
+      "disableSPSPPS": {
+        "at": 16,
+        "bytes": "40"
+      },
+      "enableAlphaLayerEncoding": {
+        "at": 18,
+        "bytes": "01"
+      },
+      "enableConstrainedEncoding": {
+        "at": 17,
+        "bytes": "80"
+      },
+      "enableFillerDataInsertion": {
+        "at": 17,
+        "bytes": "40"
+      },
+      "enableIntraRefresh": {
+        "at": 17,
+        "bytes": "01"
+      },
+      "enableLTR": {
+        "at": 16,
+        "bytes": "20"
+      },
+      "enableMVHEVC": {
+        "at": 18,
+        "bytes": "20"
+      },
+      "enableRefPicListModification": {
+        "at": 19,
+        "bytes": "04"
+      },
+      "enableTemporalSVC": {
+        "at": 18,
+        "bytes": "10"
+      },
+      "outputAUD": {
+        "at": 16,
+        "bytes": "10"
+      },
+      "outputBufferingPeriodSEI": {
+        "at": 16,
+        "bytes": "04"
+      },
+      "outputHevc3DReferenceDisplayInfo": {
+        "at": 18,
+        "bytes": "40"
+      },
+      "outputMasteringDisplay": {
+        "at": 19,
+        "bytes": "01"
+      },
+      "outputMaxCll": {
+        "at": 18,
+        "bytes": "80"
+      },
+      "outputPictureTimingSEI": {
+        "at": 16,
+        "bytes": "08"
+      },
+      "outputRecoveryPointSEI": {
+        "at": 18,
+        "bytes": "04"
+      },
+      "outputTimeCodeSEI": {
+        "at": 18,
+        "bytes": "08"
+      },
+      "repeatSPSPPS": {
+        "at": 16,
+        "bytes": "80"
+      },
+      "reserved": {
+        "at": 19,
+        "bytes": "f8"
+      },
+      "reserved0": {
+        "at": 19,
+        "bytes": "02"
+      },
+      "reserved3": {
+        "at": 17,
+        "bytes": "38"
+      },
+      "singleSliceIntraRefresh": {
+        "at": 18,
+        "bytes": "02"
+      },
+      "useConstrainedIntraPred": {
+        "at": 16,
+        "bytes": "01"
+      }
+    },
+    "NV_ENC_INITIALIZE_PARAMS": {
+      "enableExternalMEHints": {
+        "at": 68,
+        "bytes": "04"
+      },
+      "enableMEOnlyMode": {
+        "at": 68,
+        "bytes": "08"
+      },
+      "enableOutputInVidmem": {
+        "at": 69,
+        "bytes": "02"
+      },
+      "enableOutputStats": {
+        "at": 69,
+        "bytes": "08"
+      },
+      "enableReconFrameOutput": {
+        "at": 69,
+        "bytes": "04"
+      },
+      "enableSubFrameWrite": {
+        "at": 68,
+        "bytes": "02"
+      },
+      "enableUniDirectionalB": {
+        "at": 69,
+        "bytes": "10"
+      },
+      "enableWeightedPrediction": {
+        "at": 68,
+        "bytes": "10"
+      },
+      "maxMEHintCountsPerBlock[0].numCandsPerBlk16x16": {
+        "at": 104,
+        "bytes": "0f"
+      },
+      "maxMEHintCountsPerBlock[0].numCandsPerBlk16x8": {
+        "at": 104,
+        "bytes": "f0"
+      },
+      "maxMEHintCountsPerBlock[0].numCandsPerBlk8x16": {
+        "at": 105,
+        "bytes": "0f"
+      },
+      "maxMEHintCountsPerBlock[0].numCandsPerBlk8x8": {
+        "at": 105,
+        "bytes": "f0"
+      },
+      "maxMEHintCountsPerBlock[0].numCandsPerSb": {
+        "at": 106,
+        "bytes": "ff"
+      },
+      "maxMEHintCountsPerBlock[0].reserved": {
+        "at": 107,
+        "bytes": "ff"
+      },
+      "reportSliceOffsets": {
+        "at": 68,
+        "bytes": "01"
+      },
+      "reservedBitFields": {
+        "at": 69,
+        "bytes": "e0ffff"
+      },
+      "splitEncodeMode": {
+        "at": 68,
+        "bytes": "e001"
+      }
+    },
+    "NV_ENC_LOCK_BITSTREAM": {
+      "doNotWait": {
+        "at": 4,
+        "bytes": "01"
+      },
+      "getRCStats": {
+        "at": 4,
+        "bytes": "04"
+      },
+      "ltrFrame": {
+        "at": 4,
+        "bytes": "02"
+      },
+      "reservedBitFields": {
+        "at": 4,
+        "bytes": "f8ffffff"
+      }
+    },
+    "NV_ENC_PIC_PARAMS": {
+      "meHintCountsPerBlock[0].numCandsPerBlk16x16": {
+        "at": 1624,
+        "bytes": "0f"
+      },
+      "meHintCountsPerBlock[0].numCandsPerBlk16x8": {
+        "at": 1624,
+        "bytes": "f0"
+      },
+      "meHintCountsPerBlock[0].numCandsPerBlk8x16": {
+        "at": 1625,
+        "bytes": "0f"
+      },
+      "meHintCountsPerBlock[0].numCandsPerBlk8x8": {
+        "at": 1625,
+        "bytes": "f0"
+      },
+      "meHintCountsPerBlock[0].numCandsPerSb": {
+        "at": 1626,
+        "bytes": "ff"
+      },
+      "meHintCountsPerBlock[0].reserved": {
+        "at": 1627,
+        "bytes": "ff"
+      }
+    },
+    "NV_ENC_PRESET_CONFIG": {
+      "presetCfg.encodeCodecConfig.av1Config.chromaFormatIDC": {
+        "at": 192,
+        "bytes": "8001"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.disableSeqHdr": {
+        "at": 192,
+        "bytes": "10"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.enableBitstreamPadding": {
+        "at": 193,
+        "bytes": "02"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.enableCustomTileConfig": {
+        "at": 193,
+        "bytes": "04"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.enableDecoderModelInfo": {
+        "at": 192,
+        "bytes": "04"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.enableFilmGrainParams": {
+        "at": 193,
+        "bytes": "08"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.enableFrameIdNumbers": {
+        "at": 192,
+        "bytes": "08"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.enableIntraRefresh": {
+        "at": 192,
+        "bytes": "40"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.enableLTR": {
+        "at": 193,
+        "bytes": "10"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.enableTemporalSVC": {
+        "at": 193,
+        "bytes": "20"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.enableTimingInfo": {
+        "at": 192,
+        "bytes": "02"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.outputAnnexBFormat": {
+        "at": 192,
+        "bytes": "01"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.outputMasteringDisplay": {
+        "at": 193,
+        "bytes": "80"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.outputMaxCll": {
+        "at": 193,
+        "bytes": "40"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.repeatSeqHdr": {
+        "at": 192,
+        "bytes": "20"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.reserved": {
+        "at": 194,
+        "bytes": "fcff"
+      },
+      "presetCfg.encodeCodecConfig.av1Config.reserved4": {
+        "at": 194,
+        "bytes": "03"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.disableSPSPPS": {
+        "at": 176,
+        "bytes": "80"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.disableSVCPrefixNalu": {
+        "at": 178,
+        "bytes": "04"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.enableConstrainedEncoding": {
+        "at": 177,
+        "bytes": "08"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.enableFillerDataInsertion": {
+        "at": 178,
+        "bytes": "02"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.enableIntraRefresh": {
+        "at": 177,
+        "bytes": "04"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.enableLTR": {
+        "at": 177,
+        "bytes": "40"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.enableScalabilityInfoSEI": {
+        "at": 178,
+        "bytes": "08"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.enableStereoMVC": {
+        "at": 176,
+        "bytes": "02"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.enableTemporalSVC": {
+        "at": 176,
+        "bytes": "01"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.enableTimeCode": {
+        "at": 178,
+        "bytes": "20"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.enableVFR": {
+        "at": 177,
+        "bytes": "20"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.hierarchicalBFrames": {
+        "at": 176,
+        "bytes": "08"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.hierarchicalPFrames": {
+        "at": 176,
+        "bytes": "04"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.outputAUD": {
+        "at": 176,
+        "bytes": "40"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.outputBufferingPeriodSEI": {
+        "at": 176,
+        "bytes": "10"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.outputFramePackingSEI": {
+        "at": 177,
+        "bytes": "01"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.outputPictureTimingSEI": {
+        "at": 176,
+        "bytes": "20"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.outputRecoveryPointSEI": {
+        "at": 177,
+        "bytes": "02"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.qpPrimeYZeroTransformBypassFlag": {
+        "at": 177,
+        "bytes": "80"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.repeatSPSPPS": {
+        "at": 177,
+        "bytes": "10"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.reservedBitFields": {
+        "at": 178,
+        "bytes": "c0ff"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.singleSliceIntraRefresh": {
+        "at": 178,
+        "bytes": "10"
+      },
+      "presetCfg.encodeCodecConfig.h264Config.useConstrainedIntraPred": {
+        "at": 178,
+        "bytes": "01"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.chromaFormatIDC": {
+        "at": 193,
+        "bytes": "06"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.disableDeblockAcrossSliceBoundary": {
+        "at": 192,
+        "bytes": "02"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.disableSPSPPS": {
+        "at": 192,
+        "bytes": "40"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.enableAlphaLayerEncoding": {
+        "at": 194,
+        "bytes": "01"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.enableConstrainedEncoding": {
+        "at": 193,
+        "bytes": "80"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.enableFillerDataInsertion": {
+        "at": 193,
+        "bytes": "40"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.enableIntraRefresh": {
+        "at": 193,
+        "bytes": "01"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.enableLTR": {
+        "at": 192,
+        "bytes": "20"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.enableMVHEVC": {
+        "at": 194,
+        "bytes": "20"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.enableRefPicListModification": {
+        "at": 195,
+        "bytes": "04"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.enableTemporalSVC": {
+        "at": 194,
+        "bytes": "10"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.outputAUD": {
+        "at": 192,
+        "bytes": "10"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.outputBufferingPeriodSEI": {
+        "at": 192,
+        "bytes": "04"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.outputHevc3DReferenceDisplayInfo": {
+        "at": 194,
+        "bytes": "40"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.outputMasteringDisplay": {
+        "at": 195,
+        "bytes": "01"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.outputMaxCll": {
+        "at": 194,
+        "bytes": "80"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.outputPictureTimingSEI": {
+        "at": 192,
+        "bytes": "08"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.outputRecoveryPointSEI": {
+        "at": 194,
+        "bytes": "04"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.outputTimeCodeSEI": {
+        "at": 194,
+        "bytes": "08"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.repeatSPSPPS": {
+        "at": 192,
+        "bytes": "80"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.reserved": {
+        "at": 195,
+        "bytes": "f8"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.reserved0": {
+        "at": 195,
+        "bytes": "02"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.reserved3": {
+        "at": 193,
+        "bytes": "38"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.singleSliceIntraRefresh": {
+        "at": 194,
+        "bytes": "02"
+      },
+      "presetCfg.encodeCodecConfig.hevcConfig.useConstrainedIntraPred": {
+        "at": 192,
+        "bytes": "01"
+      },
+      "presetCfg.rcParams.aqStrength": {
+        "at": 85,
+        "bytes": "f0"
+      },
+      "presetCfg.rcParams.disableBadapt": {
+        "at": 84,
+        "bytes": "80"
+      },
+      "presetCfg.rcParams.disableIadapt": {
+        "at": 84,
+        "bytes": "40"
+      },
+      "presetCfg.rcParams.enableAQ": {
+        "at": 84,
+        "bytes": "08"
+      },
+      "presetCfg.rcParams.enableExtLookahead": {
+        "at": 86,
+        "bytes": "01"
+      },
+      "presetCfg.rcParams.enableInitialRCQP": {
+        "at": 84,
+        "bytes": "04"
+      },
+      "presetCfg.rcParams.enableLookahead": {
+        "at": 84,
+        "bytes": "20"
+      },
+      "presetCfg.rcParams.enableMaxQP": {
+        "at": 84,
+        "bytes": "02"
+      },
+      "presetCfg.rcParams.enableMinQP": {
+        "at": 84,
+        "bytes": "01"
+      },
+      "presetCfg.rcParams.enableNonRefP": {
+        "at": 85,
+        "bytes": "04"
+      },
+      "presetCfg.rcParams.enableTemporalAQ": {
+        "at": 85,
+        "bytes": "01"
+      },
+      "presetCfg.rcParams.reservedBitField1": {
+        "at": 84,
+        "bytes": "10"
+      },
+      "presetCfg.rcParams.reservedBitFields": {
+        "at": 86,
+        "bytes": "feff"
+      },
+      "presetCfg.rcParams.strictGOPTarget": {
+        "at": 85,
+        "bytes": "08"
+      },
+      "presetCfg.rcParams.zeroReorderDelay": {
+        "at": 85,
+        "bytes": "02"
+      }
+    },
+    "NV_ENC_RC_PARAMS": {
+      "aqStrength": {
+        "at": 37,
+        "bytes": "f0"
+      },
+      "disableBadapt": {
+        "at": 36,
+        "bytes": "80"
+      },
+      "disableIadapt": {
+        "at": 36,
+        "bytes": "40"
+      },
+      "enableAQ": {
+        "at": 36,
+        "bytes": "08"
+      },
+      "enableExtLookahead": {
+        "at": 38,
+        "bytes": "01"
+      },
+      "enableInitialRCQP": {
+        "at": 36,
+        "bytes": "04"
+      },
+      "enableLookahead": {
+        "at": 36,
+        "bytes": "20"
+      },
+      "enableMaxQP": {
+        "at": 36,
+        "bytes": "02"
+      },
+      "enableMinQP": {
+        "at": 36,
+        "bytes": "01"
+      },
+      "enableNonRefP": {
+        "at": 37,
+        "bytes": "04"
+      },
+      "enableTemporalAQ": {
+        "at": 37,
+        "bytes": "01"
+      },
+      "reservedBitField1": {
+        "at": 36,
+        "bytes": "10"
+      },
+      "reservedBitFields": {
+        "at": 38,
+        "bytes": "feff"
+      },
+      "strictGOPTarget": {
+        "at": 37,
+        "bytes": "08"
+      },
+      "zeroReorderDelay": {
+        "at": 37,
+        "bytes": "02"
+      }
+    }
+  },
   "header_version": "13.1",
+  "nested": {
+    "NV_ENC_CODEC_CONFIG": {
+      "av1Config.chromaSamplePosition": 84,
+      "av1Config.colorPrimaries": 68,
+      "av1Config.colorRange": 80,
+      "av1Config.filmGrainParams": 96,
+      "av1Config.idrPeriod": 20,
+      "av1Config.inputBitDepth": 116,
+      "av1Config.intraRefreshCnt": 28,
+      "av1Config.intraRefreshPeriod": 24,
+      "av1Config.level": 0,
+      "av1Config.ltrNumFrames": 120,
+      "av1Config.matrixCoefficients": 76,
+      "av1Config.maxNumRefFramesInDPB": 32,
+      "av1Config.maxPartSize": 12,
+      "av1Config.maxTemporalLayersMinus1": 64,
+      "av1Config.minPartSize": 8,
+      "av1Config.numBwdRefs": 108,
+      "av1Config.numFwdRefs": 104,
+      "av1Config.numTemporalLayers": 124,
+      "av1Config.numTileColumns": 36,
+      "av1Config.numTileRows": 40,
+      "av1Config.outputBitDepth": 112,
+      "av1Config.reserved1": 132,
+      "av1Config.reserved2": 44,
+      "av1Config.reserved3": 1056,
+      "av1Config.tfLevel": 128,
+      "av1Config.tier": 4,
+      "av1Config.tileHeights": 56,
+      "av1Config.tileWidths": 48,
+      "av1Config.transferCharacteristics": 72,
+      "av1Config.useBFramesAsRef": 88,
+      "h264Config.adaptiveTransformMode": 32,
+      "h264Config.bdirectMode": 40,
+      "h264Config.chromaFormatIDC": 192,
+      "h264Config.disableDeblockingFilterIDC": 16,
+      "h264Config.entropyCodingMode": 44,
+      "h264Config.fmoMode": 36,
+      "h264Config.h264VUIParameters.bitstreamRestrictionFlag": 120,
+      "h264Config.h264VUIParameters.chromaSampleLocationBot": 116,
+      "h264Config.h264VUIParameters.chromaSampleLocationFlag": 108,
+      "h264Config.h264VUIParameters.chromaSampleLocationTop": 112,
+      "h264Config.h264VUIParameters.colourDescriptionPresentFlag": 92,
+      "h264Config.h264VUIParameters.colourMatrix": 104,
+      "h264Config.h264VUIParameters.colourPrimaries": 96,
+      "h264Config.h264VUIParameters.numUnitInTicks": 128,
+      "h264Config.h264VUIParameters.overscanInfo": 76,
+      "h264Config.h264VUIParameters.overscanInfoPresentFlag": 72,
+      "h264Config.h264VUIParameters.reserved": 136,
+      "h264Config.h264VUIParameters.timeScale": 132,
+      "h264Config.h264VUIParameters.timingInfoPresentFlag": 124,
+      "h264Config.h264VUIParameters.transferCharacteristics": 100,
+      "h264Config.h264VUIParameters.videoFormat": 84,
+      "h264Config.h264VUIParameters.videoFullRangeFlag": 88,
+      "h264Config.h264VUIParameters.videoSignalTypePresentFlag": 80,
+      "h264Config.idrPeriod": 8,
+      "h264Config.inputBitDepth": 216,
+      "h264Config.intraRefreshCnt": 56,
+      "h264Config.intraRefreshPeriod": 52,
+      "h264Config.level": 4,
+      "h264Config.ltrNumFrames": 184,
+      "h264Config.ltrTrustMode": 188,
+      "h264Config.maxNumRefFrames": 60,
+      "h264Config.maxTemporalLayers": 196,
+      "h264Config.numRefL0": 204,
+      "h264Config.numRefL1": 208,
+      "h264Config.numTemporalLayers": 20,
+      "h264Config.outputBitDepth": 212,
+      "h264Config.ppsId": 28,
+      "h264Config.reserved1": 224,
+      "h264Config.reserved2": 1280,
+      "h264Config.separateColourPlaneFlag": 12,
+      "h264Config.sliceMode": 64,
+      "h264Config.sliceModeData": 68,
+      "h264Config.spsId": 24,
+      "h264Config.stereoMode": 48,
+      "h264Config.tfLevel": 220,
+      "h264Config.useBFramesAsRef": 200,
+      "hevcConfig.disableDeblockingFilterIDC": 196,
+      "hevcConfig.hevcVUIParameters.bitstreamRestrictionFlag": 112,
+      "hevcConfig.hevcVUIParameters.chromaSampleLocationBot": 108,
+      "hevcConfig.hevcVUIParameters.chromaSampleLocationFlag": 100,
+      "hevcConfig.hevcVUIParameters.chromaSampleLocationTop": 104,
+      "hevcConfig.hevcVUIParameters.colourDescriptionPresentFlag": 84,
+      "hevcConfig.hevcVUIParameters.colourMatrix": 96,
+      "hevcConfig.hevcVUIParameters.colourPrimaries": 88,
+      "hevcConfig.hevcVUIParameters.numUnitInTicks": 120,
+      "hevcConfig.hevcVUIParameters.overscanInfo": 68,
+      "hevcConfig.hevcVUIParameters.overscanInfoPresentFlag": 64,
+      "hevcConfig.hevcVUIParameters.reserved": 128,
+      "hevcConfig.hevcVUIParameters.timeScale": 124,
+      "hevcConfig.hevcVUIParameters.timingInfoPresentFlag": 116,
+      "hevcConfig.hevcVUIParameters.transferCharacteristics": 92,
+      "hevcConfig.hevcVUIParameters.videoFormat": 76,
+      "hevcConfig.hevcVUIParameters.videoFullRangeFlag": 80,
+      "hevcConfig.hevcVUIParameters.videoSignalTypePresentFlag": 72,
+      "hevcConfig.idrPeriod": 20,
+      "hevcConfig.inputBitDepth": 204,
+      "hevcConfig.intraRefreshCnt": 28,
+      "hevcConfig.intraRefreshPeriod": 24,
+      "hevcConfig.level": 0,
+      "hevcConfig.ltrNumFrames": 36,
+      "hevcConfig.ltrTrustMode": 176,
+      "hevcConfig.maxCUSize": 12,
+      "hevcConfig.maxNumRefFramesInDPB": 32,
+      "hevcConfig.maxTemporalLayersMinus1": 60,
+      "hevcConfig.minCUSize": 8,
+      "hevcConfig.numRefL0": 184,
+      "hevcConfig.numRefL1": 188,
+      "hevcConfig.numTemporalLayers": 208,
+      "hevcConfig.numViews": 212,
+      "hevcConfig.outputBitDepth": 200,
+      "hevcConfig.ppsId": 48,
+      "hevcConfig.reserved1": 216,
+      "hevcConfig.reserved2": 1048,
+      "hevcConfig.sliceMode": 52,
+      "hevcConfig.sliceModeData": 56,
+      "hevcConfig.spsId": 44,
+      "hevcConfig.tfLevel": 192,
+      "hevcConfig.tier": 4,
+      "hevcConfig.useBFramesAsRef": 180,
+      "hevcConfig.vpsId": 40
+    },
+    "NV_ENC_CONFIG": {
+      "encodeCodecConfig.av1Config.chromaSamplePosition": 252,
+      "encodeCodecConfig.av1Config.colorPrimaries": 236,
+      "encodeCodecConfig.av1Config.colorRange": 248,
+      "encodeCodecConfig.av1Config.filmGrainParams": 264,
+      "encodeCodecConfig.av1Config.idrPeriod": 188,
+      "encodeCodecConfig.av1Config.inputBitDepth": 284,
+      "encodeCodecConfig.av1Config.intraRefreshCnt": 196,
+      "encodeCodecConfig.av1Config.intraRefreshPeriod": 192,
+      "encodeCodecConfig.av1Config.level": 168,
+      "encodeCodecConfig.av1Config.ltrNumFrames": 288,
+      "encodeCodecConfig.av1Config.matrixCoefficients": 244,
+      "encodeCodecConfig.av1Config.maxNumRefFramesInDPB": 200,
+      "encodeCodecConfig.av1Config.maxPartSize": 180,
+      "encodeCodecConfig.av1Config.maxTemporalLayersMinus1": 232,
+      "encodeCodecConfig.av1Config.minPartSize": 176,
+      "encodeCodecConfig.av1Config.numBwdRefs": 276,
+      "encodeCodecConfig.av1Config.numFwdRefs": 272,
+      "encodeCodecConfig.av1Config.numTemporalLayers": 292,
+      "encodeCodecConfig.av1Config.numTileColumns": 204,
+      "encodeCodecConfig.av1Config.numTileRows": 208,
+      "encodeCodecConfig.av1Config.outputBitDepth": 280,
+      "encodeCodecConfig.av1Config.reserved1": 300,
+      "encodeCodecConfig.av1Config.reserved2": 212,
+      "encodeCodecConfig.av1Config.reserved3": 1224,
+      "encodeCodecConfig.av1Config.tfLevel": 296,
+      "encodeCodecConfig.av1Config.tier": 172,
+      "encodeCodecConfig.av1Config.tileHeights": 224,
+      "encodeCodecConfig.av1Config.tileWidths": 216,
+      "encodeCodecConfig.av1Config.transferCharacteristics": 240,
+      "encodeCodecConfig.av1Config.useBFramesAsRef": 256,
+      "encodeCodecConfig.h264Config.adaptiveTransformMode": 200,
+      "encodeCodecConfig.h264Config.bdirectMode": 208,
+      "encodeCodecConfig.h264Config.chromaFormatIDC": 360,
+      "encodeCodecConfig.h264Config.disableDeblockingFilterIDC": 184,
+      "encodeCodecConfig.h264Config.entropyCodingMode": 212,
+      "encodeCodecConfig.h264Config.fmoMode": 204,
+      "encodeCodecConfig.h264Config.h264VUIParameters.bitstreamRestrictionFlag": 288,
+      "encodeCodecConfig.h264Config.h264VUIParameters.chromaSampleLocationBot": 284,
+      "encodeCodecConfig.h264Config.h264VUIParameters.chromaSampleLocationFlag": 276,
+      "encodeCodecConfig.h264Config.h264VUIParameters.chromaSampleLocationTop": 280,
+      "encodeCodecConfig.h264Config.h264VUIParameters.colourDescriptionPresentFlag": 260,
+      "encodeCodecConfig.h264Config.h264VUIParameters.colourMatrix": 272,
+      "encodeCodecConfig.h264Config.h264VUIParameters.colourPrimaries": 264,
+      "encodeCodecConfig.h264Config.h264VUIParameters.numUnitInTicks": 296,
+      "encodeCodecConfig.h264Config.h264VUIParameters.overscanInfo": 244,
+      "encodeCodecConfig.h264Config.h264VUIParameters.overscanInfoPresentFlag": 240,
+      "encodeCodecConfig.h264Config.h264VUIParameters.reserved": 304,
+      "encodeCodecConfig.h264Config.h264VUIParameters.timeScale": 300,
+      "encodeCodecConfig.h264Config.h264VUIParameters.timingInfoPresentFlag": 292,
+      "encodeCodecConfig.h264Config.h264VUIParameters.transferCharacteristics": 268,
+      "encodeCodecConfig.h264Config.h264VUIParameters.videoFormat": 252,
+      "encodeCodecConfig.h264Config.h264VUIParameters.videoFullRangeFlag": 256,
+      "encodeCodecConfig.h264Config.h264VUIParameters.videoSignalTypePresentFlag": 248,
+      "encodeCodecConfig.h264Config.idrPeriod": 176,
+      "encodeCodecConfig.h264Config.inputBitDepth": 384,
+      "encodeCodecConfig.h264Config.intraRefreshCnt": 224,
+      "encodeCodecConfig.h264Config.intraRefreshPeriod": 220,
+      "encodeCodecConfig.h264Config.level": 172,
+      "encodeCodecConfig.h264Config.ltrNumFrames": 352,
+      "encodeCodecConfig.h264Config.ltrTrustMode": 356,
+      "encodeCodecConfig.h264Config.maxNumRefFrames": 228,
+      "encodeCodecConfig.h264Config.maxTemporalLayers": 364,
+      "encodeCodecConfig.h264Config.numRefL0": 372,
+      "encodeCodecConfig.h264Config.numRefL1": 376,
+      "encodeCodecConfig.h264Config.numTemporalLayers": 188,
+      "encodeCodecConfig.h264Config.outputBitDepth": 380,
+      "encodeCodecConfig.h264Config.ppsId": 196,
+      "encodeCodecConfig.h264Config.reserved1": 392,
+      "encodeCodecConfig.h264Config.reserved2": 1448,
+      "encodeCodecConfig.h264Config.separateColourPlaneFlag": 180,
+      "encodeCodecConfig.h264Config.sliceMode": 232,
+      "encodeCodecConfig.h264Config.sliceModeData": 236,
+      "encodeCodecConfig.h264Config.spsId": 192,
+      "encodeCodecConfig.h264Config.stereoMode": 216,
+      "encodeCodecConfig.h264Config.tfLevel": 388,
+      "encodeCodecConfig.h264Config.useBFramesAsRef": 368,
+      "encodeCodecConfig.hevcConfig.disableDeblockingFilterIDC": 364,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.bitstreamRestrictionFlag": 280,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.chromaSampleLocationBot": 276,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.chromaSampleLocationFlag": 268,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.chromaSampleLocationTop": 272,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.colourDescriptionPresentFlag": 252,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.colourMatrix": 264,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.colourPrimaries": 256,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.numUnitInTicks": 288,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.overscanInfo": 236,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.overscanInfoPresentFlag": 232,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.reserved": 296,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.timeScale": 292,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.timingInfoPresentFlag": 284,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.transferCharacteristics": 260,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.videoFormat": 244,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.videoFullRangeFlag": 248,
+      "encodeCodecConfig.hevcConfig.hevcVUIParameters.videoSignalTypePresentFlag": 240,
+      "encodeCodecConfig.hevcConfig.idrPeriod": 188,
+      "encodeCodecConfig.hevcConfig.inputBitDepth": 372,
+      "encodeCodecConfig.hevcConfig.intraRefreshCnt": 196,
+      "encodeCodecConfig.hevcConfig.intraRefreshPeriod": 192,
+      "encodeCodecConfig.hevcConfig.level": 168,
+      "encodeCodecConfig.hevcConfig.ltrNumFrames": 204,
+      "encodeCodecConfig.hevcConfig.ltrTrustMode": 344,
+      "encodeCodecConfig.hevcConfig.maxCUSize": 180,
+      "encodeCodecConfig.hevcConfig.maxNumRefFramesInDPB": 200,
+      "encodeCodecConfig.hevcConfig.maxTemporalLayersMinus1": 228,
+      "encodeCodecConfig.hevcConfig.minCUSize": 176,
+      "encodeCodecConfig.hevcConfig.numRefL0": 352,
+      "encodeCodecConfig.hevcConfig.numRefL1": 356,
+      "encodeCodecConfig.hevcConfig.numTemporalLayers": 376,
+      "encodeCodecConfig.hevcConfig.numViews": 380,
+      "encodeCodecConfig.hevcConfig.outputBitDepth": 368,
+      "encodeCodecConfig.hevcConfig.ppsId": 216,
+      "encodeCodecConfig.hevcConfig.reserved1": 384,
+      "encodeCodecConfig.hevcConfig.reserved2": 1216,
+      "encodeCodecConfig.hevcConfig.sliceMode": 220,
+      "encodeCodecConfig.hevcConfig.sliceModeData": 224,
+      "encodeCodecConfig.hevcConfig.spsId": 212,
+      "encodeCodecConfig.hevcConfig.tfLevel": 360,
+      "encodeCodecConfig.hevcConfig.tier": 172,
+      "encodeCodecConfig.hevcConfig.useBFramesAsRef": 348,
+      "encodeCodecConfig.hevcConfig.vpsId": 208,
+      "encodeCodecConfig.reserved": 168,
+      "profileGUID.Data1": 4,
+      "profileGUID.Data2": 8,
+      "profileGUID.Data3": 10,
+      "profileGUID.Data4": 12,
+      "rcParams.alphaLayerBitrateRatio": 144,
+      "rcParams.averageBitRate": 60,
+      "rcParams.cbQPIndexOffset": 148,
+      "rcParams.constQP.qpInterB": 52,
+      "rcParams.constQP.qpInterP": 48,
+      "rcParams.constQP.qpIntra": 56,
+      "rcParams.crQPIndexOffset": 149,
+      "rcParams.initialRCQP.qpInterB": 108,
+      "rcParams.initialRCQP.qpInterP": 104,
+      "rcParams.initialRCQP.qpIntra": 112,
+      "rcParams.lookaheadDepth": 130,
+      "rcParams.lookaheadLevel": 152,
+      "rcParams.lowDelayKeyFrameScale": 132,
+      "rcParams.maxBitRate": 64,
+      "rcParams.maxQP.qpInterB": 96,
+      "rcParams.maxQP.qpInterP": 92,
+      "rcParams.maxQP.qpIntra": 100,
+      "rcParams.minQP.qpInterB": 84,
+      "rcParams.minQP.qpInterP": 80,
+      "rcParams.minQP.qpIntra": 88,
+      "rcParams.multiPass": 140,
+      "rcParams.qpMapMode": 136,
+      "rcParams.rateControlMode": 44,
+      "rcParams.reserved1": 164,
+      "rcParams.reserved2": 150,
+      "rcParams.reserved3": 163,
+      "rcParams.targetQuality": 128,
+      "rcParams.targetQualityLSB": 129,
+      "rcParams.temporalLayerQP": 120,
+      "rcParams.temporallayerIdxMask": 116,
+      "rcParams.uDcQPIndexOffset": 134,
+      "rcParams.vDcQPIndexOffset": 135,
+      "rcParams.vbvBufferSize": 68,
+      "rcParams.vbvInitialDelay": 72,
+      "rcParams.version": 40,
+      "rcParams.viewBitrateRatios": 156,
+      "rcParams.yDcQPIndexOffset": 133
+    },
+    "NV_ENC_CONFIG_H264": {
+      "h264VUIParameters.bitstreamRestrictionFlag": 120,
+      "h264VUIParameters.chromaSampleLocationBot": 116,
+      "h264VUIParameters.chromaSampleLocationFlag": 108,
+      "h264VUIParameters.chromaSampleLocationTop": 112,
+      "h264VUIParameters.colourDescriptionPresentFlag": 92,
+      "h264VUIParameters.colourMatrix": 104,
+      "h264VUIParameters.colourPrimaries": 96,
+      "h264VUIParameters.numUnitInTicks": 128,
+      "h264VUIParameters.overscanInfo": 76,
+      "h264VUIParameters.overscanInfoPresentFlag": 72,
+      "h264VUIParameters.reserved": 136,
+      "h264VUIParameters.timeScale": 132,
+      "h264VUIParameters.timingInfoPresentFlag": 124,
+      "h264VUIParameters.transferCharacteristics": 100,
+      "h264VUIParameters.videoFormat": 84,
+      "h264VUIParameters.videoFullRangeFlag": 88,
+      "h264VUIParameters.videoSignalTypePresentFlag": 80
+    },
+    "NV_ENC_CONFIG_HEVC": {
+      "hevcVUIParameters.bitstreamRestrictionFlag": 112,
+      "hevcVUIParameters.chromaSampleLocationBot": 108,
+      "hevcVUIParameters.chromaSampleLocationFlag": 100,
+      "hevcVUIParameters.chromaSampleLocationTop": 104,
+      "hevcVUIParameters.colourDescriptionPresentFlag": 84,
+      "hevcVUIParameters.colourMatrix": 96,
+      "hevcVUIParameters.colourPrimaries": 88,
+      "hevcVUIParameters.numUnitInTicks": 120,
+      "hevcVUIParameters.overscanInfo": 68,
+      "hevcVUIParameters.overscanInfoPresentFlag": 64,
+      "hevcVUIParameters.reserved": 128,
+      "hevcVUIParameters.timeScale": 124,
+      "hevcVUIParameters.timingInfoPresentFlag": 116,
+      "hevcVUIParameters.transferCharacteristics": 92,
+      "hevcVUIParameters.videoFormat": 76,
+      "hevcVUIParameters.videoFullRangeFlag": 80,
+      "hevcVUIParameters.videoSignalTypePresentFlag": 72
+    },
+    "NV_ENC_INITIALIZE_PARAMS": {
+      "encodeGUID.Data1": 4,
+      "encodeGUID.Data2": 8,
+      "encodeGUID.Data3": 10,
+      "encodeGUID.Data4": 12,
+      "maxMEHintCountsPerBlock[0].reserved1": 108,
+      "presetGUID.Data1": 20,
+      "presetGUID.Data2": 24,
+      "presetGUID.Data3": 26,
+      "presetGUID.Data4": 28
+    },
+    "NV_ENC_PIC_PARAMS": {
+      "codecPicParams.reserved": 80,
+      "meHintCountsPerBlock[0].reserved1": 1628
+    },
+    "NV_ENC_PRESET_CONFIG": {
+      "presetCfg.encodeCodecConfig.av1Config.chromaSamplePosition": 260,
+      "presetCfg.encodeCodecConfig.av1Config.colorPrimaries": 244,
+      "presetCfg.encodeCodecConfig.av1Config.colorRange": 256,
+      "presetCfg.encodeCodecConfig.av1Config.filmGrainParams": 272,
+      "presetCfg.encodeCodecConfig.av1Config.idrPeriod": 196,
+      "presetCfg.encodeCodecConfig.av1Config.inputBitDepth": 292,
+      "presetCfg.encodeCodecConfig.av1Config.intraRefreshCnt": 204,
+      "presetCfg.encodeCodecConfig.av1Config.intraRefreshPeriod": 200,
+      "presetCfg.encodeCodecConfig.av1Config.level": 176,
+      "presetCfg.encodeCodecConfig.av1Config.ltrNumFrames": 296,
+      "presetCfg.encodeCodecConfig.av1Config.matrixCoefficients": 252,
+      "presetCfg.encodeCodecConfig.av1Config.maxNumRefFramesInDPB": 208,
+      "presetCfg.encodeCodecConfig.av1Config.maxPartSize": 188,
+      "presetCfg.encodeCodecConfig.av1Config.maxTemporalLayersMinus1": 240,
+      "presetCfg.encodeCodecConfig.av1Config.minPartSize": 184,
+      "presetCfg.encodeCodecConfig.av1Config.numBwdRefs": 284,
+      "presetCfg.encodeCodecConfig.av1Config.numFwdRefs": 280,
+      "presetCfg.encodeCodecConfig.av1Config.numTemporalLayers": 300,
+      "presetCfg.encodeCodecConfig.av1Config.numTileColumns": 212,
+      "presetCfg.encodeCodecConfig.av1Config.numTileRows": 216,
+      "presetCfg.encodeCodecConfig.av1Config.outputBitDepth": 288,
+      "presetCfg.encodeCodecConfig.av1Config.reserved1": 308,
+      "presetCfg.encodeCodecConfig.av1Config.reserved2": 220,
+      "presetCfg.encodeCodecConfig.av1Config.reserved3": 1232,
+      "presetCfg.encodeCodecConfig.av1Config.tfLevel": 304,
+      "presetCfg.encodeCodecConfig.av1Config.tier": 180,
+      "presetCfg.encodeCodecConfig.av1Config.tileHeights": 232,
+      "presetCfg.encodeCodecConfig.av1Config.tileWidths": 224,
+      "presetCfg.encodeCodecConfig.av1Config.transferCharacteristics": 248,
+      "presetCfg.encodeCodecConfig.av1Config.useBFramesAsRef": 264,
+      "presetCfg.encodeCodecConfig.h264Config.adaptiveTransformMode": 208,
+      "presetCfg.encodeCodecConfig.h264Config.bdirectMode": 216,
+      "presetCfg.encodeCodecConfig.h264Config.chromaFormatIDC": 368,
+      "presetCfg.encodeCodecConfig.h264Config.disableDeblockingFilterIDC": 192,
+      "presetCfg.encodeCodecConfig.h264Config.entropyCodingMode": 220,
+      "presetCfg.encodeCodecConfig.h264Config.fmoMode": 212,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.bitstreamRestrictionFlag": 296,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.chromaSampleLocationBot": 292,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.chromaSampleLocationFlag": 284,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.chromaSampleLocationTop": 288,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.colourDescriptionPresentFlag": 268,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.colourMatrix": 280,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.colourPrimaries": 272,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.numUnitInTicks": 304,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.overscanInfo": 252,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.overscanInfoPresentFlag": 248,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved": 312,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.timeScale": 308,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.timingInfoPresentFlag": 300,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.transferCharacteristics": 276,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.videoFormat": 260,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.videoFullRangeFlag": 264,
+      "presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.videoSignalTypePresentFlag": 256,
+      "presetCfg.encodeCodecConfig.h264Config.idrPeriod": 184,
+      "presetCfg.encodeCodecConfig.h264Config.inputBitDepth": 392,
+      "presetCfg.encodeCodecConfig.h264Config.intraRefreshCnt": 232,
+      "presetCfg.encodeCodecConfig.h264Config.intraRefreshPeriod": 228,
+      "presetCfg.encodeCodecConfig.h264Config.level": 180,
+      "presetCfg.encodeCodecConfig.h264Config.ltrNumFrames": 360,
+      "presetCfg.encodeCodecConfig.h264Config.ltrTrustMode": 364,
+      "presetCfg.encodeCodecConfig.h264Config.maxNumRefFrames": 236,
+      "presetCfg.encodeCodecConfig.h264Config.maxTemporalLayers": 372,
+      "presetCfg.encodeCodecConfig.h264Config.numRefL0": 380,
+      "presetCfg.encodeCodecConfig.h264Config.numRefL1": 384,
+      "presetCfg.encodeCodecConfig.h264Config.numTemporalLayers": 196,
+      "presetCfg.encodeCodecConfig.h264Config.outputBitDepth": 388,
+      "presetCfg.encodeCodecConfig.h264Config.ppsId": 204,
+      "presetCfg.encodeCodecConfig.h264Config.reserved1": 400,
+      "presetCfg.encodeCodecConfig.h264Config.reserved2": 1456,
+      "presetCfg.encodeCodecConfig.h264Config.separateColourPlaneFlag": 188,
+      "presetCfg.encodeCodecConfig.h264Config.sliceMode": 240,
+      "presetCfg.encodeCodecConfig.h264Config.sliceModeData": 244,
+      "presetCfg.encodeCodecConfig.h264Config.spsId": 200,
+      "presetCfg.encodeCodecConfig.h264Config.stereoMode": 224,
+      "presetCfg.encodeCodecConfig.h264Config.tfLevel": 396,
+      "presetCfg.encodeCodecConfig.h264Config.useBFramesAsRef": 376,
+      "presetCfg.encodeCodecConfig.hevcConfig.disableDeblockingFilterIDC": 372,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.bitstreamRestrictionFlag": 288,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.chromaSampleLocationBot": 284,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.chromaSampleLocationFlag": 276,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.chromaSampleLocationTop": 280,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.colourDescriptionPresentFlag": 260,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.colourMatrix": 272,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.colourPrimaries": 264,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.numUnitInTicks": 296,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.overscanInfo": 244,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.overscanInfoPresentFlag": 240,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.reserved": 304,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.timeScale": 300,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.timingInfoPresentFlag": 292,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.transferCharacteristics": 268,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.videoFormat": 252,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.videoFullRangeFlag": 256,
+      "presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.videoSignalTypePresentFlag": 248,
+      "presetCfg.encodeCodecConfig.hevcConfig.idrPeriod": 196,
+      "presetCfg.encodeCodecConfig.hevcConfig.inputBitDepth": 380,
+      "presetCfg.encodeCodecConfig.hevcConfig.intraRefreshCnt": 204,
+      "presetCfg.encodeCodecConfig.hevcConfig.intraRefreshPeriod": 200,
+      "presetCfg.encodeCodecConfig.hevcConfig.level": 176,
+      "presetCfg.encodeCodecConfig.hevcConfig.ltrNumFrames": 212,
+      "presetCfg.encodeCodecConfig.hevcConfig.ltrTrustMode": 352,
+      "presetCfg.encodeCodecConfig.hevcConfig.maxCUSize": 188,
+      "presetCfg.encodeCodecConfig.hevcConfig.maxNumRefFramesInDPB": 208,
+      "presetCfg.encodeCodecConfig.hevcConfig.maxTemporalLayersMinus1": 236,
+      "presetCfg.encodeCodecConfig.hevcConfig.minCUSize": 184,
+      "presetCfg.encodeCodecConfig.hevcConfig.numRefL0": 360,
+      "presetCfg.encodeCodecConfig.hevcConfig.numRefL1": 364,
+      "presetCfg.encodeCodecConfig.hevcConfig.numTemporalLayers": 384,
+      "presetCfg.encodeCodecConfig.hevcConfig.numViews": 388,
+      "presetCfg.encodeCodecConfig.hevcConfig.outputBitDepth": 376,
+      "presetCfg.encodeCodecConfig.hevcConfig.ppsId": 224,
+      "presetCfg.encodeCodecConfig.hevcConfig.reserved1": 392,
+      "presetCfg.encodeCodecConfig.hevcConfig.reserved2": 1224,
+      "presetCfg.encodeCodecConfig.hevcConfig.sliceMode": 228,
+      "presetCfg.encodeCodecConfig.hevcConfig.sliceModeData": 232,
+      "presetCfg.encodeCodecConfig.hevcConfig.spsId": 220,
+      "presetCfg.encodeCodecConfig.hevcConfig.tfLevel": 368,
+      "presetCfg.encodeCodecConfig.hevcConfig.tier": 180,
+      "presetCfg.encodeCodecConfig.hevcConfig.useBFramesAsRef": 356,
+      "presetCfg.encodeCodecConfig.hevcConfig.vpsId": 216,
+      "presetCfg.encodeCodecConfig.reserved": 176,
+      "presetCfg.frameFieldMode": 40,
+      "presetCfg.frameIntervalP": 32,
+      "presetCfg.gopLength": 28,
+      "presetCfg.monoChromeEncoding": 36,
+      "presetCfg.mvPrecision": 44,
+      "presetCfg.profileGUID.Data1": 12,
+      "presetCfg.profileGUID.Data2": 16,
+      "presetCfg.profileGUID.Data3": 18,
+      "presetCfg.profileGUID.Data4": 20,
+      "presetCfg.rcParams.alphaLayerBitrateRatio": 152,
+      "presetCfg.rcParams.averageBitRate": 68,
+      "presetCfg.rcParams.cbQPIndexOffset": 156,
+      "presetCfg.rcParams.constQP.qpInterB": 60,
+      "presetCfg.rcParams.constQP.qpInterP": 56,
+      "presetCfg.rcParams.constQP.qpIntra": 64,
+      "presetCfg.rcParams.crQPIndexOffset": 157,
+      "presetCfg.rcParams.initialRCQP.qpInterB": 116,
+      "presetCfg.rcParams.initialRCQP.qpInterP": 112,
+      "presetCfg.rcParams.initialRCQP.qpIntra": 120,
+      "presetCfg.rcParams.lookaheadDepth": 138,
+      "presetCfg.rcParams.lookaheadLevel": 160,
+      "presetCfg.rcParams.lowDelayKeyFrameScale": 140,
+      "presetCfg.rcParams.maxBitRate": 72,
+      "presetCfg.rcParams.maxQP.qpInterB": 104,
+      "presetCfg.rcParams.maxQP.qpInterP": 100,
+      "presetCfg.rcParams.maxQP.qpIntra": 108,
+      "presetCfg.rcParams.minQP.qpInterB": 92,
+      "presetCfg.rcParams.minQP.qpInterP": 88,
+      "presetCfg.rcParams.minQP.qpIntra": 96,
+      "presetCfg.rcParams.multiPass": 148,
+      "presetCfg.rcParams.qpMapMode": 144,
+      "presetCfg.rcParams.rateControlMode": 52,
+      "presetCfg.rcParams.reserved1": 172,
+      "presetCfg.rcParams.reserved2": 158,
+      "presetCfg.rcParams.reserved3": 171,
+      "presetCfg.rcParams.targetQuality": 136,
+      "presetCfg.rcParams.targetQualityLSB": 137,
+      "presetCfg.rcParams.temporalLayerQP": 128,
+      "presetCfg.rcParams.temporallayerIdxMask": 124,
+      "presetCfg.rcParams.uDcQPIndexOffset": 142,
+      "presetCfg.rcParams.vDcQPIndexOffset": 143,
+      "presetCfg.rcParams.vbvBufferSize": 76,
+      "presetCfg.rcParams.vbvInitialDelay": 80,
+      "presetCfg.rcParams.version": 48,
+      "presetCfg.rcParams.viewBitrateRatios": 164,
+      "presetCfg.rcParams.yDcQPIndexOffset": 141,
+      "presetCfg.reserved": 1968,
+      "presetCfg.reserved2": 3080,
+      "presetCfg.version": 8
+    },
+    "NV_ENC_RC_PARAMS": {
+      "constQP.qpInterB": 12,
+      "constQP.qpInterP": 8,
+      "constQP.qpIntra": 16,
+      "initialRCQP.qpInterB": 68,
+      "initialRCQP.qpInterP": 64,
+      "initialRCQP.qpIntra": 72,
+      "maxQP.qpInterB": 56,
+      "maxQP.qpInterP": 52,
+      "maxQP.qpIntra": 60,
+      "minQP.qpInterB": 44,
+      "minQP.qpInterP": 40,
+      "minQP.qpIntra": 48
+    }
+  },
   "offsets": {
     "GUID": {
       "Data1": 0,

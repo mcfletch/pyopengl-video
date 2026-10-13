@@ -91,7 +91,9 @@ def describe(codec: str, data: bytes) -> Description | None:
     data -- a container's headers or one sample
 
     Raises :class:`~pyopengl_video.vaapi.h264.StreamError` for a description
-    these parsers do not read. The hardware may still decode such a stream,
-    and the decoder then reports what NVIDIA's parser found.
+    these parsers do not read. The hardware may still decode such a stream of
+    H.264, HEVC or VP9, and the decoder then reports what NVIDIA's parser
+    found. An AV1 sample these parsers do not read is not handed to NVIDIA's
+    (:mod:`pyopengl_video.nvdec.av1`).
     """
     return READERS[codec](data) if data else None

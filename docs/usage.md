@@ -115,6 +115,29 @@ All are keyword arguments to `open_encoder`. These are taken by every backend:
 | `tuning` | `'high_quality'` | What the preset is trading against: `'high_quality'`, `'low_latency'`, `'ultra_low_latency'`, `'lossless'`, `'ultra_high_quality'`. |
 | `rate_control` | `'vbr'` | `'vbr'`, `'cbr'`, or `'constqp'`. |
 
+On `nvenc`, a width or height is 1 to 65535, `bframes` 0 to 15, `gop` 1 to
+4294967294, `bitrate` 1 to 2863311530 and a frame rate's numerator at most
+2147483647; a value outside its range is refused before a session is opened.
+The GPU's own limits are lower, and its driver refuses what is above them: the
+largest frame for each codec is in `nvenc.session_codecs()`. A timestamp and a
+duration are 0 to 2^64 - 1.
+
+`encode()` takes a handle this encoder's `new_input()` or `register()`
+returned, and refuses any other, one of a closed encoder included. A picture
+the driver did not take raises `NVENCError` and leaves its input free to be
+submitted again; the pictures after it come out as themselves. A picture
+whose read fails stays with the encoder, and `flush()` returns it.
+
+`close()` on an `nvenc` encoder ends the session whichever OpenGL context is
+current: it finishes the pictures still held for reordering, unmaps and
+unregisters the inputs, destroys the output buffers and then the session. The
+textures and framebuffers of `new_input()` are OpenGL objects of the context
+they were made in. With another current, or none, they are kept,
+`EncoderError` says so once the session is gone, and closing again with their
+own context current deletes them. An encoder that is collected unclosed ends
+its session, warns with a `ResourceWarning`, and leaves those textures and
+framebuffers to the context.
+
 `vpl` also takes:
 
 | Setting | Default | What it does |

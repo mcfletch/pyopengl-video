@@ -76,7 +76,7 @@ size rebuilds them. That part is sound.
 | D2 | `playback.py` | A stream that changes size at a key frame keeps the output textures of the old size, for the same reason. | Fixed |
 | D3 | `convert.py` fragment shader | `texelFetch(luma, …)` is undefined outside the texture. `visible` is not checked against `texture_size`, and `draw(size=…)` larger than `visible` fetches at negative coordinates. | Fixed |
 | D4 | `h264_parse.py`, `hevc_parse.py` cropping | A cropping window larger than the picture gives a negative visible size, which reaches `session.output` (`visible=(0, 0, -136, -136)`). | Fixed |
-| D5 | `nvdec/decoder.py` `Sequence.of` | `display_area` from NVIDIA's parser is not checked to lie inside the coded size before it becomes `visible`. | Open |
+| D5 | `nvdec/decoder.py` `Sequence.of` | `display_area` from NVIDIA's parser is not checked to lie inside the coded size before it becomes `visible`. | Fixed |
 | D6 | `vaapi/av1_decode.py`, `av1_parse.py` | An AV1 frame header may state a frame size larger than the sequence header's maximum. Surfaces are 64x48 and the driver is told 4096x2304. | Fixed |
 | D7 | `vaapi/hevc_decode.py` | A later slice segment of a picture may name a PPS whose SPS is another size; it is appended to the picture under way. | Fixed |
 | D8 | `vaapi/vp9_decode.py` | A non-key frame may state another profile than its key frame; a 65536-wide key frame is written to a 16-bit field as 0. | Fixed |
@@ -323,20 +323,76 @@ files and are named in the tests that hold each fix.
 
 | Id | Where | Finding | Status |
 |---|---|---|---|
-| N1 | `nvdec/decoder.py` `_on_decode` | **Segmentation fault.** An AV1 stream whose first decoded sample is not a key frame (after `reset()`, from a truncated file, or from a container that misstates `keyframe`) makes NVIDIA's parser build a picture whose reference indexes are 0xFF or name a picture the hardware never decoded; the callback passes it to `cuvidDecodePicture` unchanged and the driver dereferences it. 14 of 15 fixture and start-point combinations crash, with no mutation at all. | Open |
-| N2 | `nvdec/decoder.py` `_on_decode` | **Segmentation fault.** A truncated AV1 temporal unit gives `nBitstreamDataLen = 0xFFFFFFF4`, and `cuvidDecodePicture` copies that many bytes. | Open |
-| N3 | `cuvidParseVideoData` | **Segmentation fault inside NVIDIA's parser**, with no callback of this package on the stack: one flipped bit in an AV1 sequence header (`order_hint_bits` 7 to 5) makes it read at the payload pointer plus a 32-bit offset from the stream. `describe()` and `obu.split` accept the packet. | Open |
-| N4 | `nvenc/encoder.py` `close`, `__del__` | **The process hangs at exit.** `close()` sets `_closed` and then releases with no `try`: a failure (OpenGL already torn down at interpreter shutdown, or no context current) skips `nvEncDestroyEncoder` for good, and the driver's exit handler then waits on a worker thread that never finishes. | Open |
-| N5 | `nvenc/encoder.py` `encode` | **Segmentation fault.** A handle another encoder registered, or one from a closed encoder, is passed to `nvEncMapInputResource`. | Open |
-| N6 | `nvdec/decoder.py` `_show`, `copy_out` | `picture_index` is not checked against the surfaces the decoder was made with. When a sequence keeps its size and changes its buffer count, the parser's queued pictures are mapped from the new decoder: the caller is lent a frame of driver fill, 43 times in 550 cases. | Open |
-| N7 | `nvdec/decoder.py` `_open` | A refused sequence leaves the old session in place, and the new sequence's pictures are handed to the old decoder. | Open |
-| N8 | `nvenc/encoder.py` `encode` | A submission is queued before the status of `nvEncEncodePicture` is read; after a failure the next call returns an empty packet with an earlier timestamp. | Open |
-| N9 | `nvenc/api.py` | A function-table entry is wrapped in its prototype with no test for null; calling a null one is a segmentation fault in ctypes. A driver older than the header leaves the newer entries null. | Open |
-| N10 | `nvdec/decoder.py` | Plane textures are made and deleted with no record of their context (the hazard V2 fixed elsewhere): with no context current `close()` leaks them silently, and the host-memory transfer returns a frame whose textures were never made. | Open |
-| N11 | `nvenc/encoder.py` | Output buffers of pending submissions are never destroyed at close; a `_read` or `_acquire_output` that raises leaves a mapping behind. | Open |
-| N12 | `nvenc/encoder.py` | `fps=(1, 0)` raises `ZeroDivisionError`; `bframes=-10` gives `input_slots = -8`; a bit rate or group length of 2^40 is truncated into a 32-bit field. | Open |
-| N13 | `tests/nvenc_abi.json`, `tests/nvdec_abi.json` | Bit-field positions are not recorded: 107 bit-fields in nine structures. | Open |
-| N14 | `nvdec/decoder.py` `Upload.copy` | `GL_UNPACK_SWAP_BYTES` is not reset, so a renderer that left it set gets 10-bit uploads byte-swapped. | Open |
+| N1 | `nvdec/decoder.py` `_on_decode` | **Segmentation fault.** An AV1 stream whose first decoded sample is not a key frame (after `reset()`, from a truncated file, or from a container that misstates `keyframe`) makes NVIDIA's parser build a picture whose reference indexes are 0xFF or name a picture the hardware never decoded; the callback passes it to `cuvidDecodePicture` unchanged and the driver dereferences it. 14 of 15 fixture and start-point combinations crash, with no mutation at all. | Fixed |
+| N2 | `nvdec/decoder.py` `_on_decode` | **Segmentation fault.** A truncated AV1 temporal unit gives `nBitstreamDataLen = 0xFFFFFFF4`, and `cuvidDecodePicture` copies that many bytes. | Fixed |
+| N3 | `cuvidParseVideoData` | **Segmentation fault inside NVIDIA's parser**, with no callback of this package on the stack: one flipped bit in an AV1 sequence header (`order_hint_bits` 7 to 5) makes it read at the payload pointer plus a 32-bit offset from the stream. `describe()` and `obu.split` accept the packet. | Fixed |
+| N4 | `nvenc/encoder.py` `close`, `__del__` | **The process hangs at exit.** `close()` sets `_closed` and then releases with no `try`: a failure (OpenGL already torn down at interpreter shutdown, or no context current) skips `nvEncDestroyEncoder` for good, and the driver's exit handler then waits on a worker thread that never finishes. | Fixed |
+| N5 | `nvenc/encoder.py` `encode` | **Segmentation fault.** A handle another encoder registered, or one from a closed encoder, is passed to `nvEncMapInputResource`. | Fixed |
+| N6 | `nvdec/decoder.py` `_show`, `copy_out` | `picture_index` is not checked against the surfaces the decoder was made with. When a sequence keeps its size and changes its buffer count, the parser's queued pictures are mapped from the new decoder: the caller is lent a frame of driver fill, 43 times in 550 cases. | Fixed |
+| N7 | `nvdec/decoder.py` `_open` | A refused sequence leaves the old session in place, and the new sequence's pictures are handed to the old decoder. | Fixed |
+| N8 | `nvenc/encoder.py` `encode` | A submission is queued before the status of `nvEncEncodePicture` is read; after a failure the next call returns an empty packet with an earlier timestamp. | Fixed |
+| N9 | `nvenc/api.py` | A function-table entry is wrapped in its prototype with no test for null; calling a null one is a segmentation fault in ctypes. A driver older than the header leaves the newer entries null. | Fixed |
+| N10 | `nvdec/decoder.py` | Plane textures are made and deleted with no record of their context (the hazard V2 fixed elsewhere): with no context current `close()` leaks them silently, and the host-memory transfer returns a frame whose textures were never made. | Fixed |
+| N11 | `nvenc/encoder.py` | Output buffers of pending submissions are never destroyed at close; a `_read` or `_acquire_output` that raises leaves a mapping behind. | Fixed |
+| N12 | `nvenc/encoder.py` | `fps=(1, 0)` raises `ZeroDivisionError`; `bframes=-10` gives `input_slots = -8`; a bit rate or group length of 2^40 is truncated into a 32-bit field. | Fixed |
+| N13 | `tests/nvenc_abi.json`, `tests/nvdec_abi.json` | Bit-field positions are not recorded: 107 bit-fields in nine structures. | Fixed |
+| N14 | `nvdec/decoder.py` `Upload.copy` | `GL_UNPACK_SWAP_BYTES` is not reset, so a renderer that left it set gets 10-bit uploads byte-swapped. | Fixed |
+
+How the crashes were closed, and what was measured:
+
+- `nvdec/guard.py` reads each picture NVIDIA's parser builds, in the decode
+  callback, before the hardware has it: the coded length is held to the bytes
+  fed, the picture index to the surfaces made, and every reference to the
+  pictures this session's decoder has decoded. It covers all four codecs. In
+  3,000 mutated H.264, HEVC and VP9 streams it refused 496 pictures for a
+  reference and 7 for a length.
+- `nvdec/av1.py` `Gate` reads every AV1 sample with this package's own parser
+  before NVIDIA's sees it, requires a shown key frame after open, reset or a
+  refusal, and hands on only the OBUs it read, rewritten in canonical form:
+  metadata, padding and reserved OBUs are dropped. It holds no OpenGL or CUDA
+  and is tested without a GPU.
+- AV1 crashes: every batch within five cases before; 0 in 5,600 cases (66,085
+  frames) and 0 in a confirming 2,400 after. H.264, HEVC and VP9: 0 in 3,000
+  after.
+- `CUVIDAV1PICPARAMS` and the H.264, HEVC and VP9 picture parameters are
+  declared whole and recorded from NVIDIA's headers (SDK 13.1.15): 16
+  structures, 351 nested members, 194 bit-fields.
+
+Found while fixing, and fixed:
+
+- **Segmentation fault** in `nvEncDestroyEncoder` when an encoder was closed
+  with pictures held for reordering and their output buffers already destroyed.
+  `close()` sends the end of stream first.
+- **Segmentation fault** in NVIDIA's parser, about once in thousands of feeds,
+  for an empty metadata OBU ahead of a frame header. The gate drops metadata.
+- Headers NVIDIA's parser reads differently from the specification: a reduced
+  still-picture header in a sequence that is not one still picture, and a stray
+  bit after a sequence header's trailing bits, are read as 4:4:4 at 16 bits.
+  Both are refused, the first in `av1_parse.py` as well.
+
+For a maintainer to weigh:
+
+- **One crash is mitigated and not explained.** A segmentation fault inside
+  `cuvidDestroyDecoder`, with a second destroy and a `cuvidCreateDecoder`
+  running beside it, was seen once in about 12,000 cases and could not be
+  reproduced in 9,000 concurrent create and destroy rounds or 8,400 cases under
+  gdb, so there is no native frame for it. A lock now serialises decoder
+  creation and destruction (`_Session.lifecycle`), and it has not recurred in
+  about 13,600 cases since, which at that rate is weak evidence. The lock makes
+  a decoder opened as the last one closes wait about 260 ms.
+- **What the gate cannot see.** AV1 tile data goes to the hardware unread, and
+  a header NVIDIA's parser reads differently in a way not yet found would pass.
+  NVDEC AV1 survived the runs above; it has not been proven safe for hostile
+  input, and nothing short of driving the hardware from this package's own
+  parser would prove it.
+- A picture NVIDIA's parser shows that the current decoder never decoded is
+  dropped with a warning, where it was lent as a frame of driver fill.
+- The trailing-bit and alignment checks for AV1 sequence headers, frame headers
+  and tile groups live in the gate. `av1_parse.py` is the better home, with a
+  `header_bits` on `SequenceHeader`, so that the VA-API path has them too.
+
+`tests/test_fuzz_nvdec.py` runs nine batches of seeded mutations, each in a
+child process, so that a crash is a failed assertion.
 
 Sound: all 43 CUDA, cuvid and NVENC entry points carry their types; every NVENC
 structure passed has its `version` set; the three parser callbacks are held for
@@ -347,14 +403,29 @@ stack is balanced after decode, a raising flush, reset and close.
 
 ## Still open
 
-Everything marked Open above. Three need something this container lacks, and
-are recorded here so that they are not mistaken for fixed:
+Four findings are open, each for something this container lacks:
+
+| Id | Needs |
+|---|---|
+| W11 | PyOpenGL's WGL binding loaded with `use_last_error=True` |
+| W16 | The oneVPL headers and a compiler where the recorder runs; a Windows machine for the Direct3D structures and vtable indexes |
+| V12 | A VA-API driver, to see what an uncovered surface holds |
+| N3, in part | See *What the gate cannot see* under N |
+
+And the Windows and VA-API hardware paths have still only been read and
+simulated: the fixes to `vpl/`, `windows/` and the VA-API device layer are
+tested over stand-ins, and want one run on an Intel Windows machine and one on
+a machine with a VA-API driver before a release.
+
+In detail:
 
 - W11 needs PyOpenGL's WGL binding loaded with `use_last_error=True`, which is
   a change to PyOpenGL. Until then `InteropError.result` for a WGL call
   describes the failure and is not to be branched on;
   `windows.interop.last_error` says so.
-- W16 and V10 need the vendor headers and a compiler where the recorders run.
+- W16 needs the oneVPL headers and a compiler where the recorder runs. (V10 and
+  N13 were closed with recordings from the libva 2.20 and NVIDIA SDK 13.1.15
+  headers.)
 - V12 needs a VA-API driver to observe what an uncovered surface holds.
 
 ## Coding standards
@@ -485,7 +556,9 @@ Proposed, in the order they pay for themselves:
 2. **A binding introspection test** shared by the four bindings: every
    function object reachable from an `api` module has `argtypes` and
    `restype`; every `Structure` and `Union` is in the recorded ABI.
-3. **A fuzz gate**: the scripts the review used, kept as
+3. **A fuzz gate** (done for every parser, container and NVDEC:
+   `tests/test_fuzz_*.py`, about 30,000 seeded cases and 70 s in all): the
+   scripts the review used, kept as
    `tests/test_fuzz_*.py` with a fixed seed and a few thousand cases each, run
    in the ordinary suite. Each asserts three things of every mutated input:
    only the package's errors escape, no case takes longer than a second, and

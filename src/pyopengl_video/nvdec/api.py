@@ -29,6 +29,9 @@ from contextlib import contextmanager
 from ctypes import (
     POINTER,
     Structure,
+    Union,
+    c_byte,
+    c_char,
     c_char_p,
     c_int,
     c_longlong,
@@ -248,12 +251,517 @@ class CUVIDPARSERDISPINFO(Structure):
     ]
 
 
+class CUVIDH264DPBENTRY(Structure):
+    """One frame of an H.264 picture's decoded picture buffer.
+
+    ``PicIdx`` is the picture the frame was decoded into, and is negative for
+    an entry that holds none.
+    """
+
+    _fields_ = [
+        ('PicIdx', c_int),
+        ('FrameIdx', c_int),
+        ('is_long_term', c_int),
+        ('not_existing', c_int),
+        ('used_for_reference', c_int),
+        ('FieldOrderCnt', c_int * 2),
+    ]
+
+
+class CUVIDH264MVCEXT(Structure):
+    _fields_ = [
+        ('num_views_minus1', c_int),
+        ('view_id', c_int),
+        ('inter_view_flag', c_ubyte),
+        ('num_inter_view_refs_l0', c_ubyte),
+        ('num_inter_view_refs_l1', c_ubyte),
+        ('MVCReserved8Bits', c_ubyte),
+        ('InterViewRefsL0', c_int * 16),
+        ('InterViewRefsL1', c_int * 16),
+    ]
+
+
+class CUVIDH264SVCEXT(Structure):
+    _fields_ = [
+        ('profile_idc', c_ubyte),
+        ('level_idc', c_ubyte),
+        ('DQId', c_ubyte),
+        ('DQIdMax', c_ubyte),
+        ('disable_inter_layer_deblocking_filter_idc', c_ubyte),
+        ('ref_layer_chroma_phase_y_plus1', c_ubyte),
+        ('inter_layer_slice_alpha_c0_offset_div2', c_byte),
+        ('inter_layer_slice_beta_offset_div2', c_byte),
+        ('DPBEntryValidFlag', c_ushort),
+        ('inter_layer_deblocking_filter_control_present_flag', c_ubyte),
+        ('extended_spatial_scalability_idc', c_ubyte),
+        ('adaptive_tcoeff_level_prediction_flag', c_ubyte),
+        ('slice_header_restriction_flag', c_ubyte),
+        ('chroma_phase_x_plus1_flag', c_ubyte),
+        ('chroma_phase_y_plus1', c_ubyte),
+        ('tcoeff_level_prediction_flag', c_ubyte),
+        ('constrained_intra_resampling_flag', c_ubyte),
+        ('ref_layer_chroma_phase_x_plus1_flag', c_ubyte),
+        ('store_ref_base_pic_flag', c_ubyte),
+        ('Reserved8BitsA', c_ubyte),
+        ('Reserved8BitsB', c_ubyte),
+        ('scaled_ref_layer_left_offset', c_short),
+        ('scaled_ref_layer_top_offset', c_short),
+        ('scaled_ref_layer_right_offset', c_short),
+        ('scaled_ref_layer_bottom_offset', c_short),
+        ('Reserved16Bits', c_ushort),
+        ('pNextLayer', c_void_p),
+        ('bRefBaseLayer', c_int),
+    ]
+
+
+class _H264SliceGroupMap(Union):
+    _fields_ = [('slice_group_map_addr', c_ulonglong), ('pMb2SliceGroupMap', c_void_p)]
+
+
+class _H264Extension(Union):
+    _fields_ = [('mvcext', CUVIDH264MVCEXT), ('svcext', CUVIDH264SVCEXT)]
+
+
+class CUVIDH264PICPARAMS(Structure):
+    """An H.264 picture's parameters. ``dpb`` names the pictures it predicts from."""
+
+    _anonymous_ = ('extension',)
+    _fields_ = [
+        ('log2_max_frame_num_minus4', c_int),
+        ('pic_order_cnt_type', c_int),
+        ('log2_max_pic_order_cnt_lsb_minus4', c_int),
+        ('delta_pic_order_always_zero_flag', c_int),
+        ('frame_mbs_only_flag', c_int),
+        ('direct_8x8_inference_flag', c_int),
+        ('num_ref_frames', c_int),
+        ('residual_colour_transform_flag', c_ubyte),
+        ('bit_depth_luma_minus8', c_ubyte),
+        ('bit_depth_chroma_minus8', c_ubyte),
+        ('qpprime_y_zero_transform_bypass_flag', c_ubyte),
+        ('entropy_coding_mode_flag', c_int),
+        ('pic_order_present_flag', c_int),
+        ('num_ref_idx_l0_active_minus1', c_int),
+        ('num_ref_idx_l1_active_minus1', c_int),
+        ('weighted_pred_flag', c_int),
+        ('weighted_bipred_idc', c_int),
+        ('pic_init_qp_minus26', c_int),
+        ('deblocking_filter_control_present_flag', c_int),
+        ('redundant_pic_cnt_present_flag', c_int),
+        ('transform_8x8_mode_flag', c_int),
+        ('MbaffFrameFlag', c_int),
+        ('constrained_intra_pred_flag', c_int),
+        ('chroma_qp_index_offset', c_int),
+        ('second_chroma_qp_index_offset', c_int),
+        ('ref_pic_flag', c_int),
+        ('frame_num', c_int),
+        ('CurrFieldOrderCnt', c_int * 2),
+        ('dpb', CUVIDH264DPBENTRY * 16),
+        ('WeightScale4x4', c_ubyte * 16 * 6),
+        ('WeightScale8x8', c_ubyte * 64 * 2),
+        ('fmo_aso_enable', c_ubyte),
+        ('num_slice_groups_minus1', c_ubyte),
+        ('slice_group_map_type', c_ubyte),
+        ('pic_init_qs_minus26', c_byte),
+        ('slice_group_change_rate_minus1', c_uint),
+        ('fmo', _H264SliceGroupMap),
+        ('mb_adaptive_frame_field_flag', c_uint, 2),
+        ('Reserved1', c_uint, 30),
+        ('Reserved', c_uint * 11),
+        ('extension', _H264Extension),
+    ]
+
+
+class CUVIDHEVCPICPARAMS(Structure):
+    """An HEVC picture's parameters.
+
+    ``RefPicIdx`` names the pictures it predicts from, -1 for an entry that
+    names none.
+    """
+
+    _fields_ = [
+        ('pic_width_in_luma_samples', c_int),
+        ('pic_height_in_luma_samples', c_int),
+        ('log2_min_luma_coding_block_size_minus3', c_ubyte),
+        ('log2_diff_max_min_luma_coding_block_size', c_ubyte),
+        ('log2_min_transform_block_size_minus2', c_ubyte),
+        ('log2_diff_max_min_transform_block_size', c_ubyte),
+        ('pcm_enabled_flag', c_ubyte),
+        ('log2_min_pcm_luma_coding_block_size_minus3', c_ubyte),
+        ('log2_diff_max_min_pcm_luma_coding_block_size', c_ubyte),
+        ('pcm_sample_bit_depth_luma_minus1', c_ubyte),
+        ('pcm_sample_bit_depth_chroma_minus1', c_ubyte),
+        ('pcm_loop_filter_disabled_flag', c_ubyte),
+        ('strong_intra_smoothing_enabled_flag', c_ubyte),
+        ('max_transform_hierarchy_depth_intra', c_ubyte),
+        ('max_transform_hierarchy_depth_inter', c_ubyte),
+        ('amp_enabled_flag', c_ubyte),
+        ('separate_colour_plane_flag', c_ubyte),
+        ('log2_max_pic_order_cnt_lsb_minus4', c_ubyte),
+        ('num_short_term_ref_pic_sets', c_ubyte),
+        ('long_term_ref_pics_present_flag', c_ubyte),
+        ('num_long_term_ref_pics_sps', c_ubyte),
+        ('sps_temporal_mvp_enabled_flag', c_ubyte),
+        ('sample_adaptive_offset_enabled_flag', c_ubyte),
+        ('scaling_list_enable_flag', c_ubyte),
+        ('IrapPicFlag', c_ubyte),
+        ('IdrPicFlag', c_ubyte),
+        ('bit_depth_luma_minus8', c_ubyte),
+        ('bit_depth_chroma_minus8', c_ubyte),
+        ('log2_max_transform_skip_block_size_minus2', c_ubyte),
+        ('log2_sao_offset_scale_luma', c_ubyte),
+        ('log2_sao_offset_scale_chroma', c_ubyte),
+        ('high_precision_offsets_enabled_flag', c_ubyte),
+        ('mv_hevc_enable', c_ubyte),
+        ('nuh_layer_id', c_ubyte),
+        ('default_ref_layers_active_flag', c_ubyte),
+        ('NumDirectRefLayers', c_ubyte),
+        ('max_one_active_ref_layer_flag', c_ubyte),
+        ('poc_lsb_not_present_flag', c_ubyte),
+        ('NumActiveRefLayerPics0', c_ubyte),
+        ('NumActiveRefLayerPics1', c_ubyte),
+        ('reserved1', c_ubyte * 2),
+        ('dependent_slice_segments_enabled_flag', c_ubyte),
+        ('slice_segment_header_extension_present_flag', c_ubyte),
+        ('sign_data_hiding_enabled_flag', c_ubyte),
+        ('cu_qp_delta_enabled_flag', c_ubyte),
+        ('diff_cu_qp_delta_depth', c_ubyte),
+        ('init_qp_minus26', c_byte),
+        ('pps_cb_qp_offset', c_byte),
+        ('pps_cr_qp_offset', c_byte),
+        ('constrained_intra_pred_flag', c_ubyte),
+        ('weighted_pred_flag', c_ubyte),
+        ('weighted_bipred_flag', c_ubyte),
+        ('transform_skip_enabled_flag', c_ubyte),
+        ('transquant_bypass_enabled_flag', c_ubyte),
+        ('entropy_coding_sync_enabled_flag', c_ubyte),
+        ('log2_parallel_merge_level_minus2', c_ubyte),
+        ('num_extra_slice_header_bits', c_ubyte),
+        ('loop_filter_across_tiles_enabled_flag', c_ubyte),
+        ('loop_filter_across_slices_enabled_flag', c_ubyte),
+        ('output_flag_present_flag', c_ubyte),
+        ('num_ref_idx_l0_default_active_minus1', c_ubyte),
+        ('num_ref_idx_l1_default_active_minus1', c_ubyte),
+        ('lists_modification_present_flag', c_ubyte),
+        ('cabac_init_present_flag', c_ubyte),
+        ('pps_slice_chroma_qp_offsets_present_flag', c_ubyte),
+        ('deblocking_filter_override_enabled_flag', c_ubyte),
+        ('pps_deblocking_filter_disabled_flag', c_ubyte),
+        ('pps_beta_offset_div2', c_byte),
+        ('pps_tc_offset_div2', c_byte),
+        ('tiles_enabled_flag', c_ubyte),
+        ('uniform_spacing_flag', c_ubyte),
+        ('num_tile_columns_minus1', c_ubyte),
+        ('num_tile_rows_minus1', c_ubyte),
+        ('column_width_minus1', c_ushort * 21),
+        ('row_height_minus1', c_ushort * 21),
+        ('sps_range_extension_flag', c_ubyte),
+        ('transform_skip_rotation_enabled_flag', c_ubyte),
+        ('transform_skip_context_enabled_flag', c_ubyte),
+        ('implicit_rdpcm_enabled_flag', c_ubyte),
+        ('explicit_rdpcm_enabled_flag', c_ubyte),
+        ('extended_precision_processing_flag', c_ubyte),
+        ('intra_smoothing_disabled_flag', c_ubyte),
+        ('persistent_rice_adaptation_enabled_flag', c_ubyte),
+        ('cabac_bypass_alignment_enabled_flag', c_ubyte),
+        ('pps_range_extension_flag', c_ubyte),
+        ('cross_component_prediction_enabled_flag', c_ubyte),
+        ('chroma_qp_offset_list_enabled_flag', c_ubyte),
+        ('diff_cu_chroma_qp_offset_depth', c_ubyte),
+        ('chroma_qp_offset_list_len_minus1', c_ubyte),
+        ('cb_qp_offset_list', c_byte * 6),
+        ('cr_qp_offset_list', c_byte * 6),
+        ('reserved2', c_ubyte * 2),
+        ('reserved3', c_uint * 8),
+        ('NumBitsForShortTermRPSInSlice', c_int),
+        ('NumDeltaPocsOfRefRpsIdx', c_int),
+        ('NumPocTotalCurr', c_int),
+        ('NumPocStCurrBefore', c_int),
+        ('NumPocStCurrAfter', c_int),
+        ('NumPocLtCurr', c_int),
+        ('CurrPicOrderCntVal', c_int),
+        ('RefPicIdx', c_int * 16),
+        ('PicOrderCntVal', c_int * 16),
+        ('IsLongTerm', c_ubyte * 16),
+        ('RefPicSetStCurrBefore', c_ubyte * 8),
+        ('RefPicSetStCurrAfter', c_ubyte * 8),
+        ('RefPicSetLtCurr', c_ubyte * 8),
+        ('RefPicSetInterLayer0', c_ubyte * 8),
+        ('RefPicSetInterLayer1', c_ubyte * 8),
+        ('reserved4', c_uint * 12),
+        ('ScalingList4x4', c_ubyte * 16 * 6),
+        ('ScalingList8x8', c_ubyte * 64 * 6),
+        ('ScalingList16x16', c_ubyte * 64 * 6),
+        ('ScalingList32x32', c_ubyte * 64 * 2),
+        ('ScalingListDCCoeff16x16', c_ubyte * 6),
+        ('ScalingListDCCoeff32x32', c_ubyte * 2),
+    ]
+
+
+class CUVIDVP9PICPARAMS(Structure):
+    """A VP9 frame's parameters.
+
+    ``LastRefIdx``, ``GoldenRefIdx`` and ``AltRefIdx`` name the pictures it
+    predicts from.
+    """
+
+    _fields_ = [
+        ('width', c_uint),
+        ('height', c_uint),
+        ('LastRefIdx', c_ubyte),
+        ('GoldenRefIdx', c_ubyte),
+        ('AltRefIdx', c_ubyte),
+        ('colorSpace', c_ubyte),
+        ('profile', c_ushort, 3),
+        ('frameContextIdx', c_ushort, 2),
+        ('frameType', c_ushort, 1),
+        ('showFrame', c_ushort, 1),
+        ('errorResilient', c_ushort, 1),
+        ('frameParallelDecoding', c_ushort, 1),
+        ('subSamplingX', c_ushort, 1),
+        ('subSamplingY', c_ushort, 1),
+        ('intraOnly', c_ushort, 1),
+        ('allow_high_precision_mv', c_ushort, 1),
+        ('refreshEntropyProbs', c_ushort, 1),
+        ('reserved2Bits', c_ushort, 2),
+        ('reserved16Bits', c_ushort),
+        ('refFrameSignBias', c_ubyte * 4),
+        ('bitDepthMinus8Luma', c_ubyte),
+        ('bitDepthMinus8Chroma', c_ubyte),
+        ('loopFilterLevel', c_ubyte),
+        ('loopFilterSharpness', c_ubyte),
+        ('modeRefLfEnabled', c_ubyte),
+        ('log2_tile_columns', c_ubyte),
+        ('log2_tile_rows', c_ubyte),
+        ('segmentEnabled', c_ubyte, 1),
+        ('segmentMapUpdate', c_ubyte, 1),
+        ('segmentMapTemporalUpdate', c_ubyte, 1),
+        ('segmentFeatureMode', c_ubyte, 1),
+        ('reserved4Bits', c_ubyte, 4),
+        ('segmentFeatureEnable', c_ubyte * 4 * 8),
+        ('segmentFeatureData', c_short * 4 * 8),
+        ('mb_segment_tree_probs', c_ubyte * 7),
+        ('segment_pred_probs', c_ubyte * 3),
+        ('reservedSegment16Bits', c_ubyte * 2),
+        ('qpYAc', c_int),
+        ('qpYDc', c_int),
+        ('qpChDc', c_int),
+        ('qpChAc', c_int),
+        ('activeRefIdx', c_uint * 3),
+        ('resetFrameContext', c_uint),
+        ('mcomp_filter_type', c_uint),
+        ('mbRefLfDelta', c_uint * 4),
+        ('mbModeLfDelta', c_uint * 2),
+        ('frameTagSize', c_uint),
+        ('offsetToDctParts', c_uint),
+        ('reserved128Bits', c_uint * 4),
+    ]
+
+
+class _AV1Reference(Structure):
+    """One of the seven references of an AV1 inter frame: its size and its picture."""
+
+    _fields_ = [
+        ('width', c_uint),
+        ('height', c_uint),
+        ('index', c_ubyte),
+        ('reserved24Bits', c_ubyte * 3),
+    ]
+
+
+class _AV1GlobalMotion(Structure):
+    _fields_ = [
+        ('invalid', c_ubyte, 1),
+        ('wmtype', c_ubyte, 2),
+        ('reserved5Bits', c_ubyte, 5),
+        ('reserved24Bits', c_char * 3),
+        ('wmmat', c_int * 6),
+    ]
+
+
+class CUVIDAV1PICPARAMS(Structure):
+    """An AV1 frame's parameters.
+
+    ``ref_frame`` names the seven pictures an inter frame predicts from, and
+    ``ref_frame_map`` the picture in each of the eight reference slots.
+    ``decodePicIdx`` is the picture the frame is reconstructed into, which is
+    the one later frames predict from; it differs from ``CurrPicIdx`` for a
+    frame with film grain, whose grain is added into the picture shown.
+    """
+
+    _fields_ = [
+        ('width', c_uint),
+        ('height', c_uint),
+        ('frame_offset', c_uint),
+        ('decodePicIdx', c_int),
+        ('profile', c_uint, 3),
+        ('use_128x128_superblock', c_uint, 1),
+        ('subsampling_x', c_uint, 1),
+        ('subsampling_y', c_uint, 1),
+        ('mono_chrome', c_uint, 1),
+        ('bit_depth_minus8', c_uint, 4),
+        ('enable_filter_intra', c_uint, 1),
+        ('enable_intra_edge_filter', c_uint, 1),
+        ('enable_interintra_compound', c_uint, 1),
+        ('enable_masked_compound', c_uint, 1),
+        ('enable_dual_filter', c_uint, 1),
+        ('enable_order_hint', c_uint, 1),
+        ('order_hint_bits_minus1', c_uint, 3),
+        ('enable_jnt_comp', c_uint, 1),
+        ('enable_superres', c_uint, 1),
+        ('enable_cdef', c_uint, 1),
+        ('enable_restoration', c_uint, 1),
+        ('enable_fgs', c_uint, 1),
+        ('reserved0_7bits', c_uint, 7),
+        ('frame_type', c_uint, 2),
+        ('show_frame', c_uint, 1),
+        ('disable_cdf_update', c_uint, 1),
+        ('allow_screen_content_tools', c_uint, 1),
+        ('force_integer_mv', c_uint, 1),
+        ('coded_denom', c_uint, 3),
+        ('allow_intrabc', c_uint, 1),
+        ('allow_high_precision_mv', c_uint, 1),
+        ('interp_filter', c_uint, 3),
+        ('switchable_motion_mode', c_uint, 1),
+        ('use_ref_frame_mvs', c_uint, 1),
+        ('disable_frame_end_update_cdf', c_uint, 1),
+        ('delta_q_present', c_uint, 1),
+        ('delta_q_res', c_uint, 2),
+        ('using_qmatrix', c_uint, 1),
+        ('coded_lossless', c_uint, 1),
+        ('use_superres', c_uint, 1),
+        ('tx_mode', c_uint, 2),
+        ('reference_mode', c_uint, 1),
+        ('allow_warped_motion', c_uint, 1),
+        ('reduced_tx_set', c_uint, 1),
+        ('skip_mode', c_uint, 1),
+        ('reserved1_3bits', c_uint, 3),
+        ('num_tile_cols', c_uint, 8),
+        ('num_tile_rows', c_uint, 8),
+        ('context_update_tile_id', c_uint, 16),
+        ('tile_widths', c_ushort * 64),
+        ('tile_heights', c_ushort * 64),
+        ('cdef_damping_minus_3', c_ubyte, 2),
+        ('cdef_bits', c_ubyte, 2),
+        ('reserved2_4bits', c_ubyte, 4),
+        ('cdef_y_strength', c_ubyte * 8),
+        ('cdef_uv_strength', c_ubyte * 8),
+        ('SkipModeFrame0', c_ubyte, 4),
+        ('SkipModeFrame1', c_ubyte, 4),
+        ('base_qindex', c_ubyte),
+        ('qp_y_dc_delta_q', c_byte),
+        ('qp_u_dc_delta_q', c_byte),
+        ('qp_v_dc_delta_q', c_byte),
+        ('qp_u_ac_delta_q', c_byte),
+        ('qp_v_ac_delta_q', c_byte),
+        ('qm_y', c_ubyte),
+        ('qm_u', c_ubyte),
+        ('qm_v', c_ubyte),
+        ('segmentation_enabled', c_ubyte, 1),
+        ('segmentation_update_map', c_ubyte, 1),
+        ('segmentation_update_data', c_ubyte, 1),
+        ('segmentation_temporal_update', c_ubyte, 1),
+        ('reserved3_4bits', c_ubyte, 4),
+        ('segmentation_feature_data', c_short * 8 * 8),
+        ('segmentation_feature_mask', c_ubyte * 8),
+        ('loop_filter_level', c_ubyte * 2),
+        ('loop_filter_level_u', c_ubyte),
+        ('loop_filter_level_v', c_ubyte),
+        ('loop_filter_sharpness', c_ubyte),
+        ('loop_filter_ref_deltas', c_byte * 8),
+        ('loop_filter_mode_deltas', c_byte * 2),
+        ('loop_filter_delta_enabled', c_ubyte, 1),
+        ('loop_filter_delta_update', c_ubyte, 1),
+        ('delta_lf_present', c_ubyte, 1),
+        ('delta_lf_res', c_ubyte, 2),
+        ('delta_lf_multi', c_ubyte, 1),
+        ('reserved4_2bits', c_ubyte, 2),
+        ('lr_unit_size', c_ubyte * 3),
+        ('lr_type', c_ubyte * 3),
+        ('primary_ref_frame', c_ubyte),
+        ('ref_frame_map', c_ubyte * 8),
+        ('temporal_layer_id', c_ubyte, 4),
+        ('spatial_layer_id', c_ubyte, 4),
+        ('reserved5_32bits', c_ubyte * 4),
+        ('ref_frame', _AV1Reference * 7),
+        ('global_motion', _AV1GlobalMotion * 7),
+        ('apply_grain', c_ushort, 1),
+        ('overlap_flag', c_ushort, 1),
+        ('scaling_shift_minus8', c_ushort, 2),
+        ('chroma_scaling_from_luma', c_ushort, 1),
+        ('ar_coeff_lag', c_ushort, 2),
+        ('ar_coeff_shift_minus6', c_ushort, 2),
+        ('grain_scale_shift', c_ushort, 2),
+        ('clip_to_restricted_range', c_ushort, 1),
+        ('reserved6_4bits', c_ushort, 4),
+        ('num_y_points', c_ubyte),
+        ('scaling_points_y', c_ubyte * 2 * 14),
+        ('num_cb_points', c_ubyte),
+        ('scaling_points_cb', c_ubyte * 2 * 10),
+        ('num_cr_points', c_ubyte),
+        ('scaling_points_cr', c_ubyte * 2 * 10),
+        ('reserved7_8bits', c_ubyte),
+        ('random_seed', c_ushort),
+        ('ar_coeffs_y', c_short * 24),
+        ('ar_coeffs_cb', c_short * 25),
+        ('ar_coeffs_cr', c_short * 25),
+        ('cb_mult', c_ubyte),
+        ('cb_luma_mult', c_ubyte),
+        ('cb_offset', c_short),
+        ('cr_mult', c_ubyte),
+        ('cr_luma_mult', c_ubyte),
+        ('cr_offset', c_short),
+        ('reserved', c_int * 7),
+    ]
+
+
+class _CodecSpecific(Union):
+    """A picture's parameters in its codec's own terms.
+
+    The arms for the codecs this package decodes are declared; ``CodecReserved``
+    is the whole of the union, which the headers size it by.
+    """
+
+    _fields_ = [
+        ('h264', CUVIDH264PICPARAMS),
+        ('hevc', CUVIDHEVCPICPARAMS),
+        ('vp9', CUVIDVP9PICPARAMS),
+        ('av1', CUVIDAV1PICPARAMS),
+        ('CodecReserved', c_uint * 1024),
+    ]
+
+
+class CUVIDPICPARAMS(Structure):
+    """One picture's parameters, as the parser hands them to the decoder.
+
+    The decoder takes the structure as the parser built it. This package reads
+    it first: the picture the frame is decoded into, the bytes of bitstream it
+    states, and the pictures it predicts from
+    (:func:`pyopengl_video.nvdec.guard.refusal`).
+    """
+
+    _fields_ = [
+        ('PicWidthInMbs', c_int),
+        ('FrameHeightInMbs', c_int),
+        ('CurrPicIdx', c_int),
+        ('field_pic_flag', c_int),
+        ('bottom_field_flag', c_int),
+        ('second_field', c_int),
+        ('nBitstreamDataLen', c_uint),
+        ('pBitstreamData', c_void_p),
+        ('nNumSlices', c_uint),
+        ('pSliceDataOffsets', c_void_p),
+        ('ref_pic_flag', c_int),
+        ('intra_pic_flag', c_int),
+        ('timestamp', c_longlong),
+        ('Reserved', c_uint * 28),
+        ('CodecSpecific', _CodecSpecific),
+    ]
+
+
 #: The parser's callbacks. Each returns 0 to fail the parse; the sequence
 #: callback returns the number of decode surfaces the parser may cycle through.
-#: The picture parameters are passed on to the decoder as they arrive, so the
-#: callback takes their address; they are a :class:`CUVIDPICPARAMS`.
 SEQUENCE_CALLBACK = FUNCTYPE(c_int, c_void_p, POINTER(CUVIDEOFORMAT))
-DECODE_CALLBACK = FUNCTYPE(c_int, c_void_p, c_void_p)
+DECODE_CALLBACK = FUNCTYPE(c_int, c_void_p, POINTER(CUVIDPICPARAMS))
 DISPLAY_CALLBACK = FUNCTYPE(c_int, c_void_p, POINTER(CUVIDPARSERDISPINFO))
 
 
@@ -276,33 +784,6 @@ class CUVIDPARSERPARAMS(Structure):
         ('pfnGetSEIMsg', c_void_p),
         ('pvReserved2', c_void_p * 5),
         ('pExtVideoInfo', c_void_p),
-    ]
-
-
-class CUVIDPICPARAMS(Structure):
-    """One picture's parameters, as the parser hands them to the decoder.
-
-    The decoder takes the structure as the parser built it. The fields ahead
-    of the codec's own are declared for ``CurrPicIdx``, the picture the frame
-    is decoded into; the codec's own are kept as the words they occupy.
-    """
-
-    _fields_ = [
-        ('PicWidthInMbs', c_int),
-        ('FrameHeightInMbs', c_int),
-        ('CurrPicIdx', c_int),
-        ('field_pic_flag', c_int),
-        ('bottom_field_flag', c_int),
-        ('second_field', c_int),
-        ('nBitstreamDataLen', c_uint),
-        ('pBitstreamData', c_void_p),
-        ('nNumSlices', c_uint),
-        ('pSliceDataOffsets', c_void_p),
-        ('ref_pic_flag', c_int),
-        ('intra_pic_flag', c_int),
-        ('timestamp', c_longlong),
-        ('Reserved', c_uint * 28),
-        ('CodecSpecific', c_uint * 1024),
     ]
 
 
@@ -540,7 +1021,8 @@ class Cuvid:
         self.cuvidCreateDecoder = _bound(
             library, 'cuvidCreateDecoder', pointer, POINTER(CUVIDDECODECREATEINFO))
         self.cuvidDestroyDecoder = _bound(library, 'cuvidDestroyDecoder', c_void_p)
-        self.cuvidDecodePicture = _bound(library, 'cuvidDecodePicture', c_void_p, c_void_p)
+        self.cuvidDecodePicture = _bound(
+            library, 'cuvidDecodePicture', c_void_p, POINTER(CUVIDPICPARAMS))
         self.cuvidMapVideoFrame = _bound(
             library, 'cuvidMapVideoFrame64', c_void_p, c_int, POINTER(c_ulonglong),
             POINTER(c_uint), POINTER(CUVIDPROCPARAMS))

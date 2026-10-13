@@ -133,6 +133,8 @@ TC_SRGB = 13
 MC_IDENTITY = 0
 MC_UNSPECIFIED = 2
 CSP_UNKNOWN = 0
+#: The one value of chroma_sample_position the specification reserves (6.4.2).
+CSP_RESERVED = 3
 
 #: ref_frame_idx entries the set frame refs process fills in order (7.8).
 REF_FRAME_LIST = (LAST2_FRAME, LAST3_FRAME, BWDREF_FRAME, ALTREF2_FRAME, ALTREF_FRAME)
@@ -409,6 +411,9 @@ def _color_config(reader: Reader, profile: int) -> ColorConfig:
             subsampling_x, subsampling_y = 1, 0
         if subsampling_x and subsampling_y:
             position = reader.f(2)
+            if position == CSP_RESERVED:
+                raise StreamError(
+                    f'chroma_sample_position is {position}, which is reserved')
     _check_sampling(profile, bit_depth, matrix, (subsampling_x, subsampling_y))
     return ColorConfig(bit_depth, 0, described, primaries, transfer, matrix,
                        color_range, subsampling_x, subsampling_y, position,
@@ -429,6 +434,9 @@ def parse_sequence_header(payload: bytes) -> SequenceHeader:
             f'seq_profile is {profile}, and {MAX_PROFILE} is the largest there is')
     still_picture = reader.flag()
     reduced = reader.flag()
+    if reduced and not still_picture:
+        raise StreamError('reduced_still_picture_header is set in a sequence '
+                          'that is not of one still picture')
     timing: TimingInfo | None = None
     model: DecoderModelInfo | None = None
     display_delay_present = 0

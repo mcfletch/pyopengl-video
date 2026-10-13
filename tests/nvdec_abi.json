@@ -28,6 +28,1159 @@
   "header_version": "13.1",
   "models": {
     "llp64": {
+      "bits": {
+        "CUVIDAV1PICPARAMS": {
+          "SkipModeFrame0": {
+            "at": 301,
+            "bytes": "0f"
+          },
+          "SkipModeFrame1": {
+            "at": 301,
+            "bytes": "f0"
+          },
+          "allow_high_precision_mv": {
+            "at": 21,
+            "bytes": "04"
+          },
+          "allow_intrabc": {
+            "at": 21,
+            "bytes": "02"
+          },
+          "allow_screen_content_tools": {
+            "at": 20,
+            "bytes": "10"
+          },
+          "allow_warped_motion": {
+            "at": 23,
+            "bytes": "04"
+          },
+          "apply_grain": {
+            "at": 764,
+            "bytes": "01"
+          },
+          "ar_coeff_lag": {
+            "at": 764,
+            "bytes": "60"
+          },
+          "ar_coeff_shift_minus6": {
+            "at": 764,
+            "bytes": "8001"
+          },
+          "bit_depth_minus8": {
+            "at": 16,
+            "bytes": "8007"
+          },
+          "cdef_bits": {
+            "at": 284,
+            "bytes": "0c"
+          },
+          "cdef_damping_minus_3": {
+            "at": 284,
+            "bytes": "03"
+          },
+          "chroma_scaling_from_luma": {
+            "at": 764,
+            "bytes": "10"
+          },
+          "clip_to_restricted_range": {
+            "at": 765,
+            "bytes": "08"
+          },
+          "coded_denom": {
+            "at": 20,
+            "bytes": "c001"
+          },
+          "coded_lossless": {
+            "at": 22,
+            "bytes": "20"
+          },
+          "context_update_tile_id": {
+            "at": 26,
+            "bytes": "ffff"
+          },
+          "delta_lf_multi": {
+            "at": 463,
+            "bytes": "20"
+          },
+          "delta_lf_present": {
+            "at": 463,
+            "bytes": "04"
+          },
+          "delta_lf_res": {
+            "at": 463,
+            "bytes": "18"
+          },
+          "delta_q_present": {
+            "at": 22,
+            "bytes": "02"
+          },
+          "delta_q_res": {
+            "at": 22,
+            "bytes": "0c"
+          },
+          "disable_cdf_update": {
+            "at": 20,
+            "bytes": "08"
+          },
+          "disable_frame_end_update_cdf": {
+            "at": 22,
+            "bytes": "01"
+          },
+          "enable_cdef": {
+            "at": 18,
+            "bytes": "40"
+          },
+          "enable_dual_filter": {
+            "at": 17,
+            "bytes": "80"
+          },
+          "enable_fgs": {
+            "at": 19,
+            "bytes": "01"
+          },
+          "enable_filter_intra": {
+            "at": 17,
+            "bytes": "08"
+          },
+          "enable_interintra_compound": {
+            "at": 17,
+            "bytes": "20"
+          },
+          "enable_intra_edge_filter": {
+            "at": 17,
+            "bytes": "10"
+          },
+          "enable_jnt_comp": {
+            "at": 18,
+            "bytes": "10"
+          },
+          "enable_masked_compound": {
+            "at": 17,
+            "bytes": "40"
+          },
+          "enable_order_hint": {
+            "at": 18,
+            "bytes": "01"
+          },
+          "enable_restoration": {
+            "at": 18,
+            "bytes": "80"
+          },
+          "enable_superres": {
+            "at": 18,
+            "bytes": "20"
+          },
+          "force_integer_mv": {
+            "at": 20,
+            "bytes": "20"
+          },
+          "frame_type": {
+            "at": 20,
+            "bytes": "03"
+          },
+          "global_motion[0].invalid": {
+            "at": 568,
+            "bytes": "01"
+          },
+          "global_motion[0].reserved5Bits": {
+            "at": 568,
+            "bytes": "f8"
+          },
+          "global_motion[0].wmtype": {
+            "at": 568,
+            "bytes": "06"
+          },
+          "grain_scale_shift": {
+            "at": 765,
+            "bytes": "06"
+          },
+          "interp_filter": {
+            "at": 21,
+            "bytes": "38"
+          },
+          "loop_filter_delta_enabled": {
+            "at": 463,
+            "bytes": "01"
+          },
+          "loop_filter_delta_update": {
+            "at": 463,
+            "bytes": "02"
+          },
+          "mono_chrome": {
+            "at": 16,
+            "bytes": "40"
+          },
+          "num_tile_cols": {
+            "at": 24,
+            "bytes": "ff"
+          },
+          "num_tile_rows": {
+            "at": 25,
+            "bytes": "ff"
+          },
+          "order_hint_bits_minus1": {
+            "at": 18,
+            "bytes": "0e"
+          },
+          "overlap_flag": {
+            "at": 764,
+            "bytes": "02"
+          },
+          "profile": {
+            "at": 16,
+            "bytes": "07"
+          },
+          "reduced_tx_set": {
+            "at": 23,
+            "bytes": "08"
+          },
+          "reference_mode": {
+            "at": 23,
+            "bytes": "02"
+          },
+          "reserved0_7bits": {
+            "at": 19,
+            "bytes": "fe"
+          },
+          "reserved1_3bits": {
+            "at": 23,
+            "bytes": "e0"
+          },
+          "reserved2_4bits": {
+            "at": 284,
+            "bytes": "f0"
+          },
+          "reserved3_4bits": {
+            "at": 311,
+            "bytes": "f0"
+          },
+          "reserved4_2bits": {
+            "at": 463,
+            "bytes": "c0"
+          },
+          "reserved6_4bits": {
+            "at": 765,
+            "bytes": "f0"
+          },
+          "scaling_shift_minus8": {
+            "at": 764,
+            "bytes": "0c"
+          },
+          "segmentation_enabled": {
+            "at": 311,
+            "bytes": "01"
+          },
+          "segmentation_temporal_update": {
+            "at": 311,
+            "bytes": "08"
+          },
+          "segmentation_update_data": {
+            "at": 311,
+            "bytes": "04"
+          },
+          "segmentation_update_map": {
+            "at": 311,
+            "bytes": "02"
+          },
+          "show_frame": {
+            "at": 20,
+            "bytes": "04"
+          },
+          "skip_mode": {
+            "at": 23,
+            "bytes": "10"
+          },
+          "spatial_layer_id": {
+            "at": 479,
+            "bytes": "f0"
+          },
+          "subsampling_x": {
+            "at": 16,
+            "bytes": "10"
+          },
+          "subsampling_y": {
+            "at": 16,
+            "bytes": "20"
+          },
+          "switchable_motion_mode": {
+            "at": 21,
+            "bytes": "40"
+          },
+          "temporal_layer_id": {
+            "at": 479,
+            "bytes": "0f"
+          },
+          "tx_mode": {
+            "at": 22,
+            "bytes": "8001"
+          },
+          "use_128x128_superblock": {
+            "at": 16,
+            "bytes": "08"
+          },
+          "use_ref_frame_mvs": {
+            "at": 21,
+            "bytes": "80"
+          },
+          "use_superres": {
+            "at": 22,
+            "bytes": "40"
+          },
+          "using_qmatrix": {
+            "at": 22,
+            "bytes": "10"
+          }
+        },
+        "CUVIDEOFORMAT": {
+          "video_signal_description.reserved_zero_bits": {
+            "at": 56,
+            "bytes": "f0"
+          },
+          "video_signal_description.video_format": {
+            "at": 56,
+            "bytes": "07"
+          },
+          "video_signal_description.video_full_range_flag": {
+            "at": 56,
+            "bytes": "08"
+          }
+        },
+        "CUVIDH264PICPARAMS": {
+          "Reserved1": {
+            "at": 792,
+            "bytes": "fcffffff"
+          },
+          "mb_adaptive_frame_field_flag": {
+            "at": 792,
+            "bytes": "03"
+          }
+        },
+        "CUVIDPARSERPARAMS": {
+          "bAnnexb": {
+            "at": 20,
+            "bytes": "01"
+          },
+          "bMemoryOptimize": {
+            "at": 20,
+            "bytes": "02"
+          },
+          "uReserved": {
+            "at": 20,
+            "bytes": "fcffffff"
+          }
+        },
+        "CUVIDPICPARAMS": {
+          "CodecSpecific.av1.SkipModeFrame0": {
+            "at": 485,
+            "bytes": "0f"
+          },
+          "CodecSpecific.av1.SkipModeFrame1": {
+            "at": 485,
+            "bytes": "f0"
+          },
+          "CodecSpecific.av1.allow_high_precision_mv": {
+            "at": 205,
+            "bytes": "04"
+          },
+          "CodecSpecific.av1.allow_intrabc": {
+            "at": 205,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.allow_screen_content_tools": {
+            "at": 204,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.allow_warped_motion": {
+            "at": 207,
+            "bytes": "04"
+          },
+          "CodecSpecific.av1.apply_grain": {
+            "at": 948,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.ar_coeff_lag": {
+            "at": 948,
+            "bytes": "60"
+          },
+          "CodecSpecific.av1.ar_coeff_shift_minus6": {
+            "at": 948,
+            "bytes": "8001"
+          },
+          "CodecSpecific.av1.bit_depth_minus8": {
+            "at": 200,
+            "bytes": "8007"
+          },
+          "CodecSpecific.av1.cdef_bits": {
+            "at": 468,
+            "bytes": "0c"
+          },
+          "CodecSpecific.av1.cdef_damping_minus_3": {
+            "at": 468,
+            "bytes": "03"
+          },
+          "CodecSpecific.av1.chroma_scaling_from_luma": {
+            "at": 948,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.clip_to_restricted_range": {
+            "at": 949,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.coded_denom": {
+            "at": 204,
+            "bytes": "c001"
+          },
+          "CodecSpecific.av1.coded_lossless": {
+            "at": 206,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.context_update_tile_id": {
+            "at": 210,
+            "bytes": "ffff"
+          },
+          "CodecSpecific.av1.delta_lf_multi": {
+            "at": 647,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.delta_lf_present": {
+            "at": 647,
+            "bytes": "04"
+          },
+          "CodecSpecific.av1.delta_lf_res": {
+            "at": 647,
+            "bytes": "18"
+          },
+          "CodecSpecific.av1.delta_q_present": {
+            "at": 206,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.delta_q_res": {
+            "at": 206,
+            "bytes": "0c"
+          },
+          "CodecSpecific.av1.disable_cdf_update": {
+            "at": 204,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.disable_frame_end_update_cdf": {
+            "at": 206,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.enable_cdef": {
+            "at": 202,
+            "bytes": "40"
+          },
+          "CodecSpecific.av1.enable_dual_filter": {
+            "at": 201,
+            "bytes": "80"
+          },
+          "CodecSpecific.av1.enable_fgs": {
+            "at": 203,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.enable_filter_intra": {
+            "at": 201,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.enable_interintra_compound": {
+            "at": 201,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.enable_intra_edge_filter": {
+            "at": 201,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.enable_jnt_comp": {
+            "at": 202,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.enable_masked_compound": {
+            "at": 201,
+            "bytes": "40"
+          },
+          "CodecSpecific.av1.enable_order_hint": {
+            "at": 202,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.enable_restoration": {
+            "at": 202,
+            "bytes": "80"
+          },
+          "CodecSpecific.av1.enable_superres": {
+            "at": 202,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.force_integer_mv": {
+            "at": 204,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.frame_type": {
+            "at": 204,
+            "bytes": "03"
+          },
+          "CodecSpecific.av1.global_motion[0].invalid": {
+            "at": 752,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.global_motion[0].reserved5Bits": {
+            "at": 752,
+            "bytes": "f8"
+          },
+          "CodecSpecific.av1.global_motion[0].wmtype": {
+            "at": 752,
+            "bytes": "06"
+          },
+          "CodecSpecific.av1.grain_scale_shift": {
+            "at": 949,
+            "bytes": "06"
+          },
+          "CodecSpecific.av1.interp_filter": {
+            "at": 205,
+            "bytes": "38"
+          },
+          "CodecSpecific.av1.loop_filter_delta_enabled": {
+            "at": 647,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.loop_filter_delta_update": {
+            "at": 647,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.mono_chrome": {
+            "at": 200,
+            "bytes": "40"
+          },
+          "CodecSpecific.av1.num_tile_cols": {
+            "at": 208,
+            "bytes": "ff"
+          },
+          "CodecSpecific.av1.num_tile_rows": {
+            "at": 209,
+            "bytes": "ff"
+          },
+          "CodecSpecific.av1.order_hint_bits_minus1": {
+            "at": 202,
+            "bytes": "0e"
+          },
+          "CodecSpecific.av1.overlap_flag": {
+            "at": 948,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.profile": {
+            "at": 200,
+            "bytes": "07"
+          },
+          "CodecSpecific.av1.reduced_tx_set": {
+            "at": 207,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.reference_mode": {
+            "at": 207,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.reserved0_7bits": {
+            "at": 203,
+            "bytes": "fe"
+          },
+          "CodecSpecific.av1.reserved1_3bits": {
+            "at": 207,
+            "bytes": "e0"
+          },
+          "CodecSpecific.av1.reserved2_4bits": {
+            "at": 468,
+            "bytes": "f0"
+          },
+          "CodecSpecific.av1.reserved3_4bits": {
+            "at": 495,
+            "bytes": "f0"
+          },
+          "CodecSpecific.av1.reserved4_2bits": {
+            "at": 647,
+            "bytes": "c0"
+          },
+          "CodecSpecific.av1.reserved6_4bits": {
+            "at": 949,
+            "bytes": "f0"
+          },
+          "CodecSpecific.av1.scaling_shift_minus8": {
+            "at": 948,
+            "bytes": "0c"
+          },
+          "CodecSpecific.av1.segmentation_enabled": {
+            "at": 495,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.segmentation_temporal_update": {
+            "at": 495,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.segmentation_update_data": {
+            "at": 495,
+            "bytes": "04"
+          },
+          "CodecSpecific.av1.segmentation_update_map": {
+            "at": 495,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.show_frame": {
+            "at": 204,
+            "bytes": "04"
+          },
+          "CodecSpecific.av1.skip_mode": {
+            "at": 207,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.spatial_layer_id": {
+            "at": 663,
+            "bytes": "f0"
+          },
+          "CodecSpecific.av1.subsampling_x": {
+            "at": 200,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.subsampling_y": {
+            "at": 200,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.switchable_motion_mode": {
+            "at": 205,
+            "bytes": "40"
+          },
+          "CodecSpecific.av1.temporal_layer_id": {
+            "at": 663,
+            "bytes": "0f"
+          },
+          "CodecSpecific.av1.tx_mode": {
+            "at": 206,
+            "bytes": "8001"
+          },
+          "CodecSpecific.av1.use_128x128_superblock": {
+            "at": 200,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.use_ref_frame_mvs": {
+            "at": 205,
+            "bytes": "80"
+          },
+          "CodecSpecific.av1.use_superres": {
+            "at": 206,
+            "bytes": "40"
+          },
+          "CodecSpecific.av1.using_qmatrix": {
+            "at": 206,
+            "bytes": "10"
+          },
+          "CodecSpecific.h264.Reserved1": {
+            "at": 976,
+            "bytes": "fcffffff"
+          },
+          "CodecSpecific.h264.mb_adaptive_frame_field_flag": {
+            "at": 976,
+            "bytes": "03"
+          },
+          "CodecSpecific.vp9.allow_high_precision_mv": {
+            "at": 197,
+            "bytes": "10"
+          },
+          "CodecSpecific.vp9.errorResilient": {
+            "at": 196,
+            "bytes": "80"
+          },
+          "CodecSpecific.vp9.frameContextIdx": {
+            "at": 196,
+            "bytes": "18"
+          },
+          "CodecSpecific.vp9.frameParallelDecoding": {
+            "at": 197,
+            "bytes": "01"
+          },
+          "CodecSpecific.vp9.frameType": {
+            "at": 196,
+            "bytes": "20"
+          },
+          "CodecSpecific.vp9.intraOnly": {
+            "at": 197,
+            "bytes": "08"
+          },
+          "CodecSpecific.vp9.profile": {
+            "at": 196,
+            "bytes": "07"
+          },
+          "CodecSpecific.vp9.refreshEntropyProbs": {
+            "at": 197,
+            "bytes": "20"
+          },
+          "CodecSpecific.vp9.reserved2Bits": {
+            "at": 197,
+            "bytes": "c0"
+          },
+          "CodecSpecific.vp9.reserved4Bits": {
+            "at": 211,
+            "bytes": "f0"
+          },
+          "CodecSpecific.vp9.segmentEnabled": {
+            "at": 211,
+            "bytes": "01"
+          },
+          "CodecSpecific.vp9.segmentFeatureMode": {
+            "at": 211,
+            "bytes": "08"
+          },
+          "CodecSpecific.vp9.segmentMapTemporalUpdate": {
+            "at": 211,
+            "bytes": "04"
+          },
+          "CodecSpecific.vp9.segmentMapUpdate": {
+            "at": 211,
+            "bytes": "02"
+          },
+          "CodecSpecific.vp9.showFrame": {
+            "at": 196,
+            "bytes": "40"
+          },
+          "CodecSpecific.vp9.subSamplingX": {
+            "at": 197,
+            "bytes": "02"
+          },
+          "CodecSpecific.vp9.subSamplingY": {
+            "at": 197,
+            "bytes": "04"
+          }
+        },
+        "CUVIDVP9PICPARAMS": {
+          "allow_high_precision_mv": {
+            "at": 13,
+            "bytes": "10"
+          },
+          "errorResilient": {
+            "at": 12,
+            "bytes": "80"
+          },
+          "frameContextIdx": {
+            "at": 12,
+            "bytes": "18"
+          },
+          "frameParallelDecoding": {
+            "at": 13,
+            "bytes": "01"
+          },
+          "frameType": {
+            "at": 12,
+            "bytes": "20"
+          },
+          "intraOnly": {
+            "at": 13,
+            "bytes": "08"
+          },
+          "profile": {
+            "at": 12,
+            "bytes": "07"
+          },
+          "refreshEntropyProbs": {
+            "at": 13,
+            "bytes": "20"
+          },
+          "reserved2Bits": {
+            "at": 13,
+            "bytes": "c0"
+          },
+          "reserved4Bits": {
+            "at": 27,
+            "bytes": "f0"
+          },
+          "segmentEnabled": {
+            "at": 27,
+            "bytes": "01"
+          },
+          "segmentFeatureMode": {
+            "at": 27,
+            "bytes": "08"
+          },
+          "segmentMapTemporalUpdate": {
+            "at": 27,
+            "bytes": "04"
+          },
+          "segmentMapUpdate": {
+            "at": 27,
+            "bytes": "02"
+          },
+          "showFrame": {
+            "at": 12,
+            "bytes": "40"
+          },
+          "subSamplingX": {
+            "at": 13,
+            "bytes": "02"
+          },
+          "subSamplingY": {
+            "at": 13,
+            "bytes": "04"
+          }
+        }
+      },
+      "nested": {
+        "CUVIDAV1PICPARAMS": {
+          "global_motion[0].reserved24Bits": 569,
+          "global_motion[0].wmmat": 572,
+          "ref_frame[0].height": 488,
+          "ref_frame[0].index": 492,
+          "ref_frame[0].reserved24Bits": 493,
+          "ref_frame[0].width": 484
+        },
+        "CUVIDDECODECREATEINFO": {
+          "display_area.bottom": 50,
+          "display_area.left": 44,
+          "display_area.right": 48,
+          "display_area.top": 46,
+          "target_rect.bottom": 86,
+          "target_rect.left": 80,
+          "target_rect.right": 84,
+          "target_rect.top": 82
+        },
+        "CUVIDEOFORMAT": {
+          "display_area.bottom": 36,
+          "display_area.left": 24,
+          "display_area.right": 32,
+          "display_area.top": 28,
+          "display_aspect_ratio.x": 48,
+          "display_aspect_ratio.y": 52,
+          "frame_rate.denominator": 8,
+          "frame_rate.numerator": 4,
+          "video_signal_description.color_primaries": 57,
+          "video_signal_description.matrix_coefficients": 59,
+          "video_signal_description.transfer_characteristics": 58
+        },
+        "CUVIDH264PICPARAMS": {
+          "dpb[0].FieldOrderCnt": 124,
+          "dpb[0].FrameIdx": 108,
+          "dpb[0].PicIdx": 104,
+          "dpb[0].is_long_term": 112,
+          "dpb[0].not_existing": 116,
+          "dpb[0].used_for_reference": 120,
+          "fmo.pMb2SliceGroupMap": 784,
+          "fmo.slice_group_map_addr": 784,
+          "mvcext.InterViewRefsL0": 852,
+          "mvcext.InterViewRefsL1": 916,
+          "mvcext.MVCReserved8Bits": 851,
+          "mvcext.inter_view_flag": 848,
+          "mvcext.num_inter_view_refs_l0": 849,
+          "mvcext.num_inter_view_refs_l1": 850,
+          "mvcext.num_views_minus1": 840,
+          "mvcext.view_id": 844,
+          "svcext.DPBEntryValidFlag": 848,
+          "svcext.DQId": 842,
+          "svcext.DQIdMax": 843,
+          "svcext.Reserved16Bits": 870,
+          "svcext.Reserved8BitsA": 860,
+          "svcext.Reserved8BitsB": 861,
+          "svcext.adaptive_tcoeff_level_prediction_flag": 852,
+          "svcext.bRefBaseLayer": 880,
+          "svcext.chroma_phase_x_plus1_flag": 854,
+          "svcext.chroma_phase_y_plus1": 855,
+          "svcext.constrained_intra_resampling_flag": 857,
+          "svcext.disable_inter_layer_deblocking_filter_idc": 844,
+          "svcext.extended_spatial_scalability_idc": 851,
+          "svcext.inter_layer_deblocking_filter_control_present_flag": 850,
+          "svcext.inter_layer_slice_alpha_c0_offset_div2": 846,
+          "svcext.inter_layer_slice_beta_offset_div2": 847,
+          "svcext.level_idc": 841,
+          "svcext.pNextLayer": 872,
+          "svcext.profile_idc": 840,
+          "svcext.ref_layer_chroma_phase_x_plus1_flag": 858,
+          "svcext.ref_layer_chroma_phase_y_plus1": 845,
+          "svcext.scaled_ref_layer_bottom_offset": 868,
+          "svcext.scaled_ref_layer_left_offset": 862,
+          "svcext.scaled_ref_layer_right_offset": 866,
+          "svcext.scaled_ref_layer_top_offset": 864,
+          "svcext.slice_header_restriction_flag": 853,
+          "svcext.store_ref_base_pic_flag": 859,
+          "svcext.tcoeff_level_prediction_flag": 856
+        },
+        "CUVIDPICPARAMS": {
+          "CodecSpecific.CodecReserved": 184,
+          "CodecSpecific.av1.ar_coeffs_cb": 1072,
+          "CodecSpecific.av1.ar_coeffs_cr": 1122,
+          "CodecSpecific.av1.ar_coeffs_y": 1024,
+          "CodecSpecific.av1.base_qindex": 486,
+          "CodecSpecific.av1.cb_luma_mult": 1173,
+          "CodecSpecific.av1.cb_mult": 1172,
+          "CodecSpecific.av1.cb_offset": 1174,
+          "CodecSpecific.av1.cdef_uv_strength": 477,
+          "CodecSpecific.av1.cdef_y_strength": 469,
+          "CodecSpecific.av1.cr_luma_mult": 1177,
+          "CodecSpecific.av1.cr_mult": 1176,
+          "CodecSpecific.av1.cr_offset": 1178,
+          "CodecSpecific.av1.decodePicIdx": 196,
+          "CodecSpecific.av1.frame_offset": 192,
+          "CodecSpecific.av1.global_motion[0].reserved24Bits": 753,
+          "CodecSpecific.av1.global_motion[0].wmmat": 756,
+          "CodecSpecific.av1.height": 188,
+          "CodecSpecific.av1.loop_filter_level": 632,
+          "CodecSpecific.av1.loop_filter_level_u": 634,
+          "CodecSpecific.av1.loop_filter_level_v": 635,
+          "CodecSpecific.av1.loop_filter_mode_deltas": 645,
+          "CodecSpecific.av1.loop_filter_ref_deltas": 637,
+          "CodecSpecific.av1.loop_filter_sharpness": 636,
+          "CodecSpecific.av1.lr_type": 651,
+          "CodecSpecific.av1.lr_unit_size": 648,
+          "CodecSpecific.av1.num_cb_points": 979,
+          "CodecSpecific.av1.num_cr_points": 1000,
+          "CodecSpecific.av1.num_y_points": 950,
+          "CodecSpecific.av1.primary_ref_frame": 654,
+          "CodecSpecific.av1.qm_u": 493,
+          "CodecSpecific.av1.qm_v": 494,
+          "CodecSpecific.av1.qm_y": 492,
+          "CodecSpecific.av1.qp_u_ac_delta_q": 490,
+          "CodecSpecific.av1.qp_u_dc_delta_q": 488,
+          "CodecSpecific.av1.qp_v_ac_delta_q": 491,
+          "CodecSpecific.av1.qp_v_dc_delta_q": 489,
+          "CodecSpecific.av1.qp_y_dc_delta_q": 487,
+          "CodecSpecific.av1.random_seed": 1022,
+          "CodecSpecific.av1.ref_frame[0].height": 672,
+          "CodecSpecific.av1.ref_frame[0].index": 676,
+          "CodecSpecific.av1.ref_frame[0].reserved24Bits": 677,
+          "CodecSpecific.av1.ref_frame[0].width": 668,
+          "CodecSpecific.av1.ref_frame_map": 655,
+          "CodecSpecific.av1.reserved": 1180,
+          "CodecSpecific.av1.reserved5_32bits": 664,
+          "CodecSpecific.av1.reserved7_8bits": 1021,
+          "CodecSpecific.av1.scaling_points_cb": 980,
+          "CodecSpecific.av1.scaling_points_cr": 1001,
+          "CodecSpecific.av1.scaling_points_y": 951,
+          "CodecSpecific.av1.segmentation_feature_data": 496,
+          "CodecSpecific.av1.segmentation_feature_mask": 624,
+          "CodecSpecific.av1.tile_heights": 340,
+          "CodecSpecific.av1.tile_widths": 212,
+          "CodecSpecific.av1.width": 184,
+          "CodecSpecific.h264.CurrFieldOrderCnt": 280,
+          "CodecSpecific.h264.MbaffFrameFlag": 256,
+          "CodecSpecific.h264.Reserved": 980,
+          "CodecSpecific.h264.WeightScale4x4": 736,
+          "CodecSpecific.h264.WeightScale8x8": 832,
+          "CodecSpecific.h264.bit_depth_chroma_minus8": 214,
+          "CodecSpecific.h264.bit_depth_luma_minus8": 213,
+          "CodecSpecific.h264.chroma_qp_index_offset": 264,
+          "CodecSpecific.h264.constrained_intra_pred_flag": 260,
+          "CodecSpecific.h264.deblocking_filter_control_present_flag": 244,
+          "CodecSpecific.h264.delta_pic_order_always_zero_flag": 196,
+          "CodecSpecific.h264.direct_8x8_inference_flag": 204,
+          "CodecSpecific.h264.dpb[0].FieldOrderCnt": 308,
+          "CodecSpecific.h264.dpb[0].FrameIdx": 292,
+          "CodecSpecific.h264.dpb[0].PicIdx": 288,
+          "CodecSpecific.h264.dpb[0].is_long_term": 296,
+          "CodecSpecific.h264.dpb[0].not_existing": 300,
+          "CodecSpecific.h264.dpb[0].used_for_reference": 304,
+          "CodecSpecific.h264.entropy_coding_mode_flag": 216,
+          "CodecSpecific.h264.fmo.pMb2SliceGroupMap": 968,
+          "CodecSpecific.h264.fmo.slice_group_map_addr": 968,
+          "CodecSpecific.h264.fmo_aso_enable": 960,
+          "CodecSpecific.h264.frame_mbs_only_flag": 200,
+          "CodecSpecific.h264.frame_num": 276,
+          "CodecSpecific.h264.log2_max_frame_num_minus4": 184,
+          "CodecSpecific.h264.log2_max_pic_order_cnt_lsb_minus4": 192,
+          "CodecSpecific.h264.mvcext.InterViewRefsL0": 1036,
+          "CodecSpecific.h264.mvcext.InterViewRefsL1": 1100,
+          "CodecSpecific.h264.mvcext.MVCReserved8Bits": 1035,
+          "CodecSpecific.h264.mvcext.inter_view_flag": 1032,
+          "CodecSpecific.h264.mvcext.num_inter_view_refs_l0": 1033,
+          "CodecSpecific.h264.mvcext.num_inter_view_refs_l1": 1034,
+          "CodecSpecific.h264.mvcext.num_views_minus1": 1024,
+          "CodecSpecific.h264.mvcext.view_id": 1028,
+          "CodecSpecific.h264.num_ref_frames": 208,
+          "CodecSpecific.h264.num_ref_idx_l0_active_minus1": 224,
+          "CodecSpecific.h264.num_ref_idx_l1_active_minus1": 228,
+          "CodecSpecific.h264.num_slice_groups_minus1": 961,
+          "CodecSpecific.h264.pic_init_qp_minus26": 240,
+          "CodecSpecific.h264.pic_init_qs_minus26": 963,
+          "CodecSpecific.h264.pic_order_cnt_type": 188,
+          "CodecSpecific.h264.pic_order_present_flag": 220,
+          "CodecSpecific.h264.qpprime_y_zero_transform_bypass_flag": 215,
+          "CodecSpecific.h264.redundant_pic_cnt_present_flag": 248,
+          "CodecSpecific.h264.ref_pic_flag": 272,
+          "CodecSpecific.h264.residual_colour_transform_flag": 212,
+          "CodecSpecific.h264.second_chroma_qp_index_offset": 268,
+          "CodecSpecific.h264.slice_group_change_rate_minus1": 964,
+          "CodecSpecific.h264.slice_group_map_type": 962,
+          "CodecSpecific.h264.svcext.DPBEntryValidFlag": 1032,
+          "CodecSpecific.h264.svcext.DQId": 1026,
+          "CodecSpecific.h264.svcext.DQIdMax": 1027,
+          "CodecSpecific.h264.svcext.Reserved16Bits": 1054,
+          "CodecSpecific.h264.svcext.Reserved8BitsA": 1044,
+          "CodecSpecific.h264.svcext.Reserved8BitsB": 1045,
+          "CodecSpecific.h264.svcext.adaptive_tcoeff_level_prediction_flag": 1036,
+          "CodecSpecific.h264.svcext.bRefBaseLayer": 1064,
+          "CodecSpecific.h264.svcext.chroma_phase_x_plus1_flag": 1038,
+          "CodecSpecific.h264.svcext.chroma_phase_y_plus1": 1039,
+          "CodecSpecific.h264.svcext.constrained_intra_resampling_flag": 1041,
+          "CodecSpecific.h264.svcext.disable_inter_layer_deblocking_filter_idc": 1028,
+          "CodecSpecific.h264.svcext.extended_spatial_scalability_idc": 1035,
+          "CodecSpecific.h264.svcext.inter_layer_deblocking_filter_control_present_flag": 1034,
+          "CodecSpecific.h264.svcext.inter_layer_slice_alpha_c0_offset_div2": 1030,
+          "CodecSpecific.h264.svcext.inter_layer_slice_beta_offset_div2": 1031,
+          "CodecSpecific.h264.svcext.level_idc": 1025,
+          "CodecSpecific.h264.svcext.pNextLayer": 1056,
+          "CodecSpecific.h264.svcext.profile_idc": 1024,
+          "CodecSpecific.h264.svcext.ref_layer_chroma_phase_x_plus1_flag": 1042,
+          "CodecSpecific.h264.svcext.ref_layer_chroma_phase_y_plus1": 1029,
+          "CodecSpecific.h264.svcext.scaled_ref_layer_bottom_offset": 1052,
+          "CodecSpecific.h264.svcext.scaled_ref_layer_left_offset": 1046,
+          "CodecSpecific.h264.svcext.scaled_ref_layer_right_offset": 1050,
+          "CodecSpecific.h264.svcext.scaled_ref_layer_top_offset": 1048,
+          "CodecSpecific.h264.svcext.slice_header_restriction_flag": 1037,
+          "CodecSpecific.h264.svcext.store_ref_base_pic_flag": 1043,
+          "CodecSpecific.h264.svcext.tcoeff_level_prediction_flag": 1040,
+          "CodecSpecific.h264.transform_8x8_mode_flag": 252,
+          "CodecSpecific.h264.weighted_bipred_idc": 236,
+          "CodecSpecific.h264.weighted_pred_flag": 232,
+          "CodecSpecific.hevc.CurrPicOrderCntVal": 432,
+          "CodecSpecific.hevc.IdrPicFlag": 215,
+          "CodecSpecific.hevc.IrapPicFlag": 214,
+          "CodecSpecific.hevc.IsLongTerm": 564,
+          "CodecSpecific.hevc.NumActiveRefLayerPics0": 228,
+          "CodecSpecific.hevc.NumActiveRefLayerPics1": 229,
+          "CodecSpecific.hevc.NumBitsForShortTermRPSInSlice": 408,
+          "CodecSpecific.hevc.NumDeltaPocsOfRefRpsIdx": 412,
+          "CodecSpecific.hevc.NumDirectRefLayers": 225,
+          "CodecSpecific.hevc.NumPocLtCurr": 428,
+          "CodecSpecific.hevc.NumPocStCurrAfter": 424,
+          "CodecSpecific.hevc.NumPocStCurrBefore": 420,
+          "CodecSpecific.hevc.NumPocTotalCurr": 416,
+          "CodecSpecific.hevc.PicOrderCntVal": 500,
+          "CodecSpecific.hevc.RefPicIdx": 436,
+          "CodecSpecific.hevc.RefPicSetInterLayer0": 604,
+          "CodecSpecific.hevc.RefPicSetInterLayer1": 612,
+          "CodecSpecific.hevc.RefPicSetLtCurr": 596,
+          "CodecSpecific.hevc.RefPicSetStCurrAfter": 588,
+          "CodecSpecific.hevc.RefPicSetStCurrBefore": 580,
+          "CodecSpecific.hevc.ScalingList16x16": 1148,
+          "CodecSpecific.hevc.ScalingList32x32": 1532,
+          "CodecSpecific.hevc.ScalingList4x4": 668,
+          "CodecSpecific.hevc.ScalingList8x8": 764,
+          "CodecSpecific.hevc.ScalingListDCCoeff16x16": 1660,
+          "CodecSpecific.hevc.ScalingListDCCoeff32x32": 1666,
+          "CodecSpecific.hevc.amp_enabled_flag": 205,
+          "CodecSpecific.hevc.bit_depth_chroma_minus8": 217,
+          "CodecSpecific.hevc.bit_depth_luma_minus8": 216,
+          "CodecSpecific.hevc.cabac_bypass_alignment_enabled_flag": 356,
+          "CodecSpecific.hevc.cabac_init_present_flag": 254,
+          "CodecSpecific.hevc.cb_qp_offset_list": 362,
+          "CodecSpecific.hevc.chroma_qp_offset_list_enabled_flag": 359,
+          "CodecSpecific.hevc.chroma_qp_offset_list_len_minus1": 361,
+          "CodecSpecific.hevc.column_width_minus1": 264,
+          "CodecSpecific.hevc.constrained_intra_pred_flag": 240,
+          "CodecSpecific.hevc.cr_qp_offset_list": 368,
+          "CodecSpecific.hevc.cross_component_prediction_enabled_flag": 358,
+          "CodecSpecific.hevc.cu_qp_delta_enabled_flag": 235,
+          "CodecSpecific.hevc.deblocking_filter_override_enabled_flag": 256,
+          "CodecSpecific.hevc.default_ref_layers_active_flag": 224,
+          "CodecSpecific.hevc.dependent_slice_segments_enabled_flag": 232,
+          "CodecSpecific.hevc.diff_cu_chroma_qp_offset_depth": 360,
+          "CodecSpecific.hevc.diff_cu_qp_delta_depth": 236,
+          "CodecSpecific.hevc.entropy_coding_sync_enabled_flag": 245,
+          "CodecSpecific.hevc.explicit_rdpcm_enabled_flag": 352,
+          "CodecSpecific.hevc.extended_precision_processing_flag": 353,
+          "CodecSpecific.hevc.high_precision_offsets_enabled_flag": 221,
+          "CodecSpecific.hevc.implicit_rdpcm_enabled_flag": 351,
+          "CodecSpecific.hevc.init_qp_minus26": 237,
+          "CodecSpecific.hevc.intra_smoothing_disabled_flag": 354,
+          "CodecSpecific.hevc.lists_modification_present_flag": 253,
+          "CodecSpecific.hevc.log2_diff_max_min_luma_coding_block_size": 193,
+          "CodecSpecific.hevc.log2_diff_max_min_pcm_luma_coding_block_size": 198,
+          "CodecSpecific.hevc.log2_diff_max_min_transform_block_size": 195,
+          "CodecSpecific.hevc.log2_max_pic_order_cnt_lsb_minus4": 207,
+          "CodecSpecific.hevc.log2_max_transform_skip_block_size_minus2": 218,
+          "CodecSpecific.hevc.log2_min_luma_coding_block_size_minus3": 192,
+          "CodecSpecific.hevc.log2_min_pcm_luma_coding_block_size_minus3": 197,
+          "CodecSpecific.hevc.log2_min_transform_block_size_minus2": 194,
+          "CodecSpecific.hevc.log2_parallel_merge_level_minus2": 246,
+          "CodecSpecific.hevc.log2_sao_offset_scale_chroma": 220,
+          "CodecSpecific.hevc.log2_sao_offset_scale_luma": 219,
+          "CodecSpecific.hevc.long_term_ref_pics_present_flag": 209,
+          "CodecSpecific.hevc.loop_filter_across_slices_enabled_flag": 249,
+          "CodecSpecific.hevc.loop_filter_across_tiles_enabled_flag": 248,
+          "CodecSpecific.hevc.max_one_active_ref_layer_flag": 226,
+          "CodecSpecific.hevc.max_transform_hierarchy_depth_inter": 204,
+          "CodecSpecific.hevc.max_transform_hierarchy_depth_intra": 203,
+          "CodecSpecific.hevc.mv_hevc_enable": 222,
+          "CodecSpecific.hevc.nuh_layer_id": 223,
+          "CodecSpecific.hevc.num_extra_slice_header_bits": 247,
+          "CodecSpecific.hevc.num_long_term_ref_pics_sps": 210,
+          "CodecSpecific.hevc.num_ref_idx_l0_default_active_minus1": 251,
+          "CodecSpecific.hevc.num_ref_idx_l1_default_active_minus1": 252,
+          "CodecSpecific.hevc.num_short_term_ref_pic_sets": 208,
+          "CodecSpecific.hevc.num_tile_columns_minus1": 262,
+          "CodecSpecific.hevc.num_tile_rows_minus1": 263,
+          "CodecSpecific.hevc.output_flag_present_flag": 250,
+          "CodecSpecific.hevc.pcm_enabled_flag": 196,
+          "CodecSpecific.hevc.pcm_loop_filter_disabled_flag": 201,
+          "CodecSpecific.hevc.pcm_sample_bit_depth_chroma_minus1": 200,
+          "CodecSpecific.hevc.pcm_sample_bit_depth_luma_minus1": 199,
+          "CodecSpecific.hevc.persistent_rice_adaptation_enabled_flag": 355,
+          "CodecSpecific.hevc.pic_height_in_luma_samples": 188,
+          "CodecSpecific.hevc.pic_width_in_luma_samples": 184,
+          "CodecSpecific.hevc.poc_lsb_not_present_flag": 227,
+          "CodecSpecific.hevc.pps_beta_offset_div2": 258,
+          "CodecSpecific.hevc.pps_cb_qp_offset": 238,
+          "CodecSpecific.hevc.pps_cr_qp_offset": 239,
+          "CodecSpecific.hevc.pps_deblocking_filter_disabled_flag": 257,
+          "CodecSpecific.hevc.pps_range_extension_flag": 357,
+          "CodecSpecific.hevc.pps_slice_chroma_qp_offsets_present_flag": 255,
+          "CodecSpecific.hevc.pps_tc_offset_div2": 259,
+          "CodecSpecific.hevc.reserved1": 230,
+          "CodecSpecific.hevc.reserved2": 374,
+          "CodecSpecific.hevc.reserved3": 376,
+          "CodecSpecific.hevc.reserved4": 620,
+          "CodecSpecific.hevc.row_height_minus1": 306,
+          "CodecSpecific.hevc.sample_adaptive_offset_enabled_flag": 212,
+          "CodecSpecific.hevc.scaling_list_enable_flag": 213,
+          "CodecSpecific.hevc.separate_colour_plane_flag": 206,
+          "CodecSpecific.hevc.sign_data_hiding_enabled_flag": 234,
+          "CodecSpecific.hevc.slice_segment_header_extension_present_flag": 233,
+          "CodecSpecific.hevc.sps_range_extension_flag": 348,
+          "CodecSpecific.hevc.sps_temporal_mvp_enabled_flag": 211,
+          "CodecSpecific.hevc.strong_intra_smoothing_enabled_flag": 202,
+          "CodecSpecific.hevc.tiles_enabled_flag": 260,
+          "CodecSpecific.hevc.transform_skip_context_enabled_flag": 350,
+          "CodecSpecific.hevc.transform_skip_enabled_flag": 243,
+          "CodecSpecific.hevc.transform_skip_rotation_enabled_flag": 349,
+          "CodecSpecific.hevc.transquant_bypass_enabled_flag": 244,
+          "CodecSpecific.hevc.uniform_spacing_flag": 261,
+          "CodecSpecific.hevc.weighted_bipred_flag": 242,
+          "CodecSpecific.hevc.weighted_pred_flag": 241,
+          "CodecSpecific.vp9.AltRefIdx": 194,
+          "CodecSpecific.vp9.GoldenRefIdx": 193,
+          "CodecSpecific.vp9.LastRefIdx": 192,
+          "CodecSpecific.vp9.activeRefIdx": 336,
+          "CodecSpecific.vp9.bitDepthMinus8Chroma": 205,
+          "CodecSpecific.vp9.bitDepthMinus8Luma": 204,
+          "CodecSpecific.vp9.colorSpace": 195,
+          "CodecSpecific.vp9.frameTagSize": 380,
+          "CodecSpecific.vp9.height": 188,
+          "CodecSpecific.vp9.log2_tile_columns": 209,
+          "CodecSpecific.vp9.log2_tile_rows": 210,
+          "CodecSpecific.vp9.loopFilterLevel": 206,
+          "CodecSpecific.vp9.loopFilterSharpness": 207,
+          "CodecSpecific.vp9.mbModeLfDelta": 372,
+          "CodecSpecific.vp9.mbRefLfDelta": 356,
+          "CodecSpecific.vp9.mb_segment_tree_probs": 308,
+          "CodecSpecific.vp9.mcomp_filter_type": 352,
+          "CodecSpecific.vp9.modeRefLfEnabled": 208,
+          "CodecSpecific.vp9.offsetToDctParts": 384,
+          "CodecSpecific.vp9.qpChAc": 332,
+          "CodecSpecific.vp9.qpChDc": 328,
+          "CodecSpecific.vp9.qpYAc": 320,
+          "CodecSpecific.vp9.qpYDc": 324,
+          "CodecSpecific.vp9.refFrameSignBias": 200,
+          "CodecSpecific.vp9.reserved128Bits": 388,
+          "CodecSpecific.vp9.reserved16Bits": 198,
+          "CodecSpecific.vp9.reservedSegment16Bits": 318,
+          "CodecSpecific.vp9.resetFrameContext": 348,
+          "CodecSpecific.vp9.segmentFeatureData": 244,
+          "CodecSpecific.vp9.segmentFeatureEnable": 212,
+          "CodecSpecific.vp9.segment_pred_probs": 315,
+          "CodecSpecific.vp9.width": 184
+        }
+      },
       "offsets": {
         "CUDA_MEMCPY2D": {
           "Height": 120,
@@ -46,6 +1199,58 @@
           "srcPitch": 48,
           "srcXInBytes": 0,
           "srcY": 8
+        },
+        "CUVIDAV1PICPARAMS": {
+          "ar_coeffs_cb": 888,
+          "ar_coeffs_cr": 938,
+          "ar_coeffs_y": 840,
+          "base_qindex": 302,
+          "cb_luma_mult": 989,
+          "cb_mult": 988,
+          "cb_offset": 990,
+          "cdef_uv_strength": 293,
+          "cdef_y_strength": 285,
+          "cr_luma_mult": 993,
+          "cr_mult": 992,
+          "cr_offset": 994,
+          "decodePicIdx": 12,
+          "frame_offset": 8,
+          "global_motion": 568,
+          "height": 4,
+          "loop_filter_level": 448,
+          "loop_filter_level_u": 450,
+          "loop_filter_level_v": 451,
+          "loop_filter_mode_deltas": 461,
+          "loop_filter_ref_deltas": 453,
+          "loop_filter_sharpness": 452,
+          "lr_type": 467,
+          "lr_unit_size": 464,
+          "num_cb_points": 795,
+          "num_cr_points": 816,
+          "num_y_points": 766,
+          "primary_ref_frame": 470,
+          "qm_u": 309,
+          "qm_v": 310,
+          "qm_y": 308,
+          "qp_u_ac_delta_q": 306,
+          "qp_u_dc_delta_q": 304,
+          "qp_v_ac_delta_q": 307,
+          "qp_v_dc_delta_q": 305,
+          "qp_y_dc_delta_q": 303,
+          "random_seed": 838,
+          "ref_frame": 484,
+          "ref_frame_map": 471,
+          "reserved": 996,
+          "reserved5_32bits": 480,
+          "reserved7_8bits": 837,
+          "scaling_points_cb": 796,
+          "scaling_points_cr": 817,
+          "scaling_points_y": 767,
+          "segmentation_feature_data": 312,
+          "segmentation_feature_mask": 440,
+          "tile_heights": 156,
+          "tile_widths": 28,
+          "width": 0
         },
         "CUVIDDECODECAPS": {
           "bIsDecodeStatsSupported": 48,
@@ -76,17 +1281,9 @@
           "Reserved2": 96,
           "bitDepthMinus8": 24,
           "display_area": 44,
-          "display_area.bottom": 50,
-          "display_area.left": 44,
-          "display_area.right": 48,
-          "display_area.top": 46,
           "enableDecodeFeatures": 92,
           "enableHistogram": 88,
           "target_rect": 80,
-          "target_rect.bottom": 86,
-          "target_rect.left": 80,
-          "target_rect.right": 84,
-          "target_rect.top": 82,
           "ulCreationFlags": 20,
           "ulHeight": 4,
           "ulIntraDecodeOnly": 28,
@@ -108,23 +1305,217 @@
           "coded_height": 20,
           "coded_width": 16,
           "display_area": 24,
-          "display_area.bottom": 36,
-          "display_area.left": 24,
-          "display_area.right": 32,
-          "display_area.top": 28,
           "display_aspect_ratio": 48,
-          "display_aspect_ratio.x": 48,
-          "display_aspect_ratio.y": 52,
           "frame_rate": 4,
-          "frame_rate.denominator": 8,
-          "frame_rate.numerator": 4,
           "min_num_decode_surfaces": 15,
           "progressive_sequence": 12,
           "seqhdr_data_length": 60,
-          "video_signal_description": 56,
-          "video_signal_description.color_primaries": 57,
-          "video_signal_description.matrix_coefficients": 59,
-          "video_signal_description.transfer_characteristics": 58
+          "video_signal_description": 56
+        },
+        "CUVIDH264DPBENTRY": {
+          "FieldOrderCnt": 20,
+          "FrameIdx": 4,
+          "PicIdx": 0,
+          "is_long_term": 8,
+          "not_existing": 12,
+          "used_for_reference": 16
+        },
+        "CUVIDH264MVCEXT": {
+          "InterViewRefsL0": 12,
+          "InterViewRefsL1": 76,
+          "MVCReserved8Bits": 11,
+          "inter_view_flag": 8,
+          "num_inter_view_refs_l0": 9,
+          "num_inter_view_refs_l1": 10,
+          "num_views_minus1": 0,
+          "view_id": 4
+        },
+        "CUVIDH264PICPARAMS": {
+          "CurrFieldOrderCnt": 96,
+          "MbaffFrameFlag": 72,
+          "Reserved": 796,
+          "WeightScale4x4": 552,
+          "WeightScale8x8": 648,
+          "bit_depth_chroma_minus8": 30,
+          "bit_depth_luma_minus8": 29,
+          "chroma_qp_index_offset": 80,
+          "constrained_intra_pred_flag": 76,
+          "deblocking_filter_control_present_flag": 60,
+          "delta_pic_order_always_zero_flag": 12,
+          "direct_8x8_inference_flag": 20,
+          "dpb": 104,
+          "entropy_coding_mode_flag": 32,
+          "fmo": 784,
+          "fmo_aso_enable": 776,
+          "frame_mbs_only_flag": 16,
+          "frame_num": 92,
+          "log2_max_frame_num_minus4": 0,
+          "log2_max_pic_order_cnt_lsb_minus4": 8,
+          "num_ref_frames": 24,
+          "num_ref_idx_l0_active_minus1": 40,
+          "num_ref_idx_l1_active_minus1": 44,
+          "num_slice_groups_minus1": 777,
+          "pic_init_qp_minus26": 56,
+          "pic_init_qs_minus26": 779,
+          "pic_order_cnt_type": 4,
+          "pic_order_present_flag": 36,
+          "qpprime_y_zero_transform_bypass_flag": 31,
+          "redundant_pic_cnt_present_flag": 64,
+          "ref_pic_flag": 88,
+          "residual_colour_transform_flag": 28,
+          "second_chroma_qp_index_offset": 84,
+          "slice_group_change_rate_minus1": 780,
+          "slice_group_map_type": 778,
+          "transform_8x8_mode_flag": 68,
+          "weighted_bipred_idc": 52,
+          "weighted_pred_flag": 48
+        },
+        "CUVIDH264SVCEXT": {
+          "DPBEntryValidFlag": 8,
+          "DQId": 2,
+          "DQIdMax": 3,
+          "Reserved16Bits": 30,
+          "Reserved8BitsA": 20,
+          "Reserved8BitsB": 21,
+          "adaptive_tcoeff_level_prediction_flag": 12,
+          "bRefBaseLayer": 40,
+          "chroma_phase_x_plus1_flag": 14,
+          "chroma_phase_y_plus1": 15,
+          "constrained_intra_resampling_flag": 17,
+          "disable_inter_layer_deblocking_filter_idc": 4,
+          "extended_spatial_scalability_idc": 11,
+          "inter_layer_deblocking_filter_control_present_flag": 10,
+          "inter_layer_slice_alpha_c0_offset_div2": 6,
+          "inter_layer_slice_beta_offset_div2": 7,
+          "level_idc": 1,
+          "pNextLayer": 32,
+          "profile_idc": 0,
+          "ref_layer_chroma_phase_x_plus1_flag": 18,
+          "ref_layer_chroma_phase_y_plus1": 5,
+          "scaled_ref_layer_bottom_offset": 28,
+          "scaled_ref_layer_left_offset": 22,
+          "scaled_ref_layer_right_offset": 26,
+          "scaled_ref_layer_top_offset": 24,
+          "slice_header_restriction_flag": 13,
+          "store_ref_base_pic_flag": 19,
+          "tcoeff_level_prediction_flag": 16
+        },
+        "CUVIDHEVCPICPARAMS": {
+          "CurrPicOrderCntVal": 248,
+          "IdrPicFlag": 31,
+          "IrapPicFlag": 30,
+          "IsLongTerm": 380,
+          "NumActiveRefLayerPics0": 44,
+          "NumActiveRefLayerPics1": 45,
+          "NumBitsForShortTermRPSInSlice": 224,
+          "NumDeltaPocsOfRefRpsIdx": 228,
+          "NumDirectRefLayers": 41,
+          "NumPocLtCurr": 244,
+          "NumPocStCurrAfter": 240,
+          "NumPocStCurrBefore": 236,
+          "NumPocTotalCurr": 232,
+          "PicOrderCntVal": 316,
+          "RefPicIdx": 252,
+          "RefPicSetInterLayer0": 420,
+          "RefPicSetInterLayer1": 428,
+          "RefPicSetLtCurr": 412,
+          "RefPicSetStCurrAfter": 404,
+          "RefPicSetStCurrBefore": 396,
+          "ScalingList16x16": 964,
+          "ScalingList32x32": 1348,
+          "ScalingList4x4": 484,
+          "ScalingList8x8": 580,
+          "ScalingListDCCoeff16x16": 1476,
+          "ScalingListDCCoeff32x32": 1482,
+          "amp_enabled_flag": 21,
+          "bit_depth_chroma_minus8": 33,
+          "bit_depth_luma_minus8": 32,
+          "cabac_bypass_alignment_enabled_flag": 172,
+          "cabac_init_present_flag": 70,
+          "cb_qp_offset_list": 178,
+          "chroma_qp_offset_list_enabled_flag": 175,
+          "chroma_qp_offset_list_len_minus1": 177,
+          "column_width_minus1": 80,
+          "constrained_intra_pred_flag": 56,
+          "cr_qp_offset_list": 184,
+          "cross_component_prediction_enabled_flag": 174,
+          "cu_qp_delta_enabled_flag": 51,
+          "deblocking_filter_override_enabled_flag": 72,
+          "default_ref_layers_active_flag": 40,
+          "dependent_slice_segments_enabled_flag": 48,
+          "diff_cu_chroma_qp_offset_depth": 176,
+          "diff_cu_qp_delta_depth": 52,
+          "entropy_coding_sync_enabled_flag": 61,
+          "explicit_rdpcm_enabled_flag": 168,
+          "extended_precision_processing_flag": 169,
+          "high_precision_offsets_enabled_flag": 37,
+          "implicit_rdpcm_enabled_flag": 167,
+          "init_qp_minus26": 53,
+          "intra_smoothing_disabled_flag": 170,
+          "lists_modification_present_flag": 69,
+          "log2_diff_max_min_luma_coding_block_size": 9,
+          "log2_diff_max_min_pcm_luma_coding_block_size": 14,
+          "log2_diff_max_min_transform_block_size": 11,
+          "log2_max_pic_order_cnt_lsb_minus4": 23,
+          "log2_max_transform_skip_block_size_minus2": 34,
+          "log2_min_luma_coding_block_size_minus3": 8,
+          "log2_min_pcm_luma_coding_block_size_minus3": 13,
+          "log2_min_transform_block_size_minus2": 10,
+          "log2_parallel_merge_level_minus2": 62,
+          "log2_sao_offset_scale_chroma": 36,
+          "log2_sao_offset_scale_luma": 35,
+          "long_term_ref_pics_present_flag": 25,
+          "loop_filter_across_slices_enabled_flag": 65,
+          "loop_filter_across_tiles_enabled_flag": 64,
+          "max_one_active_ref_layer_flag": 42,
+          "max_transform_hierarchy_depth_inter": 20,
+          "max_transform_hierarchy_depth_intra": 19,
+          "mv_hevc_enable": 38,
+          "nuh_layer_id": 39,
+          "num_extra_slice_header_bits": 63,
+          "num_long_term_ref_pics_sps": 26,
+          "num_ref_idx_l0_default_active_minus1": 67,
+          "num_ref_idx_l1_default_active_minus1": 68,
+          "num_short_term_ref_pic_sets": 24,
+          "num_tile_columns_minus1": 78,
+          "num_tile_rows_minus1": 79,
+          "output_flag_present_flag": 66,
+          "pcm_enabled_flag": 12,
+          "pcm_loop_filter_disabled_flag": 17,
+          "pcm_sample_bit_depth_chroma_minus1": 16,
+          "pcm_sample_bit_depth_luma_minus1": 15,
+          "persistent_rice_adaptation_enabled_flag": 171,
+          "pic_height_in_luma_samples": 4,
+          "pic_width_in_luma_samples": 0,
+          "poc_lsb_not_present_flag": 43,
+          "pps_beta_offset_div2": 74,
+          "pps_cb_qp_offset": 54,
+          "pps_cr_qp_offset": 55,
+          "pps_deblocking_filter_disabled_flag": 73,
+          "pps_range_extension_flag": 173,
+          "pps_slice_chroma_qp_offsets_present_flag": 71,
+          "pps_tc_offset_div2": 75,
+          "reserved1": 46,
+          "reserved2": 190,
+          "reserved3": 192,
+          "reserved4": 436,
+          "row_height_minus1": 122,
+          "sample_adaptive_offset_enabled_flag": 28,
+          "scaling_list_enable_flag": 29,
+          "separate_colour_plane_flag": 22,
+          "sign_data_hiding_enabled_flag": 50,
+          "slice_segment_header_extension_present_flag": 49,
+          "sps_range_extension_flag": 164,
+          "sps_temporal_mvp_enabled_flag": 27,
+          "strong_intra_smoothing_enabled_flag": 18,
+          "tiles_enabled_flag": 76,
+          "transform_skip_context_enabled_flag": 166,
+          "transform_skip_enabled_flag": 59,
+          "transform_skip_rotation_enabled_flag": 165,
+          "transquant_bypass_enabled_flag": 60,
+          "uniform_spacing_flag": 77,
+          "weighted_bipred_flag": 58,
+          "weighted_pred_flag": 57
         },
         "CUVIDPARSERDISPINFO": {
           "picture_index": 0,
@@ -189,21 +1580,1215 @@
           "payload": 8,
           "payload_size": 4,
           "timestamp": 16
+        },
+        "CUVIDVP9PICPARAMS": {
+          "AltRefIdx": 10,
+          "GoldenRefIdx": 9,
+          "LastRefIdx": 8,
+          "activeRefIdx": 152,
+          "bitDepthMinus8Chroma": 21,
+          "bitDepthMinus8Luma": 20,
+          "colorSpace": 11,
+          "frameTagSize": 196,
+          "height": 4,
+          "log2_tile_columns": 25,
+          "log2_tile_rows": 26,
+          "loopFilterLevel": 22,
+          "loopFilterSharpness": 23,
+          "mbModeLfDelta": 188,
+          "mbRefLfDelta": 172,
+          "mb_segment_tree_probs": 124,
+          "mcomp_filter_type": 168,
+          "modeRefLfEnabled": 24,
+          "offsetToDctParts": 200,
+          "qpChAc": 148,
+          "qpChDc": 144,
+          "qpYAc": 136,
+          "qpYDc": 140,
+          "refFrameSignBias": 16,
+          "reserved128Bits": 204,
+          "reserved16Bits": 14,
+          "reservedSegment16Bits": 134,
+          "resetFrameContext": 164,
+          "segmentFeatureData": 60,
+          "segmentFeatureEnable": 28,
+          "segment_pred_probs": 131,
+          "width": 0
         }
       },
       "sizes": {
         "CUDA_MEMCPY2D": 128,
+        "CUVIDAV1PICPARAMS": 1024,
         "CUVIDDECODECAPS": 88,
         "CUVIDDECODECREATEINFO": 112,
         "CUVIDEOFORMAT": 64,
+        "CUVIDH264DPBENTRY": 28,
+        "CUVIDH264MVCEXT": 140,
+        "CUVIDH264PICPARAMS": 984,
+        "CUVIDH264SVCEXT": 48,
+        "CUVIDHEVCPICPARAMS": 1484,
         "CUVIDPARSERDISPINFO": 24,
         "CUVIDPARSERPARAMS": 136,
         "CUVIDPICPARAMS": 4280,
         "CUVIDPROCPARAMS": 264,
-        "CUVIDSOURCEDATAPACKET": 24
+        "CUVIDSOURCEDATAPACKET": 24,
+        "CUVIDVP9PICPARAMS": 220
       }
     },
     "lp64": {
+      "bits": {
+        "CUVIDAV1PICPARAMS": {
+          "SkipModeFrame0": {
+            "at": 301,
+            "bytes": "0f"
+          },
+          "SkipModeFrame1": {
+            "at": 301,
+            "bytes": "f0"
+          },
+          "allow_high_precision_mv": {
+            "at": 21,
+            "bytes": "04"
+          },
+          "allow_intrabc": {
+            "at": 21,
+            "bytes": "02"
+          },
+          "allow_screen_content_tools": {
+            "at": 20,
+            "bytes": "10"
+          },
+          "allow_warped_motion": {
+            "at": 23,
+            "bytes": "04"
+          },
+          "apply_grain": {
+            "at": 764,
+            "bytes": "01"
+          },
+          "ar_coeff_lag": {
+            "at": 764,
+            "bytes": "60"
+          },
+          "ar_coeff_shift_minus6": {
+            "at": 764,
+            "bytes": "8001"
+          },
+          "bit_depth_minus8": {
+            "at": 16,
+            "bytes": "8007"
+          },
+          "cdef_bits": {
+            "at": 284,
+            "bytes": "0c"
+          },
+          "cdef_damping_minus_3": {
+            "at": 284,
+            "bytes": "03"
+          },
+          "chroma_scaling_from_luma": {
+            "at": 764,
+            "bytes": "10"
+          },
+          "clip_to_restricted_range": {
+            "at": 765,
+            "bytes": "08"
+          },
+          "coded_denom": {
+            "at": 20,
+            "bytes": "c001"
+          },
+          "coded_lossless": {
+            "at": 22,
+            "bytes": "20"
+          },
+          "context_update_tile_id": {
+            "at": 26,
+            "bytes": "ffff"
+          },
+          "delta_lf_multi": {
+            "at": 463,
+            "bytes": "20"
+          },
+          "delta_lf_present": {
+            "at": 463,
+            "bytes": "04"
+          },
+          "delta_lf_res": {
+            "at": 463,
+            "bytes": "18"
+          },
+          "delta_q_present": {
+            "at": 22,
+            "bytes": "02"
+          },
+          "delta_q_res": {
+            "at": 22,
+            "bytes": "0c"
+          },
+          "disable_cdf_update": {
+            "at": 20,
+            "bytes": "08"
+          },
+          "disable_frame_end_update_cdf": {
+            "at": 22,
+            "bytes": "01"
+          },
+          "enable_cdef": {
+            "at": 18,
+            "bytes": "40"
+          },
+          "enable_dual_filter": {
+            "at": 17,
+            "bytes": "80"
+          },
+          "enable_fgs": {
+            "at": 19,
+            "bytes": "01"
+          },
+          "enable_filter_intra": {
+            "at": 17,
+            "bytes": "08"
+          },
+          "enable_interintra_compound": {
+            "at": 17,
+            "bytes": "20"
+          },
+          "enable_intra_edge_filter": {
+            "at": 17,
+            "bytes": "10"
+          },
+          "enable_jnt_comp": {
+            "at": 18,
+            "bytes": "10"
+          },
+          "enable_masked_compound": {
+            "at": 17,
+            "bytes": "40"
+          },
+          "enable_order_hint": {
+            "at": 18,
+            "bytes": "01"
+          },
+          "enable_restoration": {
+            "at": 18,
+            "bytes": "80"
+          },
+          "enable_superres": {
+            "at": 18,
+            "bytes": "20"
+          },
+          "force_integer_mv": {
+            "at": 20,
+            "bytes": "20"
+          },
+          "frame_type": {
+            "at": 20,
+            "bytes": "03"
+          },
+          "global_motion[0].invalid": {
+            "at": 568,
+            "bytes": "01"
+          },
+          "global_motion[0].reserved5Bits": {
+            "at": 568,
+            "bytes": "f8"
+          },
+          "global_motion[0].wmtype": {
+            "at": 568,
+            "bytes": "06"
+          },
+          "grain_scale_shift": {
+            "at": 765,
+            "bytes": "06"
+          },
+          "interp_filter": {
+            "at": 21,
+            "bytes": "38"
+          },
+          "loop_filter_delta_enabled": {
+            "at": 463,
+            "bytes": "01"
+          },
+          "loop_filter_delta_update": {
+            "at": 463,
+            "bytes": "02"
+          },
+          "mono_chrome": {
+            "at": 16,
+            "bytes": "40"
+          },
+          "num_tile_cols": {
+            "at": 24,
+            "bytes": "ff"
+          },
+          "num_tile_rows": {
+            "at": 25,
+            "bytes": "ff"
+          },
+          "order_hint_bits_minus1": {
+            "at": 18,
+            "bytes": "0e"
+          },
+          "overlap_flag": {
+            "at": 764,
+            "bytes": "02"
+          },
+          "profile": {
+            "at": 16,
+            "bytes": "07"
+          },
+          "reduced_tx_set": {
+            "at": 23,
+            "bytes": "08"
+          },
+          "reference_mode": {
+            "at": 23,
+            "bytes": "02"
+          },
+          "reserved0_7bits": {
+            "at": 19,
+            "bytes": "fe"
+          },
+          "reserved1_3bits": {
+            "at": 23,
+            "bytes": "e0"
+          },
+          "reserved2_4bits": {
+            "at": 284,
+            "bytes": "f0"
+          },
+          "reserved3_4bits": {
+            "at": 311,
+            "bytes": "f0"
+          },
+          "reserved4_2bits": {
+            "at": 463,
+            "bytes": "c0"
+          },
+          "reserved6_4bits": {
+            "at": 765,
+            "bytes": "f0"
+          },
+          "scaling_shift_minus8": {
+            "at": 764,
+            "bytes": "0c"
+          },
+          "segmentation_enabled": {
+            "at": 311,
+            "bytes": "01"
+          },
+          "segmentation_temporal_update": {
+            "at": 311,
+            "bytes": "08"
+          },
+          "segmentation_update_data": {
+            "at": 311,
+            "bytes": "04"
+          },
+          "segmentation_update_map": {
+            "at": 311,
+            "bytes": "02"
+          },
+          "show_frame": {
+            "at": 20,
+            "bytes": "04"
+          },
+          "skip_mode": {
+            "at": 23,
+            "bytes": "10"
+          },
+          "spatial_layer_id": {
+            "at": 479,
+            "bytes": "f0"
+          },
+          "subsampling_x": {
+            "at": 16,
+            "bytes": "10"
+          },
+          "subsampling_y": {
+            "at": 16,
+            "bytes": "20"
+          },
+          "switchable_motion_mode": {
+            "at": 21,
+            "bytes": "40"
+          },
+          "temporal_layer_id": {
+            "at": 479,
+            "bytes": "0f"
+          },
+          "tx_mode": {
+            "at": 22,
+            "bytes": "8001"
+          },
+          "use_128x128_superblock": {
+            "at": 16,
+            "bytes": "08"
+          },
+          "use_ref_frame_mvs": {
+            "at": 21,
+            "bytes": "80"
+          },
+          "use_superres": {
+            "at": 22,
+            "bytes": "40"
+          },
+          "using_qmatrix": {
+            "at": 22,
+            "bytes": "10"
+          }
+        },
+        "CUVIDEOFORMAT": {
+          "video_signal_description.reserved_zero_bits": {
+            "at": 56,
+            "bytes": "f0"
+          },
+          "video_signal_description.video_format": {
+            "at": 56,
+            "bytes": "07"
+          },
+          "video_signal_description.video_full_range_flag": {
+            "at": 56,
+            "bytes": "08"
+          }
+        },
+        "CUVIDH264PICPARAMS": {
+          "Reserved1": {
+            "at": 792,
+            "bytes": "fcffffff"
+          },
+          "mb_adaptive_frame_field_flag": {
+            "at": 792,
+            "bytes": "03"
+          }
+        },
+        "CUVIDPARSERPARAMS": {
+          "bAnnexb": {
+            "at": 20,
+            "bytes": "01"
+          },
+          "bMemoryOptimize": {
+            "at": 20,
+            "bytes": "02"
+          },
+          "uReserved": {
+            "at": 20,
+            "bytes": "fcffffff"
+          }
+        },
+        "CUVIDPICPARAMS": {
+          "CodecSpecific.av1.SkipModeFrame0": {
+            "at": 485,
+            "bytes": "0f"
+          },
+          "CodecSpecific.av1.SkipModeFrame1": {
+            "at": 485,
+            "bytes": "f0"
+          },
+          "CodecSpecific.av1.allow_high_precision_mv": {
+            "at": 205,
+            "bytes": "04"
+          },
+          "CodecSpecific.av1.allow_intrabc": {
+            "at": 205,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.allow_screen_content_tools": {
+            "at": 204,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.allow_warped_motion": {
+            "at": 207,
+            "bytes": "04"
+          },
+          "CodecSpecific.av1.apply_grain": {
+            "at": 948,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.ar_coeff_lag": {
+            "at": 948,
+            "bytes": "60"
+          },
+          "CodecSpecific.av1.ar_coeff_shift_minus6": {
+            "at": 948,
+            "bytes": "8001"
+          },
+          "CodecSpecific.av1.bit_depth_minus8": {
+            "at": 200,
+            "bytes": "8007"
+          },
+          "CodecSpecific.av1.cdef_bits": {
+            "at": 468,
+            "bytes": "0c"
+          },
+          "CodecSpecific.av1.cdef_damping_minus_3": {
+            "at": 468,
+            "bytes": "03"
+          },
+          "CodecSpecific.av1.chroma_scaling_from_luma": {
+            "at": 948,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.clip_to_restricted_range": {
+            "at": 949,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.coded_denom": {
+            "at": 204,
+            "bytes": "c001"
+          },
+          "CodecSpecific.av1.coded_lossless": {
+            "at": 206,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.context_update_tile_id": {
+            "at": 210,
+            "bytes": "ffff"
+          },
+          "CodecSpecific.av1.delta_lf_multi": {
+            "at": 647,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.delta_lf_present": {
+            "at": 647,
+            "bytes": "04"
+          },
+          "CodecSpecific.av1.delta_lf_res": {
+            "at": 647,
+            "bytes": "18"
+          },
+          "CodecSpecific.av1.delta_q_present": {
+            "at": 206,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.delta_q_res": {
+            "at": 206,
+            "bytes": "0c"
+          },
+          "CodecSpecific.av1.disable_cdf_update": {
+            "at": 204,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.disable_frame_end_update_cdf": {
+            "at": 206,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.enable_cdef": {
+            "at": 202,
+            "bytes": "40"
+          },
+          "CodecSpecific.av1.enable_dual_filter": {
+            "at": 201,
+            "bytes": "80"
+          },
+          "CodecSpecific.av1.enable_fgs": {
+            "at": 203,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.enable_filter_intra": {
+            "at": 201,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.enable_interintra_compound": {
+            "at": 201,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.enable_intra_edge_filter": {
+            "at": 201,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.enable_jnt_comp": {
+            "at": 202,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.enable_masked_compound": {
+            "at": 201,
+            "bytes": "40"
+          },
+          "CodecSpecific.av1.enable_order_hint": {
+            "at": 202,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.enable_restoration": {
+            "at": 202,
+            "bytes": "80"
+          },
+          "CodecSpecific.av1.enable_superres": {
+            "at": 202,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.force_integer_mv": {
+            "at": 204,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.frame_type": {
+            "at": 204,
+            "bytes": "03"
+          },
+          "CodecSpecific.av1.global_motion[0].invalid": {
+            "at": 752,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.global_motion[0].reserved5Bits": {
+            "at": 752,
+            "bytes": "f8"
+          },
+          "CodecSpecific.av1.global_motion[0].wmtype": {
+            "at": 752,
+            "bytes": "06"
+          },
+          "CodecSpecific.av1.grain_scale_shift": {
+            "at": 949,
+            "bytes": "06"
+          },
+          "CodecSpecific.av1.interp_filter": {
+            "at": 205,
+            "bytes": "38"
+          },
+          "CodecSpecific.av1.loop_filter_delta_enabled": {
+            "at": 647,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.loop_filter_delta_update": {
+            "at": 647,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.mono_chrome": {
+            "at": 200,
+            "bytes": "40"
+          },
+          "CodecSpecific.av1.num_tile_cols": {
+            "at": 208,
+            "bytes": "ff"
+          },
+          "CodecSpecific.av1.num_tile_rows": {
+            "at": 209,
+            "bytes": "ff"
+          },
+          "CodecSpecific.av1.order_hint_bits_minus1": {
+            "at": 202,
+            "bytes": "0e"
+          },
+          "CodecSpecific.av1.overlap_flag": {
+            "at": 948,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.profile": {
+            "at": 200,
+            "bytes": "07"
+          },
+          "CodecSpecific.av1.reduced_tx_set": {
+            "at": 207,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.reference_mode": {
+            "at": 207,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.reserved0_7bits": {
+            "at": 203,
+            "bytes": "fe"
+          },
+          "CodecSpecific.av1.reserved1_3bits": {
+            "at": 207,
+            "bytes": "e0"
+          },
+          "CodecSpecific.av1.reserved2_4bits": {
+            "at": 468,
+            "bytes": "f0"
+          },
+          "CodecSpecific.av1.reserved3_4bits": {
+            "at": 495,
+            "bytes": "f0"
+          },
+          "CodecSpecific.av1.reserved4_2bits": {
+            "at": 647,
+            "bytes": "c0"
+          },
+          "CodecSpecific.av1.reserved6_4bits": {
+            "at": 949,
+            "bytes": "f0"
+          },
+          "CodecSpecific.av1.scaling_shift_minus8": {
+            "at": 948,
+            "bytes": "0c"
+          },
+          "CodecSpecific.av1.segmentation_enabled": {
+            "at": 495,
+            "bytes": "01"
+          },
+          "CodecSpecific.av1.segmentation_temporal_update": {
+            "at": 495,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.segmentation_update_data": {
+            "at": 495,
+            "bytes": "04"
+          },
+          "CodecSpecific.av1.segmentation_update_map": {
+            "at": 495,
+            "bytes": "02"
+          },
+          "CodecSpecific.av1.show_frame": {
+            "at": 204,
+            "bytes": "04"
+          },
+          "CodecSpecific.av1.skip_mode": {
+            "at": 207,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.spatial_layer_id": {
+            "at": 663,
+            "bytes": "f0"
+          },
+          "CodecSpecific.av1.subsampling_x": {
+            "at": 200,
+            "bytes": "10"
+          },
+          "CodecSpecific.av1.subsampling_y": {
+            "at": 200,
+            "bytes": "20"
+          },
+          "CodecSpecific.av1.switchable_motion_mode": {
+            "at": 205,
+            "bytes": "40"
+          },
+          "CodecSpecific.av1.temporal_layer_id": {
+            "at": 663,
+            "bytes": "0f"
+          },
+          "CodecSpecific.av1.tx_mode": {
+            "at": 206,
+            "bytes": "8001"
+          },
+          "CodecSpecific.av1.use_128x128_superblock": {
+            "at": 200,
+            "bytes": "08"
+          },
+          "CodecSpecific.av1.use_ref_frame_mvs": {
+            "at": 205,
+            "bytes": "80"
+          },
+          "CodecSpecific.av1.use_superres": {
+            "at": 206,
+            "bytes": "40"
+          },
+          "CodecSpecific.av1.using_qmatrix": {
+            "at": 206,
+            "bytes": "10"
+          },
+          "CodecSpecific.h264.Reserved1": {
+            "at": 976,
+            "bytes": "fcffffff"
+          },
+          "CodecSpecific.h264.mb_adaptive_frame_field_flag": {
+            "at": 976,
+            "bytes": "03"
+          },
+          "CodecSpecific.vp9.allow_high_precision_mv": {
+            "at": 197,
+            "bytes": "10"
+          },
+          "CodecSpecific.vp9.errorResilient": {
+            "at": 196,
+            "bytes": "80"
+          },
+          "CodecSpecific.vp9.frameContextIdx": {
+            "at": 196,
+            "bytes": "18"
+          },
+          "CodecSpecific.vp9.frameParallelDecoding": {
+            "at": 197,
+            "bytes": "01"
+          },
+          "CodecSpecific.vp9.frameType": {
+            "at": 196,
+            "bytes": "20"
+          },
+          "CodecSpecific.vp9.intraOnly": {
+            "at": 197,
+            "bytes": "08"
+          },
+          "CodecSpecific.vp9.profile": {
+            "at": 196,
+            "bytes": "07"
+          },
+          "CodecSpecific.vp9.refreshEntropyProbs": {
+            "at": 197,
+            "bytes": "20"
+          },
+          "CodecSpecific.vp9.reserved2Bits": {
+            "at": 197,
+            "bytes": "c0"
+          },
+          "CodecSpecific.vp9.reserved4Bits": {
+            "at": 211,
+            "bytes": "f0"
+          },
+          "CodecSpecific.vp9.segmentEnabled": {
+            "at": 211,
+            "bytes": "01"
+          },
+          "CodecSpecific.vp9.segmentFeatureMode": {
+            "at": 211,
+            "bytes": "08"
+          },
+          "CodecSpecific.vp9.segmentMapTemporalUpdate": {
+            "at": 211,
+            "bytes": "04"
+          },
+          "CodecSpecific.vp9.segmentMapUpdate": {
+            "at": 211,
+            "bytes": "02"
+          },
+          "CodecSpecific.vp9.showFrame": {
+            "at": 196,
+            "bytes": "40"
+          },
+          "CodecSpecific.vp9.subSamplingX": {
+            "at": 197,
+            "bytes": "02"
+          },
+          "CodecSpecific.vp9.subSamplingY": {
+            "at": 197,
+            "bytes": "04"
+          }
+        },
+        "CUVIDVP9PICPARAMS": {
+          "allow_high_precision_mv": {
+            "at": 13,
+            "bytes": "10"
+          },
+          "errorResilient": {
+            "at": 12,
+            "bytes": "80"
+          },
+          "frameContextIdx": {
+            "at": 12,
+            "bytes": "18"
+          },
+          "frameParallelDecoding": {
+            "at": 13,
+            "bytes": "01"
+          },
+          "frameType": {
+            "at": 12,
+            "bytes": "20"
+          },
+          "intraOnly": {
+            "at": 13,
+            "bytes": "08"
+          },
+          "profile": {
+            "at": 12,
+            "bytes": "07"
+          },
+          "refreshEntropyProbs": {
+            "at": 13,
+            "bytes": "20"
+          },
+          "reserved2Bits": {
+            "at": 13,
+            "bytes": "c0"
+          },
+          "reserved4Bits": {
+            "at": 27,
+            "bytes": "f0"
+          },
+          "segmentEnabled": {
+            "at": 27,
+            "bytes": "01"
+          },
+          "segmentFeatureMode": {
+            "at": 27,
+            "bytes": "08"
+          },
+          "segmentMapTemporalUpdate": {
+            "at": 27,
+            "bytes": "04"
+          },
+          "segmentMapUpdate": {
+            "at": 27,
+            "bytes": "02"
+          },
+          "showFrame": {
+            "at": 12,
+            "bytes": "40"
+          },
+          "subSamplingX": {
+            "at": 13,
+            "bytes": "02"
+          },
+          "subSamplingY": {
+            "at": 13,
+            "bytes": "04"
+          }
+        }
+      },
+      "nested": {
+        "CUVIDAV1PICPARAMS": {
+          "global_motion[0].reserved24Bits": 569,
+          "global_motion[0].wmmat": 572,
+          "ref_frame[0].height": 488,
+          "ref_frame[0].index": 492,
+          "ref_frame[0].reserved24Bits": 493,
+          "ref_frame[0].width": 484
+        },
+        "CUVIDDECODECREATEINFO": {
+          "display_area.bottom": 86,
+          "display_area.left": 80,
+          "display_area.right": 84,
+          "display_area.top": 82,
+          "target_rect.bottom": 134,
+          "target_rect.left": 128,
+          "target_rect.right": 132,
+          "target_rect.top": 130
+        },
+        "CUVIDEOFORMAT": {
+          "display_area.bottom": 36,
+          "display_area.left": 24,
+          "display_area.right": 32,
+          "display_area.top": 28,
+          "display_aspect_ratio.x": 48,
+          "display_aspect_ratio.y": 52,
+          "frame_rate.denominator": 8,
+          "frame_rate.numerator": 4,
+          "video_signal_description.color_primaries": 57,
+          "video_signal_description.matrix_coefficients": 59,
+          "video_signal_description.transfer_characteristics": 58
+        },
+        "CUVIDH264PICPARAMS": {
+          "dpb[0].FieldOrderCnt": 124,
+          "dpb[0].FrameIdx": 108,
+          "dpb[0].PicIdx": 104,
+          "dpb[0].is_long_term": 112,
+          "dpb[0].not_existing": 116,
+          "dpb[0].used_for_reference": 120,
+          "fmo.pMb2SliceGroupMap": 784,
+          "fmo.slice_group_map_addr": 784,
+          "mvcext.InterViewRefsL0": 852,
+          "mvcext.InterViewRefsL1": 916,
+          "mvcext.MVCReserved8Bits": 851,
+          "mvcext.inter_view_flag": 848,
+          "mvcext.num_inter_view_refs_l0": 849,
+          "mvcext.num_inter_view_refs_l1": 850,
+          "mvcext.num_views_minus1": 840,
+          "mvcext.view_id": 844,
+          "svcext.DPBEntryValidFlag": 848,
+          "svcext.DQId": 842,
+          "svcext.DQIdMax": 843,
+          "svcext.Reserved16Bits": 870,
+          "svcext.Reserved8BitsA": 860,
+          "svcext.Reserved8BitsB": 861,
+          "svcext.adaptive_tcoeff_level_prediction_flag": 852,
+          "svcext.bRefBaseLayer": 880,
+          "svcext.chroma_phase_x_plus1_flag": 854,
+          "svcext.chroma_phase_y_plus1": 855,
+          "svcext.constrained_intra_resampling_flag": 857,
+          "svcext.disable_inter_layer_deblocking_filter_idc": 844,
+          "svcext.extended_spatial_scalability_idc": 851,
+          "svcext.inter_layer_deblocking_filter_control_present_flag": 850,
+          "svcext.inter_layer_slice_alpha_c0_offset_div2": 846,
+          "svcext.inter_layer_slice_beta_offset_div2": 847,
+          "svcext.level_idc": 841,
+          "svcext.pNextLayer": 872,
+          "svcext.profile_idc": 840,
+          "svcext.ref_layer_chroma_phase_x_plus1_flag": 858,
+          "svcext.ref_layer_chroma_phase_y_plus1": 845,
+          "svcext.scaled_ref_layer_bottom_offset": 868,
+          "svcext.scaled_ref_layer_left_offset": 862,
+          "svcext.scaled_ref_layer_right_offset": 866,
+          "svcext.scaled_ref_layer_top_offset": 864,
+          "svcext.slice_header_restriction_flag": 853,
+          "svcext.store_ref_base_pic_flag": 859,
+          "svcext.tcoeff_level_prediction_flag": 856
+        },
+        "CUVIDPICPARAMS": {
+          "CodecSpecific.CodecReserved": 184,
+          "CodecSpecific.av1.ar_coeffs_cb": 1072,
+          "CodecSpecific.av1.ar_coeffs_cr": 1122,
+          "CodecSpecific.av1.ar_coeffs_y": 1024,
+          "CodecSpecific.av1.base_qindex": 486,
+          "CodecSpecific.av1.cb_luma_mult": 1173,
+          "CodecSpecific.av1.cb_mult": 1172,
+          "CodecSpecific.av1.cb_offset": 1174,
+          "CodecSpecific.av1.cdef_uv_strength": 477,
+          "CodecSpecific.av1.cdef_y_strength": 469,
+          "CodecSpecific.av1.cr_luma_mult": 1177,
+          "CodecSpecific.av1.cr_mult": 1176,
+          "CodecSpecific.av1.cr_offset": 1178,
+          "CodecSpecific.av1.decodePicIdx": 196,
+          "CodecSpecific.av1.frame_offset": 192,
+          "CodecSpecific.av1.global_motion[0].reserved24Bits": 753,
+          "CodecSpecific.av1.global_motion[0].wmmat": 756,
+          "CodecSpecific.av1.height": 188,
+          "CodecSpecific.av1.loop_filter_level": 632,
+          "CodecSpecific.av1.loop_filter_level_u": 634,
+          "CodecSpecific.av1.loop_filter_level_v": 635,
+          "CodecSpecific.av1.loop_filter_mode_deltas": 645,
+          "CodecSpecific.av1.loop_filter_ref_deltas": 637,
+          "CodecSpecific.av1.loop_filter_sharpness": 636,
+          "CodecSpecific.av1.lr_type": 651,
+          "CodecSpecific.av1.lr_unit_size": 648,
+          "CodecSpecific.av1.num_cb_points": 979,
+          "CodecSpecific.av1.num_cr_points": 1000,
+          "CodecSpecific.av1.num_y_points": 950,
+          "CodecSpecific.av1.primary_ref_frame": 654,
+          "CodecSpecific.av1.qm_u": 493,
+          "CodecSpecific.av1.qm_v": 494,
+          "CodecSpecific.av1.qm_y": 492,
+          "CodecSpecific.av1.qp_u_ac_delta_q": 490,
+          "CodecSpecific.av1.qp_u_dc_delta_q": 488,
+          "CodecSpecific.av1.qp_v_ac_delta_q": 491,
+          "CodecSpecific.av1.qp_v_dc_delta_q": 489,
+          "CodecSpecific.av1.qp_y_dc_delta_q": 487,
+          "CodecSpecific.av1.random_seed": 1022,
+          "CodecSpecific.av1.ref_frame[0].height": 672,
+          "CodecSpecific.av1.ref_frame[0].index": 676,
+          "CodecSpecific.av1.ref_frame[0].reserved24Bits": 677,
+          "CodecSpecific.av1.ref_frame[0].width": 668,
+          "CodecSpecific.av1.ref_frame_map": 655,
+          "CodecSpecific.av1.reserved": 1180,
+          "CodecSpecific.av1.reserved5_32bits": 664,
+          "CodecSpecific.av1.reserved7_8bits": 1021,
+          "CodecSpecific.av1.scaling_points_cb": 980,
+          "CodecSpecific.av1.scaling_points_cr": 1001,
+          "CodecSpecific.av1.scaling_points_y": 951,
+          "CodecSpecific.av1.segmentation_feature_data": 496,
+          "CodecSpecific.av1.segmentation_feature_mask": 624,
+          "CodecSpecific.av1.tile_heights": 340,
+          "CodecSpecific.av1.tile_widths": 212,
+          "CodecSpecific.av1.width": 184,
+          "CodecSpecific.h264.CurrFieldOrderCnt": 280,
+          "CodecSpecific.h264.MbaffFrameFlag": 256,
+          "CodecSpecific.h264.Reserved": 980,
+          "CodecSpecific.h264.WeightScale4x4": 736,
+          "CodecSpecific.h264.WeightScale8x8": 832,
+          "CodecSpecific.h264.bit_depth_chroma_minus8": 214,
+          "CodecSpecific.h264.bit_depth_luma_minus8": 213,
+          "CodecSpecific.h264.chroma_qp_index_offset": 264,
+          "CodecSpecific.h264.constrained_intra_pred_flag": 260,
+          "CodecSpecific.h264.deblocking_filter_control_present_flag": 244,
+          "CodecSpecific.h264.delta_pic_order_always_zero_flag": 196,
+          "CodecSpecific.h264.direct_8x8_inference_flag": 204,
+          "CodecSpecific.h264.dpb[0].FieldOrderCnt": 308,
+          "CodecSpecific.h264.dpb[0].FrameIdx": 292,
+          "CodecSpecific.h264.dpb[0].PicIdx": 288,
+          "CodecSpecific.h264.dpb[0].is_long_term": 296,
+          "CodecSpecific.h264.dpb[0].not_existing": 300,
+          "CodecSpecific.h264.dpb[0].used_for_reference": 304,
+          "CodecSpecific.h264.entropy_coding_mode_flag": 216,
+          "CodecSpecific.h264.fmo.pMb2SliceGroupMap": 968,
+          "CodecSpecific.h264.fmo.slice_group_map_addr": 968,
+          "CodecSpecific.h264.fmo_aso_enable": 960,
+          "CodecSpecific.h264.frame_mbs_only_flag": 200,
+          "CodecSpecific.h264.frame_num": 276,
+          "CodecSpecific.h264.log2_max_frame_num_minus4": 184,
+          "CodecSpecific.h264.log2_max_pic_order_cnt_lsb_minus4": 192,
+          "CodecSpecific.h264.mvcext.InterViewRefsL0": 1036,
+          "CodecSpecific.h264.mvcext.InterViewRefsL1": 1100,
+          "CodecSpecific.h264.mvcext.MVCReserved8Bits": 1035,
+          "CodecSpecific.h264.mvcext.inter_view_flag": 1032,
+          "CodecSpecific.h264.mvcext.num_inter_view_refs_l0": 1033,
+          "CodecSpecific.h264.mvcext.num_inter_view_refs_l1": 1034,
+          "CodecSpecific.h264.mvcext.num_views_minus1": 1024,
+          "CodecSpecific.h264.mvcext.view_id": 1028,
+          "CodecSpecific.h264.num_ref_frames": 208,
+          "CodecSpecific.h264.num_ref_idx_l0_active_minus1": 224,
+          "CodecSpecific.h264.num_ref_idx_l1_active_minus1": 228,
+          "CodecSpecific.h264.num_slice_groups_minus1": 961,
+          "CodecSpecific.h264.pic_init_qp_minus26": 240,
+          "CodecSpecific.h264.pic_init_qs_minus26": 963,
+          "CodecSpecific.h264.pic_order_cnt_type": 188,
+          "CodecSpecific.h264.pic_order_present_flag": 220,
+          "CodecSpecific.h264.qpprime_y_zero_transform_bypass_flag": 215,
+          "CodecSpecific.h264.redundant_pic_cnt_present_flag": 248,
+          "CodecSpecific.h264.ref_pic_flag": 272,
+          "CodecSpecific.h264.residual_colour_transform_flag": 212,
+          "CodecSpecific.h264.second_chroma_qp_index_offset": 268,
+          "CodecSpecific.h264.slice_group_change_rate_minus1": 964,
+          "CodecSpecific.h264.slice_group_map_type": 962,
+          "CodecSpecific.h264.svcext.DPBEntryValidFlag": 1032,
+          "CodecSpecific.h264.svcext.DQId": 1026,
+          "CodecSpecific.h264.svcext.DQIdMax": 1027,
+          "CodecSpecific.h264.svcext.Reserved16Bits": 1054,
+          "CodecSpecific.h264.svcext.Reserved8BitsA": 1044,
+          "CodecSpecific.h264.svcext.Reserved8BitsB": 1045,
+          "CodecSpecific.h264.svcext.adaptive_tcoeff_level_prediction_flag": 1036,
+          "CodecSpecific.h264.svcext.bRefBaseLayer": 1064,
+          "CodecSpecific.h264.svcext.chroma_phase_x_plus1_flag": 1038,
+          "CodecSpecific.h264.svcext.chroma_phase_y_plus1": 1039,
+          "CodecSpecific.h264.svcext.constrained_intra_resampling_flag": 1041,
+          "CodecSpecific.h264.svcext.disable_inter_layer_deblocking_filter_idc": 1028,
+          "CodecSpecific.h264.svcext.extended_spatial_scalability_idc": 1035,
+          "CodecSpecific.h264.svcext.inter_layer_deblocking_filter_control_present_flag": 1034,
+          "CodecSpecific.h264.svcext.inter_layer_slice_alpha_c0_offset_div2": 1030,
+          "CodecSpecific.h264.svcext.inter_layer_slice_beta_offset_div2": 1031,
+          "CodecSpecific.h264.svcext.level_idc": 1025,
+          "CodecSpecific.h264.svcext.pNextLayer": 1056,
+          "CodecSpecific.h264.svcext.profile_idc": 1024,
+          "CodecSpecific.h264.svcext.ref_layer_chroma_phase_x_plus1_flag": 1042,
+          "CodecSpecific.h264.svcext.ref_layer_chroma_phase_y_plus1": 1029,
+          "CodecSpecific.h264.svcext.scaled_ref_layer_bottom_offset": 1052,
+          "CodecSpecific.h264.svcext.scaled_ref_layer_left_offset": 1046,
+          "CodecSpecific.h264.svcext.scaled_ref_layer_right_offset": 1050,
+          "CodecSpecific.h264.svcext.scaled_ref_layer_top_offset": 1048,
+          "CodecSpecific.h264.svcext.slice_header_restriction_flag": 1037,
+          "CodecSpecific.h264.svcext.store_ref_base_pic_flag": 1043,
+          "CodecSpecific.h264.svcext.tcoeff_level_prediction_flag": 1040,
+          "CodecSpecific.h264.transform_8x8_mode_flag": 252,
+          "CodecSpecific.h264.weighted_bipred_idc": 236,
+          "CodecSpecific.h264.weighted_pred_flag": 232,
+          "CodecSpecific.hevc.CurrPicOrderCntVal": 432,
+          "CodecSpecific.hevc.IdrPicFlag": 215,
+          "CodecSpecific.hevc.IrapPicFlag": 214,
+          "CodecSpecific.hevc.IsLongTerm": 564,
+          "CodecSpecific.hevc.NumActiveRefLayerPics0": 228,
+          "CodecSpecific.hevc.NumActiveRefLayerPics1": 229,
+          "CodecSpecific.hevc.NumBitsForShortTermRPSInSlice": 408,
+          "CodecSpecific.hevc.NumDeltaPocsOfRefRpsIdx": 412,
+          "CodecSpecific.hevc.NumDirectRefLayers": 225,
+          "CodecSpecific.hevc.NumPocLtCurr": 428,
+          "CodecSpecific.hevc.NumPocStCurrAfter": 424,
+          "CodecSpecific.hevc.NumPocStCurrBefore": 420,
+          "CodecSpecific.hevc.NumPocTotalCurr": 416,
+          "CodecSpecific.hevc.PicOrderCntVal": 500,
+          "CodecSpecific.hevc.RefPicIdx": 436,
+          "CodecSpecific.hevc.RefPicSetInterLayer0": 604,
+          "CodecSpecific.hevc.RefPicSetInterLayer1": 612,
+          "CodecSpecific.hevc.RefPicSetLtCurr": 596,
+          "CodecSpecific.hevc.RefPicSetStCurrAfter": 588,
+          "CodecSpecific.hevc.RefPicSetStCurrBefore": 580,
+          "CodecSpecific.hevc.ScalingList16x16": 1148,
+          "CodecSpecific.hevc.ScalingList32x32": 1532,
+          "CodecSpecific.hevc.ScalingList4x4": 668,
+          "CodecSpecific.hevc.ScalingList8x8": 764,
+          "CodecSpecific.hevc.ScalingListDCCoeff16x16": 1660,
+          "CodecSpecific.hevc.ScalingListDCCoeff32x32": 1666,
+          "CodecSpecific.hevc.amp_enabled_flag": 205,
+          "CodecSpecific.hevc.bit_depth_chroma_minus8": 217,
+          "CodecSpecific.hevc.bit_depth_luma_minus8": 216,
+          "CodecSpecific.hevc.cabac_bypass_alignment_enabled_flag": 356,
+          "CodecSpecific.hevc.cabac_init_present_flag": 254,
+          "CodecSpecific.hevc.cb_qp_offset_list": 362,
+          "CodecSpecific.hevc.chroma_qp_offset_list_enabled_flag": 359,
+          "CodecSpecific.hevc.chroma_qp_offset_list_len_minus1": 361,
+          "CodecSpecific.hevc.column_width_minus1": 264,
+          "CodecSpecific.hevc.constrained_intra_pred_flag": 240,
+          "CodecSpecific.hevc.cr_qp_offset_list": 368,
+          "CodecSpecific.hevc.cross_component_prediction_enabled_flag": 358,
+          "CodecSpecific.hevc.cu_qp_delta_enabled_flag": 235,
+          "CodecSpecific.hevc.deblocking_filter_override_enabled_flag": 256,
+          "CodecSpecific.hevc.default_ref_layers_active_flag": 224,
+          "CodecSpecific.hevc.dependent_slice_segments_enabled_flag": 232,
+          "CodecSpecific.hevc.diff_cu_chroma_qp_offset_depth": 360,
+          "CodecSpecific.hevc.diff_cu_qp_delta_depth": 236,
+          "CodecSpecific.hevc.entropy_coding_sync_enabled_flag": 245,
+          "CodecSpecific.hevc.explicit_rdpcm_enabled_flag": 352,
+          "CodecSpecific.hevc.extended_precision_processing_flag": 353,
+          "CodecSpecific.hevc.high_precision_offsets_enabled_flag": 221,
+          "CodecSpecific.hevc.implicit_rdpcm_enabled_flag": 351,
+          "CodecSpecific.hevc.init_qp_minus26": 237,
+          "CodecSpecific.hevc.intra_smoothing_disabled_flag": 354,
+          "CodecSpecific.hevc.lists_modification_present_flag": 253,
+          "CodecSpecific.hevc.log2_diff_max_min_luma_coding_block_size": 193,
+          "CodecSpecific.hevc.log2_diff_max_min_pcm_luma_coding_block_size": 198,
+          "CodecSpecific.hevc.log2_diff_max_min_transform_block_size": 195,
+          "CodecSpecific.hevc.log2_max_pic_order_cnt_lsb_minus4": 207,
+          "CodecSpecific.hevc.log2_max_transform_skip_block_size_minus2": 218,
+          "CodecSpecific.hevc.log2_min_luma_coding_block_size_minus3": 192,
+          "CodecSpecific.hevc.log2_min_pcm_luma_coding_block_size_minus3": 197,
+          "CodecSpecific.hevc.log2_min_transform_block_size_minus2": 194,
+          "CodecSpecific.hevc.log2_parallel_merge_level_minus2": 246,
+          "CodecSpecific.hevc.log2_sao_offset_scale_chroma": 220,
+          "CodecSpecific.hevc.log2_sao_offset_scale_luma": 219,
+          "CodecSpecific.hevc.long_term_ref_pics_present_flag": 209,
+          "CodecSpecific.hevc.loop_filter_across_slices_enabled_flag": 249,
+          "CodecSpecific.hevc.loop_filter_across_tiles_enabled_flag": 248,
+          "CodecSpecific.hevc.max_one_active_ref_layer_flag": 226,
+          "CodecSpecific.hevc.max_transform_hierarchy_depth_inter": 204,
+          "CodecSpecific.hevc.max_transform_hierarchy_depth_intra": 203,
+          "CodecSpecific.hevc.mv_hevc_enable": 222,
+          "CodecSpecific.hevc.nuh_layer_id": 223,
+          "CodecSpecific.hevc.num_extra_slice_header_bits": 247,
+          "CodecSpecific.hevc.num_long_term_ref_pics_sps": 210,
+          "CodecSpecific.hevc.num_ref_idx_l0_default_active_minus1": 251,
+          "CodecSpecific.hevc.num_ref_idx_l1_default_active_minus1": 252,
+          "CodecSpecific.hevc.num_short_term_ref_pic_sets": 208,
+          "CodecSpecific.hevc.num_tile_columns_minus1": 262,
+          "CodecSpecific.hevc.num_tile_rows_minus1": 263,
+          "CodecSpecific.hevc.output_flag_present_flag": 250,
+          "CodecSpecific.hevc.pcm_enabled_flag": 196,
+          "CodecSpecific.hevc.pcm_loop_filter_disabled_flag": 201,
+          "CodecSpecific.hevc.pcm_sample_bit_depth_chroma_minus1": 200,
+          "CodecSpecific.hevc.pcm_sample_bit_depth_luma_minus1": 199,
+          "CodecSpecific.hevc.persistent_rice_adaptation_enabled_flag": 355,
+          "CodecSpecific.hevc.pic_height_in_luma_samples": 188,
+          "CodecSpecific.hevc.pic_width_in_luma_samples": 184,
+          "CodecSpecific.hevc.poc_lsb_not_present_flag": 227,
+          "CodecSpecific.hevc.pps_beta_offset_div2": 258,
+          "CodecSpecific.hevc.pps_cb_qp_offset": 238,
+          "CodecSpecific.hevc.pps_cr_qp_offset": 239,
+          "CodecSpecific.hevc.pps_deblocking_filter_disabled_flag": 257,
+          "CodecSpecific.hevc.pps_range_extension_flag": 357,
+          "CodecSpecific.hevc.pps_slice_chroma_qp_offsets_present_flag": 255,
+          "CodecSpecific.hevc.pps_tc_offset_div2": 259,
+          "CodecSpecific.hevc.reserved1": 230,
+          "CodecSpecific.hevc.reserved2": 374,
+          "CodecSpecific.hevc.reserved3": 376,
+          "CodecSpecific.hevc.reserved4": 620,
+          "CodecSpecific.hevc.row_height_minus1": 306,
+          "CodecSpecific.hevc.sample_adaptive_offset_enabled_flag": 212,
+          "CodecSpecific.hevc.scaling_list_enable_flag": 213,
+          "CodecSpecific.hevc.separate_colour_plane_flag": 206,
+          "CodecSpecific.hevc.sign_data_hiding_enabled_flag": 234,
+          "CodecSpecific.hevc.slice_segment_header_extension_present_flag": 233,
+          "CodecSpecific.hevc.sps_range_extension_flag": 348,
+          "CodecSpecific.hevc.sps_temporal_mvp_enabled_flag": 211,
+          "CodecSpecific.hevc.strong_intra_smoothing_enabled_flag": 202,
+          "CodecSpecific.hevc.tiles_enabled_flag": 260,
+          "CodecSpecific.hevc.transform_skip_context_enabled_flag": 350,
+          "CodecSpecific.hevc.transform_skip_enabled_flag": 243,
+          "CodecSpecific.hevc.transform_skip_rotation_enabled_flag": 349,
+          "CodecSpecific.hevc.transquant_bypass_enabled_flag": 244,
+          "CodecSpecific.hevc.uniform_spacing_flag": 261,
+          "CodecSpecific.hevc.weighted_bipred_flag": 242,
+          "CodecSpecific.hevc.weighted_pred_flag": 241,
+          "CodecSpecific.vp9.AltRefIdx": 194,
+          "CodecSpecific.vp9.GoldenRefIdx": 193,
+          "CodecSpecific.vp9.LastRefIdx": 192,
+          "CodecSpecific.vp9.activeRefIdx": 336,
+          "CodecSpecific.vp9.bitDepthMinus8Chroma": 205,
+          "CodecSpecific.vp9.bitDepthMinus8Luma": 204,
+          "CodecSpecific.vp9.colorSpace": 195,
+          "CodecSpecific.vp9.frameTagSize": 380,
+          "CodecSpecific.vp9.height": 188,
+          "CodecSpecific.vp9.log2_tile_columns": 209,
+          "CodecSpecific.vp9.log2_tile_rows": 210,
+          "CodecSpecific.vp9.loopFilterLevel": 206,
+          "CodecSpecific.vp9.loopFilterSharpness": 207,
+          "CodecSpecific.vp9.mbModeLfDelta": 372,
+          "CodecSpecific.vp9.mbRefLfDelta": 356,
+          "CodecSpecific.vp9.mb_segment_tree_probs": 308,
+          "CodecSpecific.vp9.mcomp_filter_type": 352,
+          "CodecSpecific.vp9.modeRefLfEnabled": 208,
+          "CodecSpecific.vp9.offsetToDctParts": 384,
+          "CodecSpecific.vp9.qpChAc": 332,
+          "CodecSpecific.vp9.qpChDc": 328,
+          "CodecSpecific.vp9.qpYAc": 320,
+          "CodecSpecific.vp9.qpYDc": 324,
+          "CodecSpecific.vp9.refFrameSignBias": 200,
+          "CodecSpecific.vp9.reserved128Bits": 388,
+          "CodecSpecific.vp9.reserved16Bits": 198,
+          "CodecSpecific.vp9.reservedSegment16Bits": 318,
+          "CodecSpecific.vp9.resetFrameContext": 348,
+          "CodecSpecific.vp9.segmentFeatureData": 244,
+          "CodecSpecific.vp9.segmentFeatureEnable": 212,
+          "CodecSpecific.vp9.segment_pred_probs": 315,
+          "CodecSpecific.vp9.width": 184
+        }
+      },
       "offsets": {
         "CUDA_MEMCPY2D": {
           "Height": 120,
@@ -222,6 +2807,58 @@
           "srcPitch": 48,
           "srcXInBytes": 0,
           "srcY": 8
+        },
+        "CUVIDAV1PICPARAMS": {
+          "ar_coeffs_cb": 888,
+          "ar_coeffs_cr": 938,
+          "ar_coeffs_y": 840,
+          "base_qindex": 302,
+          "cb_luma_mult": 989,
+          "cb_mult": 988,
+          "cb_offset": 990,
+          "cdef_uv_strength": 293,
+          "cdef_y_strength": 285,
+          "cr_luma_mult": 993,
+          "cr_mult": 992,
+          "cr_offset": 994,
+          "decodePicIdx": 12,
+          "frame_offset": 8,
+          "global_motion": 568,
+          "height": 4,
+          "loop_filter_level": 448,
+          "loop_filter_level_u": 450,
+          "loop_filter_level_v": 451,
+          "loop_filter_mode_deltas": 461,
+          "loop_filter_ref_deltas": 453,
+          "loop_filter_sharpness": 452,
+          "lr_type": 467,
+          "lr_unit_size": 464,
+          "num_cb_points": 795,
+          "num_cr_points": 816,
+          "num_y_points": 766,
+          "primary_ref_frame": 470,
+          "qm_u": 309,
+          "qm_v": 310,
+          "qm_y": 308,
+          "qp_u_ac_delta_q": 306,
+          "qp_u_dc_delta_q": 304,
+          "qp_v_ac_delta_q": 307,
+          "qp_v_dc_delta_q": 305,
+          "qp_y_dc_delta_q": 303,
+          "random_seed": 838,
+          "ref_frame": 484,
+          "ref_frame_map": 471,
+          "reserved": 996,
+          "reserved5_32bits": 480,
+          "reserved7_8bits": 837,
+          "scaling_points_cb": 796,
+          "scaling_points_cr": 817,
+          "scaling_points_y": 767,
+          "segmentation_feature_data": 312,
+          "segmentation_feature_mask": 440,
+          "tile_heights": 156,
+          "tile_widths": 28,
+          "width": 0
         },
         "CUVIDDECODECAPS": {
           "bIsDecodeStatsSupported": 48,
@@ -252,17 +2889,9 @@
           "Reserved2": 152,
           "bitDepthMinus8": 40,
           "display_area": 80,
-          "display_area.bottom": 86,
-          "display_area.left": 80,
-          "display_area.right": 84,
-          "display_area.top": 82,
           "enableDecodeFeatures": 144,
           "enableHistogram": 136,
           "target_rect": 128,
-          "target_rect.bottom": 134,
-          "target_rect.left": 128,
-          "target_rect.right": 132,
-          "target_rect.top": 130,
           "ulCreationFlags": 32,
           "ulHeight": 8,
           "ulIntraDecodeOnly": 48,
@@ -284,23 +2913,217 @@
           "coded_height": 20,
           "coded_width": 16,
           "display_area": 24,
-          "display_area.bottom": 36,
-          "display_area.left": 24,
-          "display_area.right": 32,
-          "display_area.top": 28,
           "display_aspect_ratio": 48,
-          "display_aspect_ratio.x": 48,
-          "display_aspect_ratio.y": 52,
           "frame_rate": 4,
-          "frame_rate.denominator": 8,
-          "frame_rate.numerator": 4,
           "min_num_decode_surfaces": 15,
           "progressive_sequence": 12,
           "seqhdr_data_length": 60,
-          "video_signal_description": 56,
-          "video_signal_description.color_primaries": 57,
-          "video_signal_description.matrix_coefficients": 59,
-          "video_signal_description.transfer_characteristics": 58
+          "video_signal_description": 56
+        },
+        "CUVIDH264DPBENTRY": {
+          "FieldOrderCnt": 20,
+          "FrameIdx": 4,
+          "PicIdx": 0,
+          "is_long_term": 8,
+          "not_existing": 12,
+          "used_for_reference": 16
+        },
+        "CUVIDH264MVCEXT": {
+          "InterViewRefsL0": 12,
+          "InterViewRefsL1": 76,
+          "MVCReserved8Bits": 11,
+          "inter_view_flag": 8,
+          "num_inter_view_refs_l0": 9,
+          "num_inter_view_refs_l1": 10,
+          "num_views_minus1": 0,
+          "view_id": 4
+        },
+        "CUVIDH264PICPARAMS": {
+          "CurrFieldOrderCnt": 96,
+          "MbaffFrameFlag": 72,
+          "Reserved": 796,
+          "WeightScale4x4": 552,
+          "WeightScale8x8": 648,
+          "bit_depth_chroma_minus8": 30,
+          "bit_depth_luma_minus8": 29,
+          "chroma_qp_index_offset": 80,
+          "constrained_intra_pred_flag": 76,
+          "deblocking_filter_control_present_flag": 60,
+          "delta_pic_order_always_zero_flag": 12,
+          "direct_8x8_inference_flag": 20,
+          "dpb": 104,
+          "entropy_coding_mode_flag": 32,
+          "fmo": 784,
+          "fmo_aso_enable": 776,
+          "frame_mbs_only_flag": 16,
+          "frame_num": 92,
+          "log2_max_frame_num_minus4": 0,
+          "log2_max_pic_order_cnt_lsb_minus4": 8,
+          "num_ref_frames": 24,
+          "num_ref_idx_l0_active_minus1": 40,
+          "num_ref_idx_l1_active_minus1": 44,
+          "num_slice_groups_minus1": 777,
+          "pic_init_qp_minus26": 56,
+          "pic_init_qs_minus26": 779,
+          "pic_order_cnt_type": 4,
+          "pic_order_present_flag": 36,
+          "qpprime_y_zero_transform_bypass_flag": 31,
+          "redundant_pic_cnt_present_flag": 64,
+          "ref_pic_flag": 88,
+          "residual_colour_transform_flag": 28,
+          "second_chroma_qp_index_offset": 84,
+          "slice_group_change_rate_minus1": 780,
+          "slice_group_map_type": 778,
+          "transform_8x8_mode_flag": 68,
+          "weighted_bipred_idc": 52,
+          "weighted_pred_flag": 48
+        },
+        "CUVIDH264SVCEXT": {
+          "DPBEntryValidFlag": 8,
+          "DQId": 2,
+          "DQIdMax": 3,
+          "Reserved16Bits": 30,
+          "Reserved8BitsA": 20,
+          "Reserved8BitsB": 21,
+          "adaptive_tcoeff_level_prediction_flag": 12,
+          "bRefBaseLayer": 40,
+          "chroma_phase_x_plus1_flag": 14,
+          "chroma_phase_y_plus1": 15,
+          "constrained_intra_resampling_flag": 17,
+          "disable_inter_layer_deblocking_filter_idc": 4,
+          "extended_spatial_scalability_idc": 11,
+          "inter_layer_deblocking_filter_control_present_flag": 10,
+          "inter_layer_slice_alpha_c0_offset_div2": 6,
+          "inter_layer_slice_beta_offset_div2": 7,
+          "level_idc": 1,
+          "pNextLayer": 32,
+          "profile_idc": 0,
+          "ref_layer_chroma_phase_x_plus1_flag": 18,
+          "ref_layer_chroma_phase_y_plus1": 5,
+          "scaled_ref_layer_bottom_offset": 28,
+          "scaled_ref_layer_left_offset": 22,
+          "scaled_ref_layer_right_offset": 26,
+          "scaled_ref_layer_top_offset": 24,
+          "slice_header_restriction_flag": 13,
+          "store_ref_base_pic_flag": 19,
+          "tcoeff_level_prediction_flag": 16
+        },
+        "CUVIDHEVCPICPARAMS": {
+          "CurrPicOrderCntVal": 248,
+          "IdrPicFlag": 31,
+          "IrapPicFlag": 30,
+          "IsLongTerm": 380,
+          "NumActiveRefLayerPics0": 44,
+          "NumActiveRefLayerPics1": 45,
+          "NumBitsForShortTermRPSInSlice": 224,
+          "NumDeltaPocsOfRefRpsIdx": 228,
+          "NumDirectRefLayers": 41,
+          "NumPocLtCurr": 244,
+          "NumPocStCurrAfter": 240,
+          "NumPocStCurrBefore": 236,
+          "NumPocTotalCurr": 232,
+          "PicOrderCntVal": 316,
+          "RefPicIdx": 252,
+          "RefPicSetInterLayer0": 420,
+          "RefPicSetInterLayer1": 428,
+          "RefPicSetLtCurr": 412,
+          "RefPicSetStCurrAfter": 404,
+          "RefPicSetStCurrBefore": 396,
+          "ScalingList16x16": 964,
+          "ScalingList32x32": 1348,
+          "ScalingList4x4": 484,
+          "ScalingList8x8": 580,
+          "ScalingListDCCoeff16x16": 1476,
+          "ScalingListDCCoeff32x32": 1482,
+          "amp_enabled_flag": 21,
+          "bit_depth_chroma_minus8": 33,
+          "bit_depth_luma_minus8": 32,
+          "cabac_bypass_alignment_enabled_flag": 172,
+          "cabac_init_present_flag": 70,
+          "cb_qp_offset_list": 178,
+          "chroma_qp_offset_list_enabled_flag": 175,
+          "chroma_qp_offset_list_len_minus1": 177,
+          "column_width_minus1": 80,
+          "constrained_intra_pred_flag": 56,
+          "cr_qp_offset_list": 184,
+          "cross_component_prediction_enabled_flag": 174,
+          "cu_qp_delta_enabled_flag": 51,
+          "deblocking_filter_override_enabled_flag": 72,
+          "default_ref_layers_active_flag": 40,
+          "dependent_slice_segments_enabled_flag": 48,
+          "diff_cu_chroma_qp_offset_depth": 176,
+          "diff_cu_qp_delta_depth": 52,
+          "entropy_coding_sync_enabled_flag": 61,
+          "explicit_rdpcm_enabled_flag": 168,
+          "extended_precision_processing_flag": 169,
+          "high_precision_offsets_enabled_flag": 37,
+          "implicit_rdpcm_enabled_flag": 167,
+          "init_qp_minus26": 53,
+          "intra_smoothing_disabled_flag": 170,
+          "lists_modification_present_flag": 69,
+          "log2_diff_max_min_luma_coding_block_size": 9,
+          "log2_diff_max_min_pcm_luma_coding_block_size": 14,
+          "log2_diff_max_min_transform_block_size": 11,
+          "log2_max_pic_order_cnt_lsb_minus4": 23,
+          "log2_max_transform_skip_block_size_minus2": 34,
+          "log2_min_luma_coding_block_size_minus3": 8,
+          "log2_min_pcm_luma_coding_block_size_minus3": 13,
+          "log2_min_transform_block_size_minus2": 10,
+          "log2_parallel_merge_level_minus2": 62,
+          "log2_sao_offset_scale_chroma": 36,
+          "log2_sao_offset_scale_luma": 35,
+          "long_term_ref_pics_present_flag": 25,
+          "loop_filter_across_slices_enabled_flag": 65,
+          "loop_filter_across_tiles_enabled_flag": 64,
+          "max_one_active_ref_layer_flag": 42,
+          "max_transform_hierarchy_depth_inter": 20,
+          "max_transform_hierarchy_depth_intra": 19,
+          "mv_hevc_enable": 38,
+          "nuh_layer_id": 39,
+          "num_extra_slice_header_bits": 63,
+          "num_long_term_ref_pics_sps": 26,
+          "num_ref_idx_l0_default_active_minus1": 67,
+          "num_ref_idx_l1_default_active_minus1": 68,
+          "num_short_term_ref_pic_sets": 24,
+          "num_tile_columns_minus1": 78,
+          "num_tile_rows_minus1": 79,
+          "output_flag_present_flag": 66,
+          "pcm_enabled_flag": 12,
+          "pcm_loop_filter_disabled_flag": 17,
+          "pcm_sample_bit_depth_chroma_minus1": 16,
+          "pcm_sample_bit_depth_luma_minus1": 15,
+          "persistent_rice_adaptation_enabled_flag": 171,
+          "pic_height_in_luma_samples": 4,
+          "pic_width_in_luma_samples": 0,
+          "poc_lsb_not_present_flag": 43,
+          "pps_beta_offset_div2": 74,
+          "pps_cb_qp_offset": 54,
+          "pps_cr_qp_offset": 55,
+          "pps_deblocking_filter_disabled_flag": 73,
+          "pps_range_extension_flag": 173,
+          "pps_slice_chroma_qp_offsets_present_flag": 71,
+          "pps_tc_offset_div2": 75,
+          "reserved1": 46,
+          "reserved2": 190,
+          "reserved3": 192,
+          "reserved4": 436,
+          "row_height_minus1": 122,
+          "sample_adaptive_offset_enabled_flag": 28,
+          "scaling_list_enable_flag": 29,
+          "separate_colour_plane_flag": 22,
+          "sign_data_hiding_enabled_flag": 50,
+          "slice_segment_header_extension_present_flag": 49,
+          "sps_range_extension_flag": 164,
+          "sps_temporal_mvp_enabled_flag": 27,
+          "strong_intra_smoothing_enabled_flag": 18,
+          "tiles_enabled_flag": 76,
+          "transform_skip_context_enabled_flag": 166,
+          "transform_skip_enabled_flag": 59,
+          "transform_skip_rotation_enabled_flag": 165,
+          "transquant_bypass_enabled_flag": 60,
+          "uniform_spacing_flag": 77,
+          "weighted_bipred_flag": 58,
+          "weighted_pred_flag": 57
         },
         "CUVIDPARSERDISPINFO": {
           "picture_index": 0,
@@ -365,18 +3188,59 @@
           "payload": 16,
           "payload_size": 8,
           "timestamp": 24
+        },
+        "CUVIDVP9PICPARAMS": {
+          "AltRefIdx": 10,
+          "GoldenRefIdx": 9,
+          "LastRefIdx": 8,
+          "activeRefIdx": 152,
+          "bitDepthMinus8Chroma": 21,
+          "bitDepthMinus8Luma": 20,
+          "colorSpace": 11,
+          "frameTagSize": 196,
+          "height": 4,
+          "log2_tile_columns": 25,
+          "log2_tile_rows": 26,
+          "loopFilterLevel": 22,
+          "loopFilterSharpness": 23,
+          "mbModeLfDelta": 188,
+          "mbRefLfDelta": 172,
+          "mb_segment_tree_probs": 124,
+          "mcomp_filter_type": 168,
+          "modeRefLfEnabled": 24,
+          "offsetToDctParts": 200,
+          "qpChAc": 148,
+          "qpChDc": 144,
+          "qpYAc": 136,
+          "qpYDc": 140,
+          "refFrameSignBias": 16,
+          "reserved128Bits": 204,
+          "reserved16Bits": 14,
+          "reservedSegment16Bits": 134,
+          "resetFrameContext": 164,
+          "segmentFeatureData": 60,
+          "segmentFeatureEnable": 28,
+          "segment_pred_probs": 131,
+          "width": 0
         }
       },
       "sizes": {
         "CUDA_MEMCPY2D": 128,
+        "CUVIDAV1PICPARAMS": 1024,
         "CUVIDDECODECAPS": 88,
         "CUVIDDECODECREATEINFO": 176,
         "CUVIDEOFORMAT": 64,
+        "CUVIDH264DPBENTRY": 28,
+        "CUVIDH264MVCEXT": 140,
+        "CUVIDH264PICPARAMS": 984,
+        "CUVIDH264SVCEXT": 48,
+        "CUVIDHEVCPICPARAMS": 1484,
         "CUVIDPARSERDISPINFO": 24,
         "CUVIDPARSERPARAMS": 136,
         "CUVIDPICPARAMS": 4280,
         "CUVIDPROCPARAMS": 264,
-        "CUVIDSOURCEDATAPACKET": 32
+        "CUVIDSOURCEDATAPACKET": 32,
+        "CUVIDVP9PICPARAMS": 220
       }
     }
   },
