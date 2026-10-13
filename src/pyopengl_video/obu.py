@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Iterable, Iterator
 
+from pyopengl_video import container
 from pyopengl_video.vaapi.bits import leb128, read_leb128
 from pyopengl_video.vaapi.h264 import StreamError
 
@@ -29,6 +30,12 @@ FRAME = 6
 REDUNDANT_FRAME_HEADER = 7
 TILE_LIST = 8
 PADDING = 15
+
+
+class Cursor(container.Cursor):
+    """The bytes of a temporal unit read in turn; raises :class:`StreamError`."""
+
+    error = StreamError
 
 
 @dataclasses.dataclass(frozen=True)
@@ -65,33 +72,31 @@ def split(data: bytes) -> Iterator[Obu]:
     a sample may. Raises :class:`~pyopengl_video.vaapi.h264.StreamError` for a
     unit that is cut short or whose header has the forbidden bit set.
     """
-    position = 0
-    end = len(data)
-    while position < end:
-        start = position
-        header = data[position]
+    cursor = Cursor(data, 'a temporal unit')
+    while cursor.remaining:
+        start = cursor.position
+        header = cursor.u8()
         if header & 0x80:
             raise StreamError(f'the OBU at byte {start} has its forbidden bit set')
         has_extension = bool(header & 0x04)
-        position += 1
         temporal_id = spatial_id = 0
         if has_extension:
-            if position >= end:
+            if not cursor.remaining:
                 raise StreamError(f'the OBU at byte {start} ends inside its header')
-            temporal_id, spatial_id = data[position] >> 5, (data[position] >> 3) & 3
-            position += 1
+            layers = cursor.u8()
+            temporal_id, spatial_id = layers >> 5, (layers >> 3) & 3
         if header & 0x02:
-            size, used = read_leb128(data, position)
-            position += used
+            size, used = read_leb128(data, cursor.position)
+            cursor.skip(used)
         else:
-            size = end - position
-        if position + size > end:
+            size = cursor.remaining
+        if size > cursor.remaining:
             raise StreamError(
-                f'the OBU at byte {start} states {size} bytes and {end - position} remain')
-        yield Obu(kind=(header >> 3) & 0xF, payload=bytes(data[position:position + size]),
+                f'the OBU at byte {start} states {size} bytes and {cursor.remaining} remain')
+        payload = bytes(cursor.take(size))
+        yield Obu(kind=(header >> 3) & 0xF, payload=payload,
                   temporal_id=temporal_id, spatial_id=spatial_id,
-                  has_extension=has_extension, raw=bytes(data[start:position + size]))
-        position += size
+                  has_extension=has_extension, raw=bytes(data[start:cursor.position]))
 
 
 def join(units: Iterable[Obu]) -> bytes:

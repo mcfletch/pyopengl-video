@@ -32,17 +32,24 @@ ISO/IEC 14496-15, ``av1C`` the AV1 Codec ISO Media File Format Binding and
 """
 from __future__ import annotations
 
+import array
+import bisect
 import dataclasses
 import functools
+import itertools
+import logging
+import math
 import struct
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from pyopengl_video import codecs, obu
+from pyopengl_video import bounds, codecs, container, obu
 from pyopengl_video.decoder import Sample
 from pyopengl_video.encoder import Encoder, Packet
 from pyopengl_video.vaapi import av1_parse, hevc_parse
+
+log = logging.getLogger(__name__)
 
 #: NAL unit types that belong in the sample description rather than in a sample.
 NAL_SPS = 7
@@ -72,6 +79,32 @@ AV1C_OBUS = 4
 
 #: The unity matrix every video track carries, in 16.16 and 2.30 fixed point.
 UNITY_MATRIX = (0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000)
+
+#: The largest file offset and the largest time a signed 64-bit field holds.
+LARGEST_OFFSET = LARGEST_TIME = (1 << 63) - 1
+
+#: The range of a composition offset: a signed 32-bit field of ``ctts``.
+OFFSET_RANGE = (-(1 << 31), (1 << 31) - 1)
+
+#: How far a packet's timestamp may fall behind the latest one written, and how
+#: far from zero the first may be, in the track's timescale. A composition
+#: offset is the first timestamp plus how far reordering moved the sample, so
+#: holding each to this keeps their sum inside :data:`OFFSET_RANGE`.
+REORDER_LIMIT = 1 << 30
+
+
+class MP4Error(container.ContainerError):
+    """A file is not an MP4 this reader can read, or breaks the box syntax.
+
+    An :class:`MP4Writer` raises it for a size, a timescale or a timestamp the
+    file has no field wide enough for.
+    """
+
+
+class Cursor(container.Cursor):
+    """The fields of an MP4 box, which are big-endian; raises :class:`MP4Error`."""
+
+    error = MP4Error
 
 
 def split_annexb(stream: bytes) -> Iterator[bytes]:
@@ -147,6 +180,9 @@ class SampleDescription:
     codec = ''
     #: the sample entry's four-character code, and the brand ``ftyp`` lists
     code = ''
+    #: how many times the configuration has changed. A writer builds the entry
+    #: again after each change, while the packet that made it can be refused.
+    revision = 0
 
     def __init__(self, headers: bytes = b'') -> None:
         self.configure(headers)
@@ -163,7 +199,12 @@ class SampleDescription:
         return ''
 
     def entry(self, width: int, height: int) -> bytes:
-        """The sample entry box."""
+        """The sample entry box.
+
+        Raises :class:`MP4Error` or
+        :class:`~pyopengl_video.vaapi.h264.StreamError` for a configuration
+        no entry can be made from.
+        """
         raise NotImplementedError
 
 
@@ -188,8 +229,9 @@ class _NalDescription(SampleDescription):
 
     def configure(self, headers: bytes) -> None:
         for unit in split_annexb(headers):
-            if self.kind(unit) in self.sets:
-                self.units.setdefault(self.kind(unit), unit)
+            if self.kind(unit) in self.sets and self.kind(unit) not in self.units:
+                self.units[self.kind(unit)] = unit
+                self.revision += 1
 
     def store(self, data: bytes) -> bytes:
         sample = bytearray()
@@ -199,6 +241,7 @@ class _NalDescription(SampleDescription):
                 if kind not in self._from_stream:
                     self.units[kind] = unit
                     self._from_stream.add(kind)
+                    self.revision += 1
             elif kind != self.delimiter:
                 sample += struct.pack('>I', len(unit)) + unit
         return bytes(sample)
@@ -221,6 +264,9 @@ class AVCDescription(_NalDescription):
 
     def entry(self, width: int, height: int) -> bytes:
         sps, pps = self.units[NAL_SPS], self.units[NAL_PPS]
+        if len(sps) < 4:
+            raise MP4Error(f'a sequence parameter set of {len(sps)} bytes has no '
+                           'profile and level for the avcC record to state')
         record = box(
             'avcC',
             bytes([1, sps[1], sps[2], sps[3], 0xfc | (LENGTH_PREFIX - 1), 0xe0 | 1]),
@@ -283,6 +329,7 @@ class AV1Description(SampleDescription):
 
     def configure(self, headers: bytes) -> None:
         self.sequence_header = obu.sequence_header(headers)
+        self.revision += 1
 
     def store(self, data: bytes) -> bytes:
         if not self._from_stream:
@@ -290,6 +337,7 @@ class AV1Description(SampleDescription):
             if found:
                 self.sequence_header = found
                 self._from_stream = True
+                self.revision += 1
         return obu.without(data, obu.TEMPORAL_DELIMITER, obu.PADDING)
 
     def missing(self) -> str:
@@ -350,6 +398,111 @@ DESCRIPTIONS: dict[str, type[SampleDescription]] = {
 }
 
 
+class SampleTimes:
+    """The timestamps and durations of a track's samples, in decoding order.
+
+    timestamps/durations -- as the packets gave them, one of each a sample
+
+    The sample tables state a duration in 32 bits and the distance from a
+    sample's decode time to its display time in 32 signed bits, with decode
+    times counted from zero. :meth:`add` refuses a packet whose times those
+    fields could not state, so every packet it has taken is one the tables
+    can describe.
+    """
+
+    def __init__(self) -> None:
+        self.timestamps: list[int] = []
+        self.durations: list[int] = []
+        self._seen: set[int] = set()
+        self._latest = 0
+        #: a timestamp has repeated, so decode times are sums of `durations`
+        self._repeated = False
+        self._summed = 0
+        #: the least and greatest of each timestamp less the durations before it
+        self._summed_offsets: tuple[int, int] | None = None
+
+    def __len__(self) -> int:
+        return len(self.timestamps)
+
+    def add(self, timestamp: object, duration: object) -> None:
+        """Take one packet's times, or raise :class:`MP4Error` and take nothing."""
+        stamp = bounds.whole(timestamp, 'a timestamp', -REORDER_LIMIT, LARGEST_TIME, MP4Error)
+        lasts = bounds.whole(duration, 'a duration', 0, bounds.FIELD_32, MP4Error)
+        offset = stamp - self._summed
+        low, high = self._summed_offsets or (offset, offset)
+        offsets = (min(low, offset), max(high, offset))
+        repeated = self._repeated or stamp in self._seen
+        if repeated:
+            if offsets[0] < OFFSET_RANGE[0] or offsets[1] > OFFSET_RANGE[1]:
+                raise MP4Error(
+                    f'the timestamp {stamp} repeats, which puts decode times on '
+                    'the packets\' durations, and those leave a display time '
+                    f'{max(-offsets[0], offsets[1])} ticks from its decode time: '
+                    f'more than the {OFFSET_RANGE[1]} a composition offset states')
+        elif not self.timestamps:
+            if stamp >= REORDER_LIMIT:
+                raise MP4Error(
+                    f'the first timestamp is {stamp}, and a track\'s decode times '
+                    f'start at zero: the first must be under {REORDER_LIMIT} ticks, '
+                    'so count timestamps from the start of the recording')
+        elif stamp < self._latest - REORDER_LIMIT:
+            raise MP4Error(
+                f'the timestamp {stamp} is {self._latest - stamp} ticks behind the '
+                f'latest, {self._latest}; a picture may be at most {REORDER_LIMIT} behind')
+        elif stamp > self._latest + bounds.FIELD_32:
+            raise MP4Error(
+                f'the timestamp {stamp} is {stamp - self._latest} ticks after the '
+                f'one before it; a sample lasts at most {bounds.FIELD_32}')
+        self._latest = max(self._latest, stamp) if self.timestamps else stamp
+        self.timestamps.append(stamp)
+        self.durations.append(lasts)
+        self._seen.add(stamp)
+        self._repeated = repeated
+        self._summed += lasts
+        self._summed_offsets = offsets
+
+    def sample_durations(self) -> list[int]:
+        """Each sample's duration, in decode order.
+
+        A sample lasts until the next display time: the n-th decode time is
+        the n-th timestamp in display order, so decode times stay on the
+        caller's timestamps rather than on a sum of rounded frame durations.
+        The last sample keeps the duration its packet gave. Timestamps that
+        repeat say nothing about how long a sample lasts, and then the
+        packets' own durations are used.
+        """
+        if self._repeated:
+            return list(self.durations)
+        shown = sorted(self.timestamps)
+        return [later - earlier for earlier, later in itertools.pairwise(shown)
+                ] + self.durations[-1:]
+
+    def composition_offsets(self, durations: list[int]) -> list[int]:
+        """How far each sample's display time is from its decode time.
+
+        Samples are stored in decode order and a packet's timestamp is its
+        display time, so the two part company as soon as an encoder reorders
+        pictures. Decode time is the running total of ``durations``.
+        """
+        decode_times = itertools.accumulate(durations, initial=0)
+        return [timestamp - decode_time for timestamp, decode_time
+                in zip(self.timestamps, decode_times, strict=False)]
+
+
+def _header_times(duration: int, *between: int) -> tuple[int, bytes]:
+    """A header box's version, and its fields from the creation time to the duration.
+
+    between -- the 32-bit fields the box has between its modification time
+        and its duration
+
+    Version 1 states the times in 64 bits, and is used for a duration 32 bits
+    do not hold.
+    """
+    if duration > bounds.FIELD_32:
+        return 1, struct.pack(f'>QQ{len(between)}IQ', 0, 0, *between, duration)
+    return 0, struct.pack(f'>II{len(between)}II', 0, 0, *between, duration)
+
+
 class MP4Writer:
     """Collects packets from an encoder into a playable MP4 file.
 
@@ -357,8 +510,9 @@ class MP4Writer:
     encoder -- take the codec, frame size, timescale and configuration from
         this encoder; give the keyword arguments instead when the packets come
         from somewhere else
-    width/height -- frame size in pixels
-    timescale -- units of a second that packet timestamps are counted in
+    width/height -- frame size in pixels, each from 1 to 65535
+    timescale -- units of a second that packet timestamps are counted in,
+        from 1 to 2**32 - 1
     codec -- ``'h264'``, ``'hevc'``, ``'av1'`` or ``'vp9'``; H.264 when neither
         this nor an encoder says
     parameter_sets -- for H.264, ``(sps, pps)`` as raw NAL units
@@ -370,6 +524,13 @@ class MP4Writer:
 
     description -- the track's :class:`SampleDescription`, which holds the
         configuration the file will state
+
+    Raises :class:`MP4Error` for a size or a timescale outside those ranges,
+    before the file is created.
+
+    As a context manager the movie is closed when the block ends. Where the
+    block ends in an exception, what was written before it is finished as a
+    movie and the exception goes on; a failure to finish is logged.
     """
 
     #: Units of a second the movie header counts in. The track keeps the
@@ -396,32 +557,52 @@ class MP4Writer:
         if parameter_sets is not None:
             headers = b''.join(START_CODE + unit for unit in parameter_sets if unit)
         self.path = Path(path)
-        self.size = (int(width), int(height))
-        self.timescale = int(timescale)
+        # The sample entry states each in 16 bits.
+        self.size = bounds.frame_size(width, height, error=MP4Error,
+                                      most=(bounds.FIELD_16, bounds.FIELD_16))
+        self.timescale = bounds.whole(timescale, 'the timescale', 1, bounds.FIELD_32,
+                                      MP4Error)
         # What is here now was advertised rather than observed, and stands only
         # until the stream says otherwise.
         self.description = DESCRIPTIONS[self.codec](headers or b'')
+        self._described = -1
 
         self._sizes: list[int] = []
-        self._durations: list[int] = []
-        self._timestamps: list[int] = []
+        self._times = SampleTimes()
         self._sync: list[int] = []
         self._closed = False
 
         self._file = self.path.open('wb')  # noqa: OGC121 a recording written as it is captured, the way a camera writes one
-        header = box('ftyp', b'isom', struct.pack('>I', 512),
-                     b'isom', b'iso2', self.description.code.encode('ascii'), b'mp41')
-        self._file.write(header)
-        # A 64-bit `mdat`, so a long recording is not cut short at four
-        # gigabytes. The length is patched in once it is known.
-        self._mdat_position = self._file.tell()
-        self._file.write(struct.pack('>I4sQ', 1, b'mdat', 0))
-        self._data_position = self._file.tell()
+        try:
+            self._file.write(box(
+                'ftyp', b'isom', struct.pack('>I', 512),
+                b'isom', b'iso2', self.description.code.encode('ascii'), b'mp41'))
+            # A 64-bit `mdat`, so a long recording is not cut short at four
+            # gigabytes. The length is patched in once it is known.
+            self._mdat_position = self._file.tell()
+            self._file.write(struct.pack('>I4sQ', 1, b'mdat', 0))
+            self._data_position = self._file.tell()
+        except BaseException:
+            self._file.close()
+            raise
 
     # ------------------------------------------------------------- writing
 
     def write(self, packets: Packet | Iterable[Packet]) -> None:
-        """Add a packet, or everything in an iterable of them."""
+        """Add a packet, or everything in an iterable of them.
+
+        Raises :class:`MP4Error` for a packet the file cannot describe, and
+        writes nothing of it: the packets before it are still a movie.
+
+        - a timestamp or a duration that is not a whole number, or a duration
+          outside 0 to 2**32 - 1;
+        - a first timestamp of :data:`REORDER_LIMIT` (2**30) or more, or any
+          below ``-REORDER_LIMIT``: a track's decode times start at zero and a
+          display time is stated as a 32-bit offset from one;
+        - a timestamp more than :data:`REORDER_LIMIT` behind the latest, or
+          more than 2**32 - 1 after it;
+        - a configuration the sample entry cannot be made from.
+        """
         if isinstance(packets, Packet):
             packets = (packets,)
         for packet in packets:
@@ -431,98 +612,92 @@ class MP4Writer:
         if self._closed:
             raise ValueError('the movie is closed')
         sample = self.description.store(packet.data)
+        self._check_description()
         if not sample:
             return
+        if len(sample) > bounds.FIELD_32 or len(self._sizes) >= bounds.FIELD_32:
+            raise MP4Error(
+                f'a sample of {len(sample)} bytes after {len(self._sizes)} others: '
+                f'the sample size table counts each in 32 bits')
+        self._times.add(packet.timestamp, packet.duration)
         self._file.write(sample)
         if packet.keyframe:
             self._sync.append(len(self._sizes) + 1)      # sample numbers are one-based
         self._sizes.append(len(sample))
-        self._durations.append(int(packet.duration))
-        self._timestamps.append(int(packet.timestamp))
+
+    def _check_description(self) -> None:
+        """Build the sample entry whenever the configuration has changed.
+
+        A configuration no entry can be made from is then refused with the
+        packet that carried it.
+        """
+        if self._described != self.description.revision and not self.description.missing():
+            self.description.entry(*self.size)
+            self._described = self.description.revision
 
     # ------------------------------------------------------------- closing
 
     def close(self) -> None:
-        """Finish the file: patch the media length, then write the tables."""
+        """Finish the file: patch the media length, then write the tables.
+
+        Raises :class:`MP4Error` for a movie that cannot be finished. One with
+        no samples is removed, since the file holds nothing. One whose samples
+        came with no configuration for a decoder is left as it is, the samples
+        in an ``mdat`` box with no ``moov`` after it, which no player opens.
+        Safe to call twice.
+        """
         if self._closed:
             return
         self._closed = True
         try:
             if not self._sizes:
-                raise ValueError(f'{self.path} has no samples in it')
+                self._file.close()
+                self.path.unlink(missing_ok=True)
+                raise MP4Error(f'{self.path} has no samples in it, and was removed')
             missing = self.description.missing()
             if missing:
-                raise ValueError(
-                    f'{self.path} has no {missing}: give headers, or let the '
-                    'encoder repeat them in the stream')
+                raise MP4Error(
+                    f'{self.path} has no {missing}, so it has no index: give '
+                    'headers, or let the encoder repeat them in the stream')
+            moov = self._moov()
             end = self._file.tell()
             self._file.seek(self._mdat_position + 8)
             self._file.write(struct.pack('>Q', end - self._mdat_position))
             self._file.seek(end)
-            self._file.write(self._moov())
+            self._file.write(moov)
         finally:
             self._file.close()
 
     def __enter__(self) -> MP4Writer:
         return self
 
-    def __exit__(self, *exception: Any) -> None:
-        self.close()
+    def __exit__(self, kind: type[BaseException] | None, *exception: Any) -> None:
+        if kind is None:
+            self.close()
+            return
+        try:
+            self.close()
+        except Exception as error:  # noqa: BLE001 - the block's own exception is the one to raise
+            log.warning('%s was not finished: %s', self.path, error)
 
     # -------------------------------------------------------------- tables
 
     @property
     def duration(self) -> int:
         """The movie's length, in the track's timescale."""
-        return sum(self._sample_durations())
-
-    def _sample_durations(self) -> list[int]:
-        """Each sample's duration, in decode order.
-
-        A sample lasts until the next display time: the n-th decode time is
-        the n-th timestamp in display order, so decode times stay on the
-        caller's timestamps rather than on a sum of rounded frame durations.
-        The last sample keeps the duration its packet gave. Timestamps that do
-        not increase say nothing about how long a sample lasts, and then the
-        packets' own durations are used.
-        """
-        shown = sorted(self._timestamps)
-        gaps = [later - earlier for earlier, later in zip(shown[:-1], shown[1:], strict=True)]
-        if any(gap <= 0 for gap in gaps):
-            return list(self._durations)
-        return gaps + self._durations[-1:]
-
-    def _composition_offsets(self, durations: list[int]) -> list[int]:
-        """How far each sample's display time is from its decode time.
-
-        Samples are stored in decode order and a packet's timestamp is its
-        display time, so the two part company as soon as an encoder reorders
-        pictures. Decode time is the running total of ``durations``.
-        """
-        offsets = []
-        decode_time = 0
-        for timestamp, duration in zip(self._timestamps, durations, strict=True):
-            offsets.append(timestamp - decode_time)
-            decode_time += duration
-        return offsets
+        return sum(self._times.sample_durations())
 
     @staticmethod
     def _runs(values: Iterable[int]) -> list[tuple[int, int]]:
         """Run-length encode `values` as ``(count, value)`` pairs."""
-        runs: list[tuple[int, int]] = []
-        for value in values:
-            if runs and runs[-1][1] == value:
-                runs[-1] = (runs[-1][0] + 1, value)
-            else:
-                runs.append((1, value))
-        return runs
+        return [(len(list(run)), value) for value, run in itertools.groupby(values)]
 
     def _moov(self) -> bytes:
         """The movie box: everything about the track except its data."""
         movie_duration = round(self.duration * self.movie_timescale / self.timescale)
+        version, times = _header_times(movie_duration, self.movie_timescale)
         mvhd = full_box(
-            'mvhd', 0, 0,
-            struct.pack('>IIII', 0, 0, self.movie_timescale, movie_duration),
+            'mvhd', version, 0, times,
             struct.pack('>IHH', 0x00010000, 0x0100, 0),        # rate, volume, reserved
             struct.pack('>II', 0, 0),                          # reserved
             struct.pack('>9I', *UNITY_MATRIX),
@@ -533,9 +708,10 @@ class MP4Writer:
 
     def _trak(self, movie_duration: int) -> bytes:
         width, height = self.size
+        version, times = _header_times(movie_duration, 1, 0)   # track id, reserved
         tkhd = full_box(
-            'tkhd', 0, 0x000007,                               # enabled, in movie/preview
-            struct.pack('>IIIII', 0, 0, 1, 0, movie_duration),
+            'tkhd', version, 0x000007,                         # enabled, in movie/preview
+            times,
             struct.pack('>IIhhhh', 0, 0, 0, 0, 0, 0),          # reserved, layer, volume
             struct.pack('>9I', *UNITY_MATRIX),
             struct.pack('>II', width << 16, height << 16),
@@ -543,9 +719,9 @@ class MP4Writer:
         return box('trak', tkhd, self._mdia())
 
     def _mdia(self) -> bytes:
+        version, times = _header_times(self.duration, self.timescale)
         mdhd = full_box(
-            'mdhd', 0, 0,
-            struct.pack('>IIII', 0, 0, self.timescale, self.duration),
+            'mdhd', version, 0, times,
             struct.pack('>HH', 0x55c4, 0),                     # language 'und'
         )
         hdlr = full_box(
@@ -561,9 +737,9 @@ class MP4Writer:
         return box('minf', vmhd, dinf, self._stbl())
 
     def _stbl(self) -> bytes:
-        durations = self._sample_durations()
+        durations = self._times.sample_durations()
         tables = [self._stsd(), self._stts(durations)]
-        offsets = self._composition_offsets(durations)
+        offsets = self._times.composition_offsets(durations)
         if any(offsets):
             tables.append(self._ctts(offsets))
         if self._sync and len(self._sync) < len(self._sizes):
@@ -608,31 +784,30 @@ class MP4Writer:
 # =================================================================== reading
 
 
-class MP4Error(ValueError):
-    """A file is not an MP4 this reader can read, or breaks the box syntax."""
-
-
 def iter_boxes(data: bytes, start: int = 0,
                end: int | None = None) -> Iterator[tuple[str, bytes]]:
-    """Yield each box in `data[start:end]` as ``(type, payload)``."""
-    end = len(data) if end is None else end
-    position = start
-    while position + 8 <= end:
-        size, kind = struct.unpack_from('>I4s', data, position)
+    """Yield each box in `data[start:end]` as ``(type, payload)``.
+
+    Raises :class:`MP4Error` for a box that states more bytes than the span
+    holds, or fewer than its own header.
+    """
+    cursor = Cursor(data, 'a list of boxes', start, end)
+    while cursor.remaining >= 8:
+        position = cursor.position
+        size, kind = cursor.u32(), cursor.take(4)
         header = 8
         if size == 1:
-            if position + 16 > end:
-                raise MP4Error(f'a box at {position} is cut short')
-            size = struct.unpack_from('>Q', data, position + 8)[0]
+            if cursor.remaining < 8:
+                raise MP4Error(f'a {kind!r} box at {position} is cut short')
+            size = cursor.u64()
             header = 16
         elif size == 0:
-            size = end - position
-        if size < header or position + size > end:
+            size = cursor.end - position
+        if size < header or size - header > cursor.remaining:
             raise MP4Error(
                 f'a {kind!r} box at {position} claims {size} bytes, which the '
                 'space it is in cannot hold')
-        yield kind.decode('latin-1'), data[position + header:position + size]
-        position += size
+        yield kind.decode('latin-1'), cursor.take(size - header)
 
 
 def _children(payload: bytes) -> dict[str, bytes]:
@@ -643,44 +818,174 @@ def _children(payload: bytes) -> dict[str, bytes]:
     return found
 
 
-#: The most samples one track may declare. A table claims its length in a
-#: 32-bit field, and a constant-size ``stsz`` carries no entries to check it
-#: against; this is 77 hours at 60 frames a second.
-MAX_SAMPLES = 1 << 24
+def _full_box(boxes: dict[str, bytes], kind: str) -> tuple[int, Cursor]:
+    """Full box `kind` of `boxes`: its version, and a cursor past its flags."""
+    cursor = Cursor(boxes[kind], f'the {kind} box')
+    return cursor.u32() >> 24, cursor
 
 
-def _table(body: bytes, width: int, offset: int = 4) -> int:
-    """The entry count at the head of a table, checked against the bytes that hold it.
-
-    A box claims its entry count in a 32-bit field; allocating from the claim
-    rather than from the box lets a file of a few hundred bytes ask for gigabytes.
-    """
-    count = struct.unpack_from('>I', body)[0]
-    if offset + count * width > len(body):
-        raise MP4Error(f'a table claims {count} entries of {width} bytes in a box of '
-                       f'{len(body)} bytes')
-    return count
-
-
-def _full_box(payload: bytes) -> tuple[int, int, bytes]:
-    """A full box's version, flags and the rest of its payload."""
-    word = struct.unpack_from('>I', payload)[0]
-    return word >> 24, word & 0xFFFFFF, payload[4:]
-
-
-def _descriptor(data: bytes, position: int) -> tuple[int, int, int]:
-    """An MPEG-4 descriptor's tag, and where its body starts and ends."""
-    tag = data[position]
-    position += 1
+def _descriptor(cursor: Cursor) -> tuple[int, Cursor]:
+    """The next MPEG-4 descriptor in `cursor`: its tag, and a cursor over its body."""
+    tag = cursor.u8()
     length = 0
     for _ in range(4):
-        byte = data[position]
-        position += 1
+        byte = cursor.u8()
         length = (length << 7) | (byte & 0x7F)
         if not byte & 0x80:
             break
-    return tag, position, position + length
+    return tag, Cursor(cursor.take(length), f'descriptor {tag:#04x} of {cursor.what}')
 
+
+class SampleTable:
+    """A track's sample tables, read whole into arrays of a few bytes a sample.
+
+    table -- the boxes of the track's ``stbl``, by type
+    file_size -- the length of the file the samples are in
+
+    sizes -- each sample's size in bytes
+    offsets -- where each sample starts in the file
+    decode_times/durations -- each sample's decode time and duration
+    composition -- how far each sample's display time is from its decode time
+    sync -- the indices of the samples decoding can start at, ascending: a
+        list, or a range where every sample is one
+
+    Raises :class:`MP4Error` for a table that states more entries than its
+    box holds, for a constant sample size that places more bytes than the
+    file has, and for chunks or sync samples the track does not have. A run
+    that names more samples than the track has is read as far as the track
+    goes.
+    """
+
+    def __init__(self, table: dict[str, bytes], file_size: int) -> None:
+        self.sizes = self._read_sizes(table, file_size)
+        count = len(self.sizes)
+        self.offsets = self._read_offsets(table, count)
+        self.decode_times, self.durations = self._read_times(table, count)
+        self.composition = self._read_composition(table, count)
+        self.sync = self._read_sync(table, count)
+
+    @staticmethod
+    def _read_sizes(table: dict[str, bytes], file_size: int) -> array.array[int]:
+        """Each sample's size in bytes (stsz, or the compact stz2)."""
+        if 'stsz' in table:
+            _, cursor = _full_box(table, 'stsz')
+            size, count = cursor.u32(), cursor.u32()
+            if not size:
+                return cursor.table('I', count)
+            if count > file_size // size:
+                raise MP4Error(
+                    f'the stsz box states {count} samples of {size} bytes each, '
+                    f'in a file of {file_size} bytes')
+            return array.array('I', [size]) * count
+        if 'stz2' in table:
+            _, cursor = _full_box(table, 'stz2')
+            cursor.skip(3)
+            field, count = cursor.u8(), cursor.u32()
+            if field == 16:
+                return cursor.table('H', count)
+            if field == 8:
+                return cursor.table('B', count)
+            if field == 4:
+                packed = cursor.table('B', (count + 1) // 2)
+                return array.array('B', (nibble for byte in packed
+                                         for nibble in (byte >> 4, byte & 0xF)))[:count]
+            raise MP4Error(f'the stz2 box states sizes of {field} bits each, and '
+                           'a compact size is 4, 8 or 16')
+        raise MP4Error('a track has no sample size table (stsz)')
+
+    def _read_offsets(self, table: dict[str, bytes], count: int) -> array.array[int]:
+        """Each sample's file offset, from its chunk's offset and the sizes before it."""
+        if 'stco' in table:
+            _, cursor = _full_box(table, 'stco')
+            chunks = cursor.table('I', cursor.count(4))
+        elif 'co64' in table:
+            _, cursor = _full_box(table, 'co64')
+            chunks = cursor.table('Q', cursor.count(8))
+        else:
+            raise MP4Error('a track has no chunk offset table (stco or co64)')
+        if 'stsc' not in table:
+            raise MP4Error('a track has no sample-to-chunk table (stsc)')
+        _, cursor = _full_box(table, 'stsc')
+        runs = cursor.table('I', 3 * cursor.count(12))
+        firsts, per_chunks = runs[0::3], runs[1::3]
+        for earlier, first in itertools.pairwise([0, *firsts]):
+            if not earlier < first <= len(chunks):
+                raise MP4Error(
+                    f'the stsc box names chunk {first} after chunk {earlier}, in '
+                    f'a track of {len(chunks)} chunks: chunks count from 1 and ascend')
+        offsets: array.array[int] = array.array('Q')
+        # A run covers the chunks from its first to the next run's first.
+        spans = itertools.pairwise([*firsts, len(chunks) + 1])
+        for (first, last), per_chunk in zip(spans, per_chunks, strict=True):
+            for chunk in range(first, last):
+                if len(offsets) == count:
+                    return offsets
+                sizes = self.sizes[len(offsets):len(offsets) + per_chunk]
+                if not sizes:
+                    continue
+                position = chunks[chunk - 1]
+                if position + sum(sizes) > LARGEST_OFFSET:
+                    raise MP4Error(f'chunk {chunk} is placed at byte {position}, '
+                                   'which no file reaches')
+                offsets.extend(itertools.accumulate(sizes[:-1], initial=position))
+        if len(offsets) != count:
+            raise MP4Error(
+                f'the chunk tables place {len(offsets)} samples of {count}')
+        return offsets
+
+    @staticmethod
+    def _read_times(table: dict[str, bytes],
+                    count: int) -> tuple[array.array[int], array.array[int]]:
+        """Each sample's decode time and duration (stts)."""
+        if 'stts' not in table:
+            raise MP4Error('a track has no decoding time table (stts)')
+        _, cursor = _full_box(table, 'stts')
+        runs = cursor.table('I', 2 * cursor.count(8))
+        times: array.array[int] = array.array('q')
+        durations: array.array[int] = array.array('I')
+        time = 0
+        for stated, delta in zip(runs[0::2], runs[1::2], strict=True):
+            # A run past the last sample describes nothing, and is not expanded.
+            samples = min(stated, count - len(times))
+            end = time + samples * delta
+            if end > LARGEST_TIME:
+                raise MP4Error(f'the stts box puts a sample at time {end}, past '
+                               'what 64 bits state')
+            times.extend(range(time, end, delta) if delta
+                         else itertools.repeat(time, samples))
+            durations += array.array('I', [delta]) * samples
+            time = end
+        if len(times) < count:
+            raise MP4Error(f'the decoding time table covers {len(times)} samples of {count}')
+        return times, durations
+
+    @staticmethod
+    def _read_composition(table: dict[str, bytes], count: int) -> array.array[int]:
+        """Each sample's composition offset (ctts), signed, or zero without one."""
+        offsets: array.array[int] = array.array('i')
+        if 'ctts' in table:
+            _, cursor = _full_box(table, 'ctts')
+            runs = cursor.table('I', 2 * cursor.count(8))
+            for stated, offset in zip(runs[0::2], runs[1::2], strict=True):
+                # Signed in either version: version 0 files from some muxers
+                # carry negative offsets, and no positive one reaches 2**31.
+                signed = offset - (1 << 32) if offset >> 31 else offset
+                offsets += array.array('i', [signed]) * min(stated, count - len(offsets))
+        offsets += array.array('i', [0]) * (count - len(offsets))
+        return offsets
+
+    @staticmethod
+    def _read_sync(table: dict[str, bytes], count: int) -> Sequence[int]:
+        """The indices of the sync samples, ascending; every sample without ``stss``."""
+        if 'stss' not in table:
+            return range(count)
+        _, cursor = _full_box(table, 'stss')
+        numbers = cursor.table('I', cursor.count(4))
+        for number in numbers:
+            if not 1 <= number <= count:
+                raise MP4Error(f'the stss box names sample {number} as a sync '
+                               f'sample, in a track of {count}: samples count from 1')
+        return sorted({number - 1 for number in numbers})
 
 class Track:
     """One track of an MP4 file: its sample table, and how to read a sample.
@@ -692,6 +997,12 @@ class Track:
     duration -- the track's length in those units
     sync_samples -- the indices, in decoding order, of the samples decoding
         can start at
+
+    The sample tables are read the first time the track's samples, their
+    count or their times are asked for, and cost about 30 bytes a sample from
+    then on. A track nobody reads, such as an hour of PCM audio beside the
+    video, costs nothing. :class:`MP4Error` for a table that states more than
+    its box or the file holds is raised then.
     """
 
     def __init__(self, reader: MP4Reader, track_id: int, handler: str,
@@ -704,162 +1015,62 @@ class Track:
         self.timescale = timescale
         self.duration = duration
         self._edit_offset = edit_offset
-        self._sizes = self._read_sizes(table)
-        count = len(self._sizes)
-        self._offsets = self._read_offsets(table, count)
-        self._decode_times, self._durations = self._read_times(table, count)
-        self._composition = self._read_composition(table, count)
-        self.sync_samples = self._read_sync(table, count)
+        self._boxes = table
+
+    @functools.cached_property
+    def _table(self) -> SampleTable:
+        return SampleTable(self._boxes, self._reader.size)
+
+    @property
+    def sync_samples(self) -> list[int]:
+        return list(self._table.sync)
 
     def __len__(self) -> int:
-        return len(self._sizes)
+        return len(self._table.sizes)
 
     def __repr__(self) -> str:
-        return (f'<{type(self).__name__} {self.track_id} {self.codec}, '
-                f'{len(self)} samples>')
-
-    # -------------------------------------------------------- the tables
-
-    @staticmethod
-    def _read_sizes(table: dict[str, bytes]) -> list[int]:
-        if 'stsz' in table:
-            _, _, body = _full_box(table['stsz'])
-            size, count = struct.unpack_from('>II', body)
-            if size:
-                if count > MAX_SAMPLES:
-                    raise MP4Error(f'a track declares {count} samples')
-                return [size] * count
-            count = _table(body[4:], 4, 4)
-            return list(struct.unpack_from(f'>{count}I', body, 8))
-        if 'stz2' in table:
-            _, _, body = _full_box(table['stz2'])
-            field, count = body[3], struct.unpack_from('>I', body, 4)[0]
-            if count * field > 8 * (len(body) - 8):
-                raise MP4Error(f'stz2 claims {count} sizes of {field} bits in a box of '
-                               f'{len(body)} bytes')
-            if field == 16:
-                return list(struct.unpack_from(f'>{count}H', body, 8))
-            if field == 8:
-                return list(body[8:8 + count])
-            nibbles = body[8:8 + (count + 1) // 2]
-            return [(nibbles[index // 2] >> (4 if index % 2 == 0 else 0)) & 0xF
-                    for index in range(count)]
-        raise MP4Error('a track has no sample size table (stsz)')
-
-    def _read_offsets(self, table: dict[str, bytes], count: int) -> list[int]:
-        """Each sample's file offset, from its chunk's offset and the sizes before it."""
-        if 'stco' in table:
-            _, _, body = _full_box(table['stco'])
-            chunks = list(struct.unpack_from(f'>{_table(body, 4)}I', body, 4))
-        elif 'co64' in table:
-            _, _, body = _full_box(table['co64'])
-            chunks = list(struct.unpack_from(f'>{_table(body, 8)}Q', body, 4))
-        else:
-            raise MP4Error('a track has no chunk offset table (stco or co64)')
-        if 'stsc' not in table:
-            raise MP4Error('a track has no sample-to-chunk table (stsc)')
-        _, _, body = _full_box(table['stsc'])
-        entries = _table(body, 12)
-        runs = [struct.unpack_from('>III', body, 4 + 12 * index)
-                for index in range(entries)]
-        if any(not 1 <= first <= len(chunks) for first, _per_chunk, _description in runs):
-            raise MP4Error('the sample-to-chunk table names a chunk the file does not have')
-        offsets: list[int] = []
-        for run, (first, per_chunk, _description) in enumerate(runs):
-            last = runs[run + 1][0] if run + 1 < len(runs) else len(chunks) + 1
-            for chunk in range(first, last):
-                position = chunks[chunk - 1]
-                for _ in range(per_chunk):
-                    if len(offsets) == count:
-                        return offsets
-                    offsets.append(position)
-                    position += self._sizes[len(offsets) - 1]
-        if len(offsets) != count:
-            raise MP4Error(
-                f'the chunk tables place {len(offsets)} samples of {count}')
-        return offsets
-
-    @staticmethod
-    def _read_times(table: dict[str, bytes], count: int) -> tuple[list[int], list[int]]:
-        """Each sample's decode time and duration (stts)."""
-        if 'stts' not in table:
-            raise MP4Error('a track has no decoding time table (stts)')
-        _, _, body = _full_box(table['stts'])
-        entries = _table(body, 8)
-        times: list[int] = []
-        durations: list[int] = []
-        time = 0
-        for index in range(entries):
-            runs, delta = struct.unpack_from('>II', body, 4 + 8 * index)
-            for _ in range(min(runs, count - len(times))):
-                times.append(time)
-                durations.append(delta)
-                time += delta
-        if len(times) < count:
-            raise MP4Error(f'the decoding time table covers {len(times)} samples of {count}')
-        return times[:count], durations[:count]
-
-    @staticmethod
-    def _read_composition(table: dict[str, bytes], count: int) -> list[int]:
-        """Each sample's composition offset (ctts), signed, or zero without one."""
-        if 'ctts' not in table:
-            return [0] * count
-        _, _, body = _full_box(table['ctts'])
-        entries = _table(body, 8)
-        offsets: list[int] = []
-        for index in range(entries):
-            # Signed in either version: version 0 files from some muxers carry
-            # negative offsets, and no positive one reaches 2**31.
-            runs, offset = struct.unpack_from('>Ii', body, 4 + 8 * index)
-            offsets.extend([offset] * min(runs, count - len(offsets)))
-        return (offsets + [0] * count)[:count]
-
-    @staticmethod
-    def _read_sync(table: dict[str, bytes], count: int) -> list[int]:
-        """The indices of the sync samples; every sample is one without ``stss``."""
-        if 'stss' not in table:
-            return list(range(count))
-        _, _, body = _full_box(table['stss'])
-        entries = _table(body, 4)
-        return [number - 1 for number in struct.unpack_from(f'>{entries}I', body, 4)]
+        return f'<{type(self).__name__} {self.track_id} {self.codec}>'
 
     # ------------------------------------------------------------ samples
 
     def presentation_time(self, index: int) -> int:
         """When sample `index` is shown, with the edit list applied."""
-        return self._decode_times[index] + self._composition[index] - self._edit_offset
+        table = self._table
+        return table.decode_times[index] + table.composition[index] - self._edit_offset
 
     def display_order(self) -> list[int]:
         """Sample indices in the order their presentation times put them."""
         return sorted(range(len(self)), key=self.presentation_time)
 
     def keyframe_before(self, index: int) -> int:
-        """The last sync sample at or before `index`, in decoding order."""
-        found = 0
-        for sync in self.sync_samples:
-            if sync > index:
-                break
-            found = sync
-        return found
+        """The last sync sample at or before `index`, in decoding order.
+
+        The first sample where none is.
+        """
+        sync = self._table.sync
+        found = bisect.bisect_right(sync, index)
+        return sync[found - 1] if found else 0
 
     def read(self, index: int) -> bytes:
-        """Sample `index`'s bytes, as the file stores them."""
+        """Sample `index`'s bytes, as the file stores them.
+
+        Raises :class:`MP4Error` for a sample the file does not hold whole.
+        """
         if not 0 <= index < len(self):
             raise IndexError(f'sample {index} of a track of {len(self)}')
-        return self._reader.read_at(self._offsets[index], self._sizes[index])
+        return self._reader.read_at(self._table.offsets[index], self._table.sizes[index],
+                                    f'sample {index}')
 
     def sample(self, index: int) -> Sample:
         """Sample `index`, with its presentation time and key flag."""
         return Sample(data=self.read(index), timestamp=self.presentation_time(index),
-                      duration=self._durations[index],
+                      duration=self._table.durations[index],
                       keyframe=self._is_sync(index), index=index)
 
     def _is_sync(self, index: int) -> bool:
-        return index in self._sync_set
-
-    @functools.cached_property
-    def _sync_set(self) -> frozenset[int]:
-        return frozenset(self.sync_samples)
+        sync = self._table.sync
+        found = bisect.bisect_left(sync, index)
+        return found < len(sync) and sync[found] == index
 
 
 class VideoTrack(Track):
@@ -869,7 +1080,9 @@ class VideoTrack(Track):
     VP9 (``vp09``). :func:`pyopengl_video.codecs.canonical` turns
     :attr:`~Track.codec` into the name a decoder is opened by.
 
-    width/height -- the picture size the sample entry states
+    width/height -- the picture size the sample entry states, which a file
+        may state as anything from 0 to 65535 whatever its stream holds; a
+        decoder reports the stream's own
     vps/sps/pps -- the parameter sets ``avcC`` or ``hvcC`` carries, as NAL
         units; ``vps`` is empty for H.264, and all three for AV1 and VP9
     configuration -- the configuration OBUs ``av1C`` carries; empty otherwise
@@ -891,50 +1104,45 @@ class VideoTrack(Track):
 
     def describe(self, entry: bytes) -> None:
         """Take the picture size and the decoder configuration from the sample entry."""
-        self.width, self.height = struct.unpack_from('>HH', entry, 24)
+        cursor = Cursor(entry, f'the {self.codec} sample entry')
+        cursor.skip(24)
+        self.width, self.height = cursor.u16(), cursor.u16()
+        cursor.skip(50)
         self.vps, self.sps, self.pps = [], [], []
         self._kind = codecs.of_sample_entry(self.codec)
-        children = _children(entry[78:])
+        children = _children(cursor.rest())
         if 'avcC' in children:
-            self._read_avcc(children['avcC'])
+            self._read_avcc(Cursor(children['avcC'], 'the avcC record'))
         elif 'hvcC' in children:
-            self._read_hvcc(children['hvcC'])
+            self._read_hvcc(Cursor(children['hvcC'], 'the hvcC record'))
         elif 'av1C' in children:
-            self.configuration = bytes(children['av1C'][AV1C_OBUS:])
+            record = Cursor(children['av1C'], 'the av1C record')
+            record.skip(AV1C_OBUS)
+            self.configuration = record.rest()
 
     @property
     def _nal_units(self) -> bool:
         """Whether a sample is length-prefixed NAL units, as H.264 and HEVC are."""
         return self._kind in (codecs.H264, codecs.HEVC)
 
-    def _read_avcc(self, config: bytes) -> None:
+    def _read_avcc(self, record: Cursor) -> None:
         """The SPS and PPS of an AVCDecoderConfigurationRecord."""
-        self.length_size = (config[4] & 3) + 1
-        position = 6
-        for _ in range(config[5] & 0x1F):
-            length = struct.unpack_from('>H', config, position)[0]
-            self.sps.append(config[position + 2:position + 2 + length])
-            position += 2 + length
-        for _ in range(config[position]):
-            length = struct.unpack_from('>H', config, position + 1)[0]
-            self.pps.append(config[position + 3:position + 3 + length])
-            position += 2 + length
+        record.skip(4)
+        self.length_size = (record.u8() & 3) + 1
+        for _ in range(record.u8() & 0x1F):
+            self.sps.append(record.take(record.u16()))
+        for _ in range(record.u8()):
+            self.pps.append(record.take(record.u16()))
 
-    def _read_hvcc(self, config: bytes) -> None:
+    def _read_hvcc(self, record: Cursor) -> None:
         """The VPS, SPS and PPS arrays of an HEVCDecoderConfigurationRecord."""
-        if len(config) <= HVCC_ARRAYS:
-            raise MP4Error(f'an hvcC record of {len(config)} bytes ends before its arrays')
-        self.length_size = (config[HVCC_LENGTH_SIZE] & 3) + 1
+        record.skip(HVCC_LENGTH_SIZE)
+        self.length_size = (record.u8() & 3) + 1
         kinds = {HEVC_VPS: self.vps, HEVC_SPS: self.sps, HEVC_PPS: self.pps}
-        position = HVCC_ARRAYS + 1
-        for _ in range(config[HVCC_ARRAYS]):
-            kind = config[position] & 0x3F
-            count = struct.unpack_from('>H', config, position + 1)[0]
-            position += 3
-            for _ in range(count):
-                length = struct.unpack_from('>H', config, position)[0]
-                unit = config[position + 2:position + 2 + length]
-                position += 2 + length
+        for _ in range(record.u8()):
+            kind = record.u8() & 0x3F
+            for _ in range(record.u16()):
+                unit = record.take(record.u16())
                 if kind in kinds:
                     kinds[kind].append(unit)
 
@@ -956,21 +1164,21 @@ class VideoTrack(Track):
 
         parameter_sets -- put the sample entry's configuration in front, which
             a decoder needs before the first sample it sees and after a seek
+
+        Raises :class:`MP4Error` for a sample the file does not hold whole,
+        and for one whose NAL unit lengths do not add up to it.
         """
         found = super().sample(index)
-        raw = found.data
         prefix = self.parameter_sets() if parameter_sets else b''
         if not self._nal_units:
-            return dataclasses.replace(found, data=prefix + raw) if prefix else found
-        units = []
-        position = 0
-        size = self.length_size
-        while position + size <= len(raw):
-            length = int.from_bytes(raw[position:position + size], 'big')
-            position += size
-            units.append(START_CODE + raw[position:position + length])
-            position += length
-        return dataclasses.replace(found, data=prefix + b''.join(units))
+            return dataclasses.replace(found, data=prefix + found.data) if prefix else found
+        stream = bytearray(prefix)
+        stored = Cursor(found.data, f'sample {index}')
+        while stored.remaining:
+            length = int.from_bytes(stored.take(self.length_size), 'big')
+            stream += START_CODE
+            stream += stored.take(length)
+        return dataclasses.replace(found, data=bytes(stream))
 
 
 class AudioTrack(Track):
@@ -991,48 +1199,55 @@ class AudioTrack(Track):
 
     def describe(self, entry: bytes) -> None:
         """Read an AudioSampleEntry, QuickTime's versions 1 and 2 included."""
-        version = struct.unpack_from('>H', entry, 8)[0]
-        self.channels = struct.unpack_from('>H', entry, 16)[0]
-        self.sample_rate = struct.unpack_from('>I', entry, 24)[0] >> 16
-        children_at = 28
+        cursor = Cursor(entry, f'the {self.codec} sample entry')
+        cursor.skip(8)
+        version = cursor.u16()
+        cursor.skip(6)
+        self.channels = cursor.u16()
+        cursor.skip(6)
+        self.sample_rate = cursor.u32() >> 16
         if version == 1:
-            children_at += 16
+            cursor.skip(16)
         elif version == 2:
-            self.sample_rate = round(struct.unpack_from('>d', entry, 32)[0])
-            self.channels = struct.unpack_from('>I', entry, 40)[0]
-            children_at += 36
-        children = _children(entry[children_at:])
+            cursor.skip(4)
+            rate = cursor.f64()
+            if not (math.isfinite(rate) and 0 <= rate <= bounds.FIELD_32):
+                raise MP4Error(f'the {self.codec} sample entry states a sample '
+                               f'rate of {rate}')
+            self.sample_rate = round(rate)
+            self.channels = cursor.u32()
+            cursor.skip(20)
+        children = _children(cursor.rest())
         if 'esds' in children:
-            self._read_esds(children['esds'])
+            self._read_esds(children)
         for kind in ('dOps', 'dfLa'):
             if kind in children:
                 self.config = children[kind]
 
-    def _read_esds(self, payload: bytes) -> None:
+    def _read_esds(self, children: dict[str, bytes]) -> None:
         """The ES descriptor's decoder configuration (ISO/IEC 14496-1, 7.2.6)."""
-        _, _, body = _full_box(payload)
-        tag, start, end = _descriptor(body, 0)
+        _, cursor = _full_box(children, 'esds')
+        tag, stream = _descriptor(cursor)
         if tag != 0x03:
             return
-        flags = body[start + 2]
-        position = start + 3
+        stream.skip(2)                                      # ES_ID
+        flags = stream.u8()
         if flags & 0x80:
-            position += 2
+            stream.skip(2)                                  # dependsOn_ES_ID
         if flags & 0x40:
-            position += 1 + body[position]
+            stream.skip(stream.u8())                        # URL
         if flags & 0x20:
-            position += 2
-        while position < end:
-            tag, inner, after = _descriptor(body, position)
-            if tag == 0x04:
-                self.object_type = body[inner]
-                position = inner + 13
-                while position < after:
-                    tag, info, info_end = _descriptor(body, position)
-                    if tag == 0x05:
-                        self.config = bytes(body[info:info_end])
-                    position = info_end
-            position = after
+            stream.skip(2)                                  # OCR_ES_Id
+        while stream.remaining:
+            tag, decoder = _descriptor(stream)
+            if tag != 0x04:
+                continue
+            self.object_type = decoder.u8()
+            decoder.skip(12)                                # stream type, buffer, bit rates
+            while decoder.remaining:
+                tag, specific = _descriptor(decoder)
+                if tag == 0x05:
+                    self.config = specific.rest()
 
 
 class MP4Reader:
@@ -1041,32 +1256,35 @@ class MP4Reader:
     source -- a path, or a binary file object open for reading. A file object
         stays the caller's to close.
 
+    size -- the file's length in bytes when it was opened
+
     Opening reads the ``moov`` box and nothing of ``mdat``; a sample is read
     when it is asked for. The reader needs no GL, so it can be opened on any
-    thread. Fragmented MP4 (``moof``) is not read.
+    thread, and samples can be read from several threads at once. Fragmented
+    MP4 (``moof``) is not read.
 
     A video track in H.264, HEVC, AV1 or VP9 is a :class:`VideoTrack`; one in
     another codec is listed in :attr:`tracks` as a plain :class:`Track`.
+
+    Raises :class:`MP4Error` for a file that is not MP4, and for one whose
+    boxes state more than the file holds. A track's sample tables are read
+    when its samples are first asked for, and raise it then. No count a file
+    states is allocated for before the bytes behind it are seen to be there.
     """
 
     def __init__(self, source: str | Path | BinaryIO) -> None:
-        if isinstance(source, (str, Path)):
-            self.path: Path | None = Path(source)
-            self._file: BinaryIO = self.path.open('rb')  # noqa: OGC121 read as samples are asked for, which is the reader's purpose
-            self._owns_file = True
-        else:
-            self.path = None
-            self._file = source
-            self._owns_file = False
+        self._source = container.FileBytes(source, MP4Error)
+        self.path = self._source.path
+        self.size = self._source.size
         self.tracks: list[Track] = []
         try:
             self._read_movie()
-        except Exception:
+        except BaseException:
             self.close()
             raise
 
     def __repr__(self) -> str:
-        return f'<{type(self).__name__} {self.path or self._file!r} {self.tracks}>'
+        return f'<{type(self).__name__} {self._source!r} {self.tracks}>'
 
     @property
     def video(self) -> VideoTrack | None:
@@ -1081,26 +1299,21 @@ class MP4Reader:
     @property
     def duration(self) -> float:
         """The longest track's length, in seconds."""
-        return max((track.duration / track.timescale for track in self.tracks
-                    if track.timescale), default=0.0)
+        return max((track.duration / track.timescale for track in self.tracks),
+                   default=0.0)
 
-    def read_at(self, offset: int, size: int) -> bytes:
-        """`size` bytes from `offset` in the file."""
-        end = self._file.seek(0, 2)
-        if offset < 0 or size < 0 or offset + size > end:
-            raise MP4Error(f'{size} bytes at {offset} run past the end of a file of '
-                           f'{end} bytes')
-        self._file.seek(offset)
-        data = self._file.read(size)
-        if len(data) != size:
-            raise MP4Error(f'the file ends {size - len(data)} bytes into a '
-                           f'sample at {offset}')
-        return data
+    def read_at(self, offset: int, size: int, what: str = 'a sample') -> bytes:
+        """`size` bytes from `offset` in the file.
+
+        what -- what the bytes are, for the message
+
+        Raises :class:`MP4Error` for a span that is not inside the file.
+        """
+        return self._source.read(offset, size, what)
 
     def close(self) -> None:
         """Close the file, if this reader opened it."""
-        if self._owns_file:
-            self._file.close()
+        self._source.close()
 
     def __enter__(self) -> MP4Reader:
         return self
@@ -1112,26 +1325,27 @@ class MP4Reader:
 
     def _top_level(self) -> Iterator[tuple[str, int, int]]:
         """Each top-level box as ``(type, payload offset, payload size)``."""
-        self._file.seek(0, 2)
-        end = self._file.tell()
+        end = self.size
         position = 0
         while position + 8 <= end:
-            self._file.seek(position)
-            header = self._file.read(16)
-            size, kind = struct.unpack_from('>I4s', header)
+            header = Cursor(self._source.read(position, min(16, end - position)),
+                            f'the box at byte {position}')
+            size, kind = header.u32(), header.take(4)
             length = 8
             if size == 1:
-                size = struct.unpack_from('>Q', header, 8)[0]
+                size = header.u64()
                 length = 16
             elif size == 0:
                 size = end - position
-            if size < length:
-                raise MP4Error(f'a box at {position} claims {size} bytes')
             name = kind.decode('latin-1')
             if position == 0 and name not in ('ftyp', 'moov', 'mdat', 'free',
                                               'skip', 'wide', 'pnot'):
                 raise MP4Error(
                     f'the file starts with {kind!r}, which is not an MP4 box')
+            if size < length or position + size > end:
+                raise MP4Error(
+                    f'the {name} box at byte {position} claims {size} bytes, in '
+                    f'a file of {end}')
             yield name, position + length, size - length
             position += size
 
@@ -1146,18 +1360,18 @@ class MP4Reader:
     def _parse_movie(self) -> None:
         for kind, offset, size in self._top_level():
             if kind == 'moov':
-                movie = self.read_at(offset, size)
+                movie = self.read_at(offset, size, 'the moov box')
                 break
             if kind == 'moof':
                 raise MP4Error('fragmented MP4 (moof) is not read here')
         else:
             raise MP4Error('the file has no movie box (moov), so it has no index')
         boxes = list(iter_boxes(movie))
-        header = dict(boxes).get('mvhd')
         movie_timescale = 1000
-        if header is not None:
-            version, _, body = _full_box(header)
-            movie_timescale = struct.unpack_from('>I', body, 16 if version == 1 else 8)[0]
+        if any(kind == 'mvhd' for kind, _ in boxes):
+            version, header = _full_box(dict(boxes), 'mvhd')
+            header.skip(16 if version == 1 else 8)
+            movie_timescale = header.u32()
         for kind, payload in boxes:
             if kind == 'trak':
                 track = self._read_track(payload, movie_timescale)
@@ -1171,16 +1385,25 @@ class MP4Reader:
         stbl = _children(minf.get('stbl', b''))
         if 'tkhd' not in trak or 'mdhd' not in mdia or 'stsd' not in stbl:
             return None
-        version, _, body = _full_box(trak['tkhd'])
-        track_id = struct.unpack_from('>I', body, 16 if version == 1 else 8)[0]
-        version, _, body = _full_box(mdia['mdhd'])
-        if version == 1:
-            timescale, duration = struct.unpack_from('>IQ', body, 16)
-        else:
-            timescale, duration = struct.unpack_from('>II', body, 8)
-        handler = mdia['hdlr'][8:12].decode('latin-1') if 'hdlr' in mdia else ''
-        _, _, entries = _full_box(stbl['stsd'])
-        kind, entry = next(iter_boxes(entries, 4))
+        version, header = _full_box(trak, 'tkhd')
+        header.skip(16 if version == 1 else 8)
+        track_id = header.u32()
+        version, header = _full_box(mdia, 'mdhd')
+        header.skip(16 if version == 1 else 8)
+        timescale = header.u32()
+        duration = header.u64() if version == 1 else header.u32()
+        if not timescale:
+            raise MP4Error(f'track {track_id} states a timescale of 0')
+        handler = ''
+        if 'hdlr' in mdia:
+            _, header = _full_box(mdia, 'hdlr')
+            header.skip(4)
+            handler = header.take(4).decode('latin-1')
+        _, entries = _full_box(stbl, 'stsd')
+        entries.skip(4)                                     # the entry count
+        kind, entry = next(iter_boxes(entries.rest()), ('', b''))
+        if not kind:
+            raise MP4Error(f'the stsd box of track {track_id} holds no sample entry')
         edit_offset = self._edit_offset(trak.get('edts'), timescale, movie_timescale)
         cls: type[Track] = Track
         if handler == 'vide' and codecs.of_sample_entry(kind):
@@ -1203,15 +1426,17 @@ class MP4Reader:
         """
         if not edts:
             return 0
-        elst = _children(edts).get('elst')
-        if elst is None:
+        boxes = _children(edts)
+        if 'elst' not in boxes:
             return 0
-        version, _, body = _full_box(elst)
-        count = struct.unpack_from('>I', body)[0]
-        layout, width = ('>Qq', 16) if version == 1 else ('>Ii', 12)
+        version, cursor = _full_box(boxes, 'elst')
         delay = 0
-        for index in range(count):
-            duration, media_time = struct.unpack_from(layout, body, 4 + width * index)
+        for _ in range(cursor.count(20 if version == 1 else 12)):
+            if version == 1:
+                duration, media_time = cursor.u64(), cursor.i64()
+            else:
+                duration, media_time = cursor.u32(), cursor.i32()
+            cursor.skip(4)                                  # the media rate
             if media_time == -1:
                 delay += duration * timescale // max(movie_timescale, 1)
                 continue

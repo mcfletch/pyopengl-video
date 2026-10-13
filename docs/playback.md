@@ -110,16 +110,25 @@ the CUDA context a decoder would otherwise make when it opens.
 | A raw Annex-B stream (`.h264`, `.h265`) | H.264, HEVC | `AnnexBReader` |
 
 An AVI file, an MPEG program or video stream, a Matroska or WebM file and an
-Ogg file are refused with a `ValueError` naming the container, and an MP4
-whose video is in another codec with one naming the codec. Opening an MP4
-reads the index and none of the media, so a two-hour movie costs the size of
-its sample table. It needs no GL, so a game can open movies on a loading
-thread.
+Ogg file are refused with a `ContainerError` naming the container, and an MP4
+whose video is in another codec with an `MP4Error` naming the codec. Opening
+an MP4 reads the index and none of the media, so a two-hour movie costs the
+size of its sample table. It needs no GL, so a game can open movies on a
+loading thread.
+
+Every length, count and offset in a file is whatever its writer chose. Each
+is compared with the box, the record or the file it describes before it is
+used, and one that does not fit raises the reader's error: `MP4Error`, `IVFError`, or `StreamError` for a raw stream. Opening
+takes memory in proportion to the file's size, whatever counts it states. An
+MP4 track's index is about 30 bytes a sample and is made when the track's
+samples are first asked for, so an audio track beside the video costs nothing
+to a player. A file that cannot be opened is closed before the error is
+raised.
 
 | `Movie` | |
 | --- | --- |
 | `codec` | `'h264'`, `'hevc'`, `'av1'` or `'vp9'` |
-| `size` | the visible picture size, `(width, height)` |
+| `size` | the picture size the container states, `(width, height)`; see [Colour, orientation and size](#colour-orientation-and-size) |
 | `frames` | how many pictures the video track holds |
 | `duration` | the length in seconds, to the end of the last frame |
 | `headers` | the stream's configuration as its decoder takes it: parameter sets as Annex-B for H.264 and HEVC, the configuration OBUs for AV1, nothing for VP9 |
@@ -146,8 +155,9 @@ gives it.
 | `frame_at(seconds)` | the texture for that time |
 | `texture` | the texture last returned, or 0 |
 | `frame` | the display index of the frame shown, or None |
+| `size` | the size of the frame shown and of `texture`, `(width, height)`, or None |
 | `ready_ahead` | converted frames waiting beyond the one shown |
-| `close()` | closes the decoder and deletes the textures |
+| `close()` | closes the converter and the decoder and deletes the textures, each whatever the others do; call it with the player's OpenGL context current. `frame_at` then raises `DecoderError`. |
 
 The program's clock decides the time. A paused clock gets the same texture
 with no decoding. A fixed-step capture gets every frame, in order.
@@ -189,6 +199,27 @@ The output is the stream's cropped size. Row 0 is the bottom of the picture, so
 ordinary texture coordinates draw it the right way up. With `mipmaps=True`,
 mipmaps are made after each conversion.
 
+Two sizes are in play, and they need not agree:
+
+- `movie.size` is what the container states. An MP4 sample entry and an IVF
+  header each hold a width and a height from 0 to 65535 that nothing ties to
+  the stream. A raw stream's size is read from its parameter sets.
+- `player.size` is the size of the frame shown, which is the size of the
+  picture the decoder returned and of the texture it was converted into.
+
+The player makes each output texture at the size of the picture converted
+into it, so a texture holds that picture and nothing else, whatever the
+container states. Size a quad or a window from `player.size`. `movie.size` is
+there before any GL exists, for a layout made while the movie loads, and it
+chooses the decoder backend: one whose largest picture is smaller than the
+stated size is passed over. A stated width or height of 0 leaves every
+backend in, and so does a stated size that no backend takes, since the stream
+may be smaller than its container says; a decoder refuses a picture larger
+than it decodes when the stream's first picture arrives. Where a stream changes size at a key frame, the textures of the
+old size are deleted as they fall out of use and `player.size` changes with
+the frame. A picture the decoder returns with a width or a height of 0 or
+less raises `DecoderError` before any texture is made.
+
 ## Decoding without the player
 
 The player's parts are public, for a program that schedules its own decoding
@@ -214,6 +245,9 @@ with MP4Reader('movie.mp4') as movie:
 ```
 
 - `MP4Reader` reads an MP4 file's `moov` box and hands out samples by index.
+  A sample the file does not hold whole raises `MP4Error`, as does one whose
+  NAL unit lengths do not add up to it. `track.size` is the size the sample
+  entry states.
   `track.codec` is the sample entry's four-character code, which
   `open_decoder` accepts as it stands.
   `track.sample(index, parameter_sets=False)` returns a `Sample` whose `data`
@@ -225,8 +259,13 @@ with MP4Reader('movie.mp4') as movie:
   Fragmented MP4 is not read.
 - `AnnexBReader` reads a raw H.264 or HEVC stream the same way, and its
   `codec` says which it found. It scans the stream once for access units and
-  their display order.
-- `IVFReader` reads an IVF file of AV1 or VP9 the same way.
+  their display order. A path is read a megabyte at a time and each sample is
+  read from the file when it is asked for, so the index is what a long stream
+  costs in memory; a file object is read whole. A file shortened by another
+  process after it was opened raises `StreamError` from `sample()`.
+- `IVFReader` reads an IVF file of AV1 or VP9 the same way. A frame that
+  states more bytes than the file holds ends the stream before it, as the end
+  of the file does, so a recording cut short plays up to its last whole frame.
 - `decoder.decode(sample)` takes one sample and returns a list of the
   frames now ready, in display order. The decoder holds pictures back until
   their order is known, so the list may be empty or hold several. `flush()`
@@ -240,14 +279,33 @@ with MP4Reader('movie.mp4') as movie:
   converted, held for OpenGL until the frame is released. The picture sits at `visible`, first row at the top, inside
   textures of `texture_size`. Release every frame: a decoder with all its
   textures lent raises `DecoderError` naming the frames held. A caller may
-  hold `output_slots` frames at once, 4 by default. On VA-API the textures
-  are the decode surfaces themselves; on NVDEC and oneVPL each frame is a copy
-  of the picture in textures of its own.
+  hold `output_slots` frames at once, 4 by default and 1 to 64 on VA-API. On
+  VA-API the textures are the decode surfaces themselves; on NVDEC and oneVPL
+  each frame is a copy of the picture in textures of its own.
 - `NV12Converter.convert(frame, target)` draws a frame of any layout into
   an RGBA texture of the frame's size. For `'nv12'` and `'p010'` frames one
   pass applies colour, crop and the vertical flip; for an `'rgba'` frame it
   applies the crop and the flip. It restores every piece of GL state it
-  changes, so it can run inside a renderer's frame.
+  changes, so it can run inside a renderer's frame. A frame whose `visible`
+  rectangle is empty or reaches outside its `texture_size` is refused with
+  `DecoderError`.
+  `NV12Converter.draw()` takes the two plane textures themselves, with
+  `visible`, an optional `texture_size` to check it against, and an optional
+  `size`: how much of the target is drawn, from its lower left, one output
+  texel for each luma texel. It is the visible size by default and may be
+  smaller, never larger.
+- A VA-API decoder raises only `DecoderError`: whatever a stream or the
+  driver brings about is translated, with the original on `__cause__`. A
+  sequence that asks for more decode surfaces than any codec needs (18) is
+  refused. When a stream changes to a size the device refuses, the decoder
+  holds no surfaces and refuses each picture until a sequence begins that the
+  device takes.
+- Close a decoder and an `NV12Converter` with the OpenGL context they were
+  made in current. A VA-API decoder releases its libva objects, the display
+  and the render node whichever context is current; its textures, and the
+  converter's program and framebuffers, are objects of that one context. With
+  another current, or none, they are kept, `DecoderError` says so, and
+  closing again with the right context current gives them back.
 
 `MP4Reader.audio` reports each audio track's codec, sample rate, channels and
 configuration, and reads its samples. No audio is decoded yet; see *Audio* in
@@ -324,6 +382,11 @@ decodes the stream. Its message includes each unavailable backend's reason.
 `EncoderError` and `DecoderError` share the base `VideoError`, so one
 `except VideoError` covers recording and playback.
 
+A file that is not what a reader reads raises `MP4Error` or `IVFError`. Both
+are `ContainerError`s, and a `ContainerError` is a `VideoError` and a
+`ValueError`. `Movie.open` raises `ContainerError` itself for a container it
+names and does not read. A sample index outside a track is an `IndexError`.
+
 ## Performance
 
 A 1920x1080 60 fps H.264 High stream with three B-frames takes 0.75 ms a frame
@@ -367,6 +430,7 @@ thread of its own so the thread that draws does not wait for it.
 ## Threading
 
 `Movie`, `MP4Reader`, `IVFReader` and `AnnexBReader` need no GL and work from
-any thread. A
+any thread. Several threads may read samples through one reader at once: no
+read moves a file position another is using. A
 decoder, a converter and a player belong to the thread whose OpenGL context
 was current when they were made.

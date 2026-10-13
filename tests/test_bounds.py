@@ -16,6 +16,14 @@ class TestWhole:
         assert bounds.whole(7.0, 'gop', 1, 65535) == 7
         assert isinstance(bounds.whole(7.0, 'gop', 1, 65535), int)
 
+    def test_an_integer_of_another_type_is_taken(self):
+        """A timestamp out of a NumPy array is an integer and not an int."""
+        np = pytest.importorskip('numpy')
+        assert bounds.whole(np.int64(7), 'gop', 1, 65535) == 7
+        assert type(bounds.whole(np.uint16(7), 'gop', 1, 65535)) is int
+        with pytest.raises(VideoError):
+            bounds.whole(np.float64(7.5), 'gop', 1, 65535)
+
     @pytest.mark.parametrize('value', [0, -1, 65536, 2 ** 32 + 16])
     def test_a_value_outside_it_is_refused_by_name(self, value):
         with pytest.raises(VideoError) as caught:

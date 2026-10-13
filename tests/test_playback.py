@@ -5,19 +5,33 @@ factory, so no GL is needed: a "texture" here is a number, and the fake
 converter records which picture went into which. One case at the end plays a
 real movie on the hardware decoder.
 """
+import gc
 import json
+import struct
 from pathlib import Path
 
 import numpy as np
 import pytest
 from OpenGL.GL import GL_RGBA, GL_TEXTURE_2D, GL_UNSIGNED_BYTE, glBindTexture, glGetTexImage
 
+from pyopengl_video import playback
+from pyopengl_video.backend import VideoError
 from pyopengl_video.colour import Colour
-from pyopengl_video.decoder import DecodedFrame, Decoder, Sample
-from pyopengl_video.mp4 import MP4Writer
+from pyopengl_video.container import ContainerError
+from pyopengl_video.decoder import (
+    DecodedFrame,
+    Decoder,
+    DecoderError,
+    DecoderUnavailable,
+    Sample,
+)
+from pyopengl_video.mp4 import MP4Error, MP4Writer, full_box
 from pyopengl_video.playback import Movie, Player, Timeline
 from pyopengl_video.vaapi.encoder import VAAPIEncoder
 from tests.conftest import blit, gradient_frame
+from tests.descriptors import open_descriptors
+from tests.mp4_build import movie as build_movie
+from tests.mp4_build import visual_entry
 
 DATA = Path(__file__).parent / 'data' / 'decode'
 FIXTURES = json.loads((DATA / 'h264.json').read_text())['streams']
@@ -76,19 +90,26 @@ def ibbp(groups, gop=6):
 
 
 class FakeDecoder(Decoder):
-    """Releases pictures in display order, holding back `depth` of them."""
+    """Releases pictures in display order, holding back `depth` of them.
 
-    def __init__(self, depth=2):
+    size_of -- the size of the picture a sample decodes to, by its index;
+        every picture is 16x16 without one
+    """
+
+    def __init__(self, depth=2, size_of=None):
         self.depth = depth
+        self.size_of = size_of or (lambda _index: (16, 16))
         self.held = []
         self.decoded = []
         self.resets = 0
+        self.closed = 0
         self.lent = set()
 
     def frame(self, sample):
+        width, height = self.size_of(sample.index)
         frame = DecodedFrame(timestamp=sample.timestamp, duration=sample.duration,
-                             planes=(), layout='nv12', texture_size=(16, 16),
-                             visible=(0, 0, 16, 16), colour=Colour(),
+                             planes=(), layout='nv12', texture_size=(64, 64),
+                             visible=(0, 0, width, height), colour=Colour(),
                              on_release=self.lent.discard)
         self.lent.add(frame)
         return frame
@@ -112,36 +133,63 @@ class FakeDecoder(Decoder):
         self.resets += 1
 
     def close(self):
-        pass
-
-
-class FakeConverter:
-    def __init__(self):
-        self.contents = {}
-
-    def convert(self, frame, target):
-        self.contents[target] = frame.timestamp
-
-    def close(self):
-        pass
+        self.closed += 1
 
 
 class Textures:
+    """The texture factory: a texture is a number, and its size is remembered.
+
+    events -- every texture made, forgotten by the converter and deleted, in
+        the order it happened
+    """
+
     def __init__(self):
         self.made = 0
+        self.sizes = {}
         self.deleted = []
+        self.events = []
 
-    def make(self, width, height):  # noqa: ARG002 - the factory's signature
+    def make(self, width, height):
         self.made += 1
+        self.sizes[self.made] = (width, height)
+        self.events.append(('make', self.made))
         return self.made
 
     def delete(self, texture):
         self.deleted.append(texture)
+        self.events.append(('delete', texture))
+
+    @property
+    def live(self):
+        return {texture: size for texture, size in self.sizes.items()
+                if texture not in self.deleted}
 
 
-def player(source, depth=2, ahead=2):
-    decoder, converter, textures = FakeDecoder(depth), FakeConverter(), Textures()
-    built = Player(Movie(source, size=(16, 16)), decoder, converter, ahead=ahead,
+class FakeConverter:
+    """Records which picture went into which texture, and of what size."""
+
+    def __init__(self, textures=None):
+        self.contents = {}
+        self.drawn = []
+        self.textures = textures
+        self.closed = 0
+
+    def convert(self, frame, target):
+        self.contents[target] = frame.timestamp
+        self.drawn.append((target, frame.size))
+
+    def forget(self, target):
+        if self.textures is not None:
+            self.textures.events.append(('forget', target))
+
+    def close(self):
+        self.closed += 1
+
+
+def player(source, depth=2, ahead=2, size=(16, 16), size_of=None):
+    textures = Textures()
+    decoder, converter = FakeDecoder(depth, size_of), FakeConverter(textures)
+    built = Player(Movie(source, size=size), decoder, converter, ahead=ahead,
                    make_texture=textures.make, delete_texture=textures.delete)
     return built, decoder, converter, textures
 
@@ -292,6 +340,208 @@ class TestClosing:
         assert sorted(textures.deleted) == list(range(1, textures.made + 1))
         assert closed == [True]
 
+    def test_a_release_that_fails_does_not_strand_the_others(self):
+        """C13: the converter, the decoder and every texture are each released."""
+        built, decoder, converter, textures = player(FakeSource(ibbp(2), [0, 6]))
+        shown_rank(built, converter, 5 / 30)
+
+        def broken():
+            raise RuntimeError('the converter would not close')
+
+        converter.close = broken
+        with pytest.raises(RuntimeError, match='would not close'):
+            built.close()
+        assert decoder.closed == 1
+        assert textures.live == {}
+
+    def test_closing_twice_releases_once(self):
+        built, decoder, converter, textures = player(FakeSource(ibbp(2), [0, 6]))
+        shown_rank(built, converter, 5 / 30)
+        built.close()
+        built.close()
+        assert (decoder.closed, converter.closed) == (1, 1)
+        assert len(textures.deleted) == textures.made
+
+    def test_a_closed_player_shows_nothing(self):
+        built, _, converter, _ = player(FakeSource(ibbp(2), [0, 6]))
+        shown_rank(built, converter, 0.0)
+        built.close()
+        assert built.texture == 0
+        with pytest.raises(DecoderError, match='closed'):
+            built.frame_at(1 / 30)
+
+    def test_leaving_the_block_by_an_exception_raises_that_exception(self, caplog):
+        built, _, converter, _ = player(FakeSource(ibbp(2), [0, 6]))
+
+        def broken():
+            raise RuntimeError('the converter would not close')
+
+        converter.close = broken
+        with pytest.raises(ValueError, match='the caller'):
+            with built:
+                raise ValueError('the caller failed')
+        assert 'would not close' in caplog.text
+
+
+class TestFramesLentByTheDecoder:
+    """C13: a frame the player was handed goes back, whatever happens next."""
+
+    def test_a_conversion_that_fails_gives_back_every_frame(self):
+        built, decoder, converter, _ = player(FakeSource(ibbp(2), [0, 6]), depth=0)
+        decode = decoder.decode
+        decoder.decode = lambda sample: decode(sample) + [decoder.frame(sample),
+                                                          decoder.frame(sample)]
+
+        def broken(*_):
+            raise RuntimeError('the conversion pass failed')
+
+        converter.convert = broken
+        with pytest.raises(RuntimeError, match='conversion pass'):
+            built.frame_at(0.0)
+        assert decoder.lent == set()
+
+    def test_a_flush_that_fails_gives_back_what_decode_returned(self):
+        built, decoder, _, _ = player(FakeSource([0], [0]), depth=0)
+
+        def broken():
+            raise RuntimeError('the flush failed')
+
+        decoder.flush = broken
+        with pytest.raises(RuntimeError, match='flush failed'):
+            built.frame_at(0.0)
+        assert decoder.lent == set()
+
+    def test_a_texture_whose_conversion_failed_is_used_again(self):
+        built, _, converter, textures = player(FakeSource(ibbp(2), [0, 6]))
+        convert, calls = converter.convert, []
+
+        def once(frame, target):
+            calls.append(target)
+            if len(calls) == 1:
+                raise RuntimeError('the conversion pass failed')
+            convert(frame, target)
+
+        converter.convert = once
+        with pytest.raises(RuntimeError):
+            built.frame_at(0.0)
+        built.frame_at(0.0)
+        assert calls[1] == calls[0]
+        assert textures.made <= 4
+
+
+class TestTheSizeIsTheStreams:
+    """D1 and D2: a texture is the size of the picture drawn into it."""
+
+    def test_textures_are_the_decoded_pictures_size_whatever_the_container_states(self):
+        for stated in [(640, 480), (8, 8), (0, 0), (65535, 65535)]:
+            built, _, converter, textures = player(FakeSource(ibbp(2), [0, 6]), size=stated)
+            assert built.movie.size == stated
+            for rank in range(12):
+                shown_rank(built, converter, rank / 30)
+            assert set(textures.sizes.values()) == {(16, 16)}
+            assert built.size == (16, 16)
+
+    def test_the_size_is_none_before_a_frame_is_shown(self):
+        built, _, _, _ = player(FakeSource(ibbp(2), [0, 6]))
+        assert built.size is None
+
+    def test_a_stream_that_changes_size_gets_textures_of_the_new_size(self):
+        """The second group of pictures is 32x24."""
+        sizes = {True: (16, 16), False: (32, 24)}
+        built, _, converter, textures = player(
+            FakeSource(ibbp(3), [0, 6, 12]), size_of=lambda index: sizes[index < 6])
+        shown = []
+        for rank in range(18):
+            shown_rank(built, converter, rank / 30)
+            shown.append(built.size)
+        assert shown == [(16, 16)] * 6 + [(32, 24)] * 12
+        # Nothing is drawn into a texture of another size.
+        for target, size in converter.drawn:
+            assert textures.sizes[target] == size
+        # The textures of the first size are gone, each forgotten by the
+        # converter before it was deleted.
+        assert set(textures.live.values()) == {(32, 24)}
+        for texture in textures.deleted:
+            assert (textures.events.index(('forget', texture))
+                    < textures.events.index(('delete', texture)))
+
+    def test_a_seek_back_across_a_size_change_shows_the_old_size_again(self):
+        sizes = {True: (16, 16), False: (32, 24)}
+        built, _, converter, textures = player(
+            FakeSource(ibbp(3), [0, 6, 12]), size_of=lambda index: sizes[index < 6])
+        shown_rank(built, converter, 14 / 30)
+        assert shown_rank(built, converter, 2 / 30) == 2
+        assert built.size == (16, 16)
+        assert textures.sizes[built.texture] == (16, 16)
+        for target, size in converter.drawn:
+            assert textures.sizes[target] == size
+
+    def test_a_few_textures_serve_a_stream_whose_size_keeps_changing(self):
+        built, _, converter, textures = player(
+            FakeSource(list(range(40)), list(range(40))),
+            size_of=lambda index: (16 + 2 * (index % 3), 16))
+        for rank in range(40):
+            shown_rank(built, converter, rank / 30)
+        assert len(textures.live) <= 8
+
+    @pytest.mark.parametrize('size', [(0, 0), (0, 16), (16, -2)])
+    def test_a_picture_with_no_pixels_is_refused_before_anything_is_made(self, size):
+        built, decoder, converter, textures = player(
+            FakeSource(ibbp(2), [0, 6]), size_of=lambda _index: size)
+        with pytest.raises(DecoderError, match='no pixels'):
+            built.frame_at(0.0)
+        assert textures.made == 0
+        assert converter.drawn == []
+        assert decoder.lent == set()
+
+
+class TestOpeningTheDecoder:
+    """D10: a size the container does not state is not given as one."""
+
+    @pytest.fixture
+    def opened(self, monkeypatch):
+        asked = []
+
+        def open_decoder(_codec, **options):
+            asked.append(options)
+            return FakeDecoder()
+
+        monkeypatch.setattr(playback, 'open_decoder', open_decoder)
+        monkeypatch.setattr(playback, 'NV12Converter', FakeConverter)
+        return asked
+
+    @pytest.mark.parametrize('stated', [(0, 0), (0, 48), (64, 0)])
+    def test_a_stated_size_of_nought_is_no_size(self, opened, stated):
+        Movie(FakeSource(ibbp(1), [0]), size=stated).player().close()
+        assert opened[0]['size'] is None
+
+    def test_a_stated_size_chooses_the_backend(self, opened):
+        Movie(FakeSource(ibbp(1), [0])).player().close()
+        assert opened[0]['size'] == (64, 48)
+
+    def test_a_stated_size_no_backend_takes_leaves_the_stream_to_say(self, monkeypatch):
+        """A thumbnail in a container stating 65535x65535 still has a decoder."""
+        asked = []
+
+        def open_decoder(_codec, **options):
+            asked.append(options['size'])
+            if options['size'] is not None:
+                raise DecoderUnavailable('no decoder here can read 65535x65535 h264')
+            return FakeDecoder()
+
+        monkeypatch.setattr(playback, 'open_decoder', open_decoder)
+        monkeypatch.setattr(playback, 'NV12Converter', FakeConverter)
+        Movie(FakeSource(ibbp(1), [0]), size=(65535, 65535)).player().close()
+        assert asked == [(65535, 65535), None]
+
+    def test_no_decoder_at_all_is_still_unavailable(self, monkeypatch):
+        def open_decoder(_codec, **options):
+            raise DecoderUnavailable(f'no decoder here, for {options["size"]}')
+
+        monkeypatch.setattr(playback, 'open_decoder', open_decoder)
+        with pytest.raises(DecoderUnavailable, match='for None'):
+            Movie(FakeSource(ibbp(1), [0])).player()
+
 
 # --------------------------------------------------------------------- movies
 
@@ -326,6 +576,51 @@ class TestMovie:
         bad.write_text('nothing to see')
         with pytest.raises(ValueError):
             Movie.open(bad)
+
+    def test_a_refusal_is_a_video_error(self, tmp_path):
+        riff = tmp_path / 'movie.avi'
+        riff.write_bytes(b'RIFF' + bytes(64))
+        with pytest.raises(VideoError):
+            Movie.open(riff)
+        with pytest.raises(ContainerError, match='AVI'):
+            Movie.open(riff)
+
+    def test_an_mp4_with_no_video_it_plays_is_an_mp4_error(self, tmp_path):
+        path = tmp_path / 'old.mp4'
+        path.write_bytes(build_movie(visual_entry('mp4v', 64, 48), [bytes(8)]))
+        with pytest.raises(MP4Error, match='mp4v'):
+            Movie.open(path)
+
+    def test_a_track_of_no_samples_is_refused_and_its_file_closed(self, tmp_path):
+        """C14: a movie that cannot be made does not keep its file."""
+        path = tmp_path / 'empty.mp4'
+        path.write_bytes(build_movie(
+            visual_entry('vp09', 64, 48), [], tables={
+                'stsc': full_box('stsc', 0, 0, struct.pack('>I', 0)),
+                'stco': full_box('stco', 0, 0, struct.pack('>I', 0)),
+                'stts': full_box('stts', 0, 0, struct.pack('>I', 0))}))
+        gc.collect()
+        before = open_descriptors()
+        with pytest.raises(MP4Error, match='no samples'):
+            Movie.open(path)
+        assert open_descriptors() == before
+
+    def test_a_source_with_no_timescale_is_refused(self):
+        source = FakeSource(ibbp(1), [0])
+        source.timescale = 0
+        with pytest.raises(ContainerError, match='timescale'):
+            Timeline(source)
+
+    def test_a_source_with_no_samples_is_refused(self):
+        with pytest.raises(ContainerError, match='no samples'):
+            Timeline(FakeSource([], []))
+
+    def test_the_size_is_what_the_container_states(self, tmp_path):
+        """The MP4 of a 64x64 VP9 stream, stating 640x480."""
+        path = tmp_path / 'stated.mp4'
+        path.write_bytes(build_movie(visual_entry('vp09', 640, 480), [b'\x82' + bytes(15)]))
+        with Movie.open(path) as movie:
+            assert movie.size == (640, 480)
 
 
 @pytest.mark.usefixtures('vaapi_available', 'vaapi_decoder_available')

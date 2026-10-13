@@ -69,8 +69,8 @@ size rebuilds them. That part is sound.
 
 | Id | Where | Finding | Status |
 |---|---|---|---|
-| D1 | `playback.py` `Player._new_texture` | Output textures are made at `movie.size`, the container's stated size, and `NV12Converter.draw` sets the viewport to the decoded picture's size. A 120x68 stream in an MP4 stating 640x480 gives a 640x480 texture with the picture in one corner and the other 1.2 MB never written (texture storage is undefined until written); stating 16x16 crops the picture; stating 0x0 raises a bare `GLError`. A stated 8192x8192 allocates 256 MB a texture for a thumbnail-sized stream. Reproduced on NVDEC. | Open |
-| D2 | `playback.py` | A stream that changes size at a key frame keeps the output textures of the old size, for the same reason. | Open |
+| D1 | `playback.py` `Player._new_texture` | Output textures are made at `movie.size`, the container's stated size, and `NV12Converter.draw` sets the viewport to the decoded picture's size. A 120x68 stream in an MP4 stating 640x480 gives a 640x480 texture with the picture in one corner and the other 1.2 MB never written (texture storage is undefined until written); stating 16x16 crops the picture; stating 0x0 raises a bare `GLError`. A stated 8192x8192 allocates 256 MB a texture for a thumbnail-sized stream. Reproduced on NVDEC. | Fixed |
+| D2 | `playback.py` | A stream that changes size at a key frame keeps the output textures of the old size, for the same reason. | Fixed |
 | D3 | `convert.py` fragment shader | `texelFetch(luma, …)` is undefined outside the texture. `visible` is not checked against `texture_size`, and `draw(size=…)` larger than `visible` fetches at negative coordinates. | Fixed |
 | D4 | `h264_parse.py`, `hevc_parse.py` cropping | A cropping window larger than the picture gives a negative visible size, which reaches `session.output` (`visible=(0, 0, -136, -136)`). | Open |
 | D5 | `nvdec/decoder.py` `Sequence.of` | `display_area` from NVIDIA's parser is not checked to lie inside the coded size before it becomes `visible`. | Open |
@@ -78,7 +78,7 @@ size rebuilds them. That part is sound.
 | D7 | `vaapi/hevc_decode.py` | A later slice segment of a picture may name a PPS whose SPS is another size; it is appended to the picture under way. | Open |
 | D8 | `vaapi/vp9_decode.py` | A non-key frame may state another profile than its key frame; a 65536-wide key frame is written to a 16-bit field as 0. | Open |
 | D9 | `vaapi/encoder.py` `register` | A caller's texture is exported at the encoder's size without asking OpenGL what size it is: a 16x16 texture is described to libva as 4096x4096. | Fixed |
-| D10 | `mp4.py`, `ivf.py` | The stated width and height are never held to 1 or more; (0, 0) passes `Backend.supports`. | Open |
+| D10 | `mp4.py`, `ivf.py` | The stated width and height are never held to 1 or more; (0, 0) passes `Backend.supports`. | Fixed |
 
 ### C. Containers (`mp4.py`, `ivf.py`, `annexb.py`, `obu.py`, `playback.py`)
 
@@ -86,20 +86,45 @@ No path hands native code a length larger than the bytes behind it.
 
 | Id | Where | Finding | Status |
 |---|---|---|---|
-| C1 | `mp4.py` sample tables | `stsz`, `stts`, `ctts`, `stsc` counts size allocations and loops with no check against the box. A 553-byte file takes 7.6 GB, or loops until killed. | Open |
-| C2 | `annexb.py` with the parsers' unbounded ids | Every access unit snapshots a tuple of every parameter set seen: a 340 KB file indexes to 528 MB, quadratic in the file. | Open |
-| C3 | `annexb.py` | Samples are read through an `mmap`; a file shortened by another process after opening kills this one with SIGBUS. | Open |
-| C4 | `mp4.py` `read_at`, `ivf.py` | A file-stated size or offset goes straight to `seek` and `read`: `MemoryError`, `OverflowError` and `ValueError` escape, or 4 GB is allocated up front. | Open |
-| C5 | `ivf.py` | A frame size is not checked against the file, and `sample()` returns a short read as a whole sample; a frame stating 4 GB swallows every later frame as picture data. Header `length` under 32 is accepted; `sample(-1)` wraps. | Open |
-| C6 | `mp4.py` | Slices sized by a file length are taken as full-length: NAL length prefixes, `avcC`/`hvcC` records, `stz2`. | Open |
-| C7 | `mp4.py` `stsc` | `first_chunk` 0 indexes `chunks[-1]`. | Open |
-| C8 | `mp4.py` `stss` | Sync sample numbers are not range-checked: 0 becomes index -1. | Open |
-| C9 | `mp4.py`, `annexb.py`, `playback.py` | `struct.error`, `IndexError`, `StopIteration`, `ValueError`, `OverflowError`, `MemoryError` and `ZeroDivisionError` escape the readers. `MP4Error`, `IVFError` and `StreamError` do not derive from `VideoError`, which the documentation calls the base of every error raised. | Open |
-| C10 | `mp4.py`, `ivf.py` | `seek` then `read` on a shared file object: two threads on one reader get the wrong bytes at the right length. | Open |
-| C11 | `mp4.py` writer | 32-bit fields overflow at `close()`, leaving a recording with no `moov`: a first timestamp of 2^31, a span over 2^32 ticks, `timescale=0`, a width of 70000. | Open |
-| C12 | `mp4.py` writer | `__exit__` raises "no samples" over the exception already propagating. | Open |
-| C13 | `playback.py` `Player` | A converter or a `flush()` that raises strands the frames not yet accepted; `close()` stops at the first failure. | Open |
-| C14 | `playback.py`, `annexb.py`, `ivf.py`, `mp4.py` | A reader or writer opened and then failing is left to the garbage collector. | Open |
+| C1 | `mp4.py` sample tables | `stsz`, `stts`, `ctts`, `stsc` counts size allocations and loops with no check against the box. A 553-byte file takes 7.6 GB, or loops until killed. | Fixed |
+| C2 | `annexb.py` with the parsers' unbounded ids | Every access unit snapshots a tuple of every parameter set seen: a 340 KB file indexes to 528 MB, quadratic in the file. | Fixed |
+| C3 | `annexb.py` | Samples are read through an `mmap`; a file shortened by another process after opening kills this one with SIGBUS. | Fixed |
+| C4 | `mp4.py` `read_at`, `ivf.py` | A file-stated size or offset goes straight to `seek` and `read`: `MemoryError`, `OverflowError` and `ValueError` escape, or 4 GB is allocated up front. | Fixed |
+| C5 | `ivf.py` | A frame size is not checked against the file, and `sample()` returns a short read as a whole sample; a frame stating 4 GB swallows every later frame as picture data. Header `length` under 32 is accepted; `sample(-1)` wraps. | Fixed |
+| C6 | `mp4.py` | Slices sized by a file length are taken as full-length: NAL length prefixes, `avcC`/`hvcC` records, `stz2`. | Fixed |
+| C7 | `mp4.py` `stsc` | `first_chunk` 0 indexes `chunks[-1]`. | Fixed |
+| C8 | `mp4.py` `stss` | Sync sample numbers are not range-checked: 0 becomes index -1. | Fixed |
+| C9 | `mp4.py`, `annexb.py`, `playback.py` | `struct.error`, `IndexError`, `StopIteration`, `ValueError`, `OverflowError`, `MemoryError` and `ZeroDivisionError` escape the readers. `MP4Error`, `IVFError` and `StreamError` do not derive from `VideoError`, which the documentation calls the base of every error raised. | Fixed |
+| C10 | `mp4.py`, `ivf.py` | `seek` then `read` on a shared file object: two threads on one reader get the wrong bytes at the right length. | Fixed |
+| C11 | `mp4.py` writer | 32-bit fields overflow at `close()`, leaving a recording with no `moov`: a first timestamp of 2^31, a span over 2^32 ticks, `timescale=0`, a width of 70000. | Fixed |
+| C12 | `mp4.py` writer | `__exit__` raises "no samples" over the exception already propagating. | Fixed |
+| C13 | `playback.py` `Player` | A converter or a `flush()` that raises strands the frames not yet accepted; `close()` stops at the first failure. | Fixed |
+| C14 | `playback.py`, `annexb.py`, `ivf.py`, `mp4.py` | A reader or writer opened and then failing is left to the garbage collector. | Fixed |
+
+What the fixes decided, for a maintainer to weigh:
+
+- `Player` makes each output texture at the decoded frame's size and retires
+  one of another size; `Player.size` is the size of the frame shown, and
+  `Movie.size` stays what the container states. A stated size no backend
+  reaches is retried with no size, so a small stream in a container stating
+  65535x65535 plays.
+- `container.py` holds the one bounds-checked `Cursor` and the positioned
+  `FileBytes` reads every reader uses. `MP4Error` and `IVFError` derive from
+  `ContainerError(VideoError, ValueError)`.
+- The Annex-B reader holds no `mmap`: it indexes through a one-megabyte window
+  and reads samples with `pread`.
+- The MP4 writer refuses, at `write()`, a timestamp `close()` could not pack:
+  the first under 2^30, none below -2^30, none more than 2^30 behind the latest
+  or 2^32-1 ahead. A recording with no samples is removed; one with samples and
+  no parameter sets is left as `mdat` and `close()` raises.
+- An IVF frame that runs past the end of the file ends the index before it.
+- MP4 sample tables are built for a track when it is first read, so a table
+  error in a track nobody reads is never raised.
+
+Remaining limit: an Annex-B stream that changes a parameter set before every
+picture holds a tuple of sets for each, up to about 2.4 KB a picture.
+
+`tests/test_fuzz_containers.py` runs 3,500 seeded mutations in the suite.
 
 ### H. H.264 and HEVC parsing and picture buffers
 

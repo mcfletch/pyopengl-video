@@ -42,8 +42,9 @@ def test_the_crafted_files_are_otherwise_readable():
         'ctts-count', 'stss-count', 'stsz-empty', 'stts-empty', 'stsd-no-entries',
         'stsc-chunk-zero'])
 def test_a_table_that_claims_more_than_it_holds_is_refused(tables):
-    with pytest.raises(MP4Error):
-        read(**tables)
+    """Refused when the track's tables are first read, which is before any sample is."""
+    with pytest.raises(MP4Error), read(**tables) as reader:
+        len(reader.tracks[0])
 
 
 def test_a_run_count_is_not_expanded_past_the_samples_there_are():
@@ -71,7 +72,7 @@ def test_a_header_cut_short_by_the_end_of_the_file_is_refused():
 
 def test_a_sample_beyond_the_end_of_the_file_is_refused_without_reading():
     with read(stsz=full_box('stsz', 0, 0, struct.pack('>II', 0xFFFFFFF0, 1))) as reader:
-        with pytest.raises(MP4Error, match='run past the end'):
+        with pytest.raises(MP4Error, match=r'a file of \d+ bytes'):
             reader.tracks[0].read(0)
 
 

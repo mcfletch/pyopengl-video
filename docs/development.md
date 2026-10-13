@@ -57,6 +57,7 @@ src/pyopengl_video/
     bounds.py       range checks for what goes into a fixed-width field or a native length
     teardown.py     release_all(): every release runs when one of them fails
     codecs.py       the codec names, and the spellings that reach them
+    container.py    Cursor and FileBytes: bounds-checked reads of a file's bytes
     mp4.py          packets into an MP4 file, and MP4Reader back out of one
     annexb.py       AnnexBReader: access units of a raw .h264 or .h265 stream
     ivf.py          IVFReader and IVFWriter, for AV1 and VP9
@@ -64,6 +65,7 @@ src/pyopengl_video/
     colour.py       Colour: H.273 code points and the YUV to RGB transform
     convert.py      NV12Converter: two planes into an RGBA texture
     glstate.py      preserved_state(), which every pass draws inside
+    glcontext.py    Owner: the context an object was made in, asked before it is deleted
     playback.py     Movie, Player and Timeline
     linux/dmabuf.py exporting a texture as a DMA-BUF, and importing one back
     windows/        the Direct3D interop shim every Windows backend uses
@@ -97,7 +99,7 @@ tests/
     nvdec_abi.json  the same for NVDEC and CUDA, in the Linux and Windows layouts
     vpl_abi.json    the same, from the oneVPL headers
     vpl_runtime.py  stand-ins for the oneVPL runtime, Direct3D and WGL, for any platform
-    va_abi.json     the same, from the libva headers, plus their constant values
+    va_abi.json     the same, from the libva headers, plus nested members, bit-fields and constant values
     data/decode/    streams in each codec and the checksums of their decoded pictures
 tools/
     record_nvenc_abi.py    regenerates those files from real headers
@@ -182,7 +184,26 @@ reading does not:
 
 ```bash
 python tools/record_va_abi.py            # /usr/include, where libva-dev put them
+python tools/record_va_abi.py path/to/include
 ```
+
+libva's headers leave most of their flag words unnamed: a union of a
+structure of bit-fields and an integer, declared inside the structure that
+holds it. The binding declares each as a class with a leading underscore, and
+the recording reaches them through the named structure around them:
+
+- `sizes` and `offsets` cover every structure and union the headers name.
+- `nested` holds the offset of every member inside an unnamed one, by the
+  expression C reaches it with, such as `objects[0].fd`.
+- `bits` holds, for every bit-field at any depth, the bytes of the structure
+  with that one member set to all ones. `offsetof` cannot be taken of a
+  bit-field, and the image gives its position and its width together.
+
+`tests/test_va_abi.py` makes the same image from the ctypes declaration and
+compares. It fails for a structure or union, underscored or not, that is
+neither recorded by name nor inside a recorded one, and for a member of a
+recorded structure the recording does not hold. It also checks that every
+libva function the binding calls has `argtypes` and a `restype`.
 
 ## Adding a backend
 
@@ -252,13 +273,19 @@ backends interchangeable:
   timestamps.
 - **`flush()`** returns everything still held.
 - **`headers()`** returns the parameter sets as an Annex-B fragment.
-- **`close()`** releases everything and is safe to call twice.
+- **`close()`** releases everything and is safe to call twice. It runs every
+  release whatever the others do, through `teardown.release_all`, and each
+  release clears its handle first. An OpenGL name is deleted only in the
+  context that made it: an object that owns one takes a `glcontext.Owner`
+  when it makes it and asks `owner.require(...)` before deleting, after
+  everything that is not OpenGL's has been released.
 
 **Everything a backend raises at a caller is an `EncoderError`.** One `except`
 clause has to be enough to know whether recording failed, so a driver error
 class either subclasses it -- which is what `NVENCError` and `VPLError` do --
 or is translated where it crosses into the encoder's own methods, which is what
-`VAAPIEncoder` does for libva's error and the DMA-BUF shim's. Translate rather
+`VAAPIEncoder` does for libva's error, the DMA-BUF shim's and every other
+exception that reaches its boundary. Translate rather
 than subclass when the error comes from something shared: `linux/dmabuf.py`
 serves every Linux backend and libva decodes as well as encodes, so neither
 error is an *encoder's* until an encoder raised it. Keep the original on
@@ -375,7 +402,8 @@ A codec is switched on by one `Support` entry in `DECODERS` or `ENCODERS` in
 class. Discovery, `open_decoder`, `open_encoder` and the players follow from
 that entry. The codec's libva structures go in `vaapi/<codec>_api.py`, where
 `tools/record_va_abi.py` finds them: it measures every public structure and
-every `VA*` constant in the binding modules.
+union, the unnamed ones inside them, and every `VA*` constant in the binding
+modules.
 
 ## Testing a decoder
 

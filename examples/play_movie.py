@@ -95,6 +95,9 @@ void main() { colour = texture(movie, coordinate); }
 
 SEEK_SECONDS = 5.0
 
+#: The window for a movie whose container states no picture size.
+DEFAULT_WINDOW = (960, 540)
+
 
 def compile_program():
     """Build the program that draws the movie's texture on a quad."""
@@ -176,7 +179,9 @@ def main(argv=None):
 
     # Reading the index needs no GL, so a game can do it on a loading thread.
     movie = Movie.open(options.path)
-    width, height = movie.size
+    # What the container states, which sizes the window before any picture is
+    # decoded. The picture's own size comes from the player, below.
+    width, height = movie.size if all(movie.size) else DEFAULT_WINDOW
     if options.size:
         width, _, height = options.size.partition('x')
         width, height = int(width), int(height)
@@ -237,7 +242,7 @@ def main(argv=None):
             glClearColor(0.0, 0.0, 0.0, 1.0)
             glClear(GL_COLOR_BUFFER_BIT)
             glUseProgram(program)
-            glUniform2f(scale, *fit(movie.size, framebuffer_size))
+            glUniform2f(scale, *fit(player.size or movie.size, framebuffer_size))
             glActiveTexture(GL_TEXTURE0)
             glBindTexture(GL_TEXTURE_2D, texture)
             glBindVertexArray(quad)

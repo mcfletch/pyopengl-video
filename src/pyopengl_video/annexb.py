@@ -16,11 +16,11 @@ the same thing.
 """
 from __future__ import annotations
 
-import mmap
+import bisect
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, overload
 
-from pyopengl_video import codecs
+from pyopengl_video import bounds, codecs, container
 from pyopengl_video.decoder import Sample
 from pyopengl_video.vaapi import h264_dpb, h264_parse, hevc_dpb, hevc_parse
 from pyopengl_video.vaapi.h264 import StreamError
@@ -57,13 +57,86 @@ SEI_RECOVERY_POINT = 6
 #: is under a kilobyte.
 SLICE_HEADER_BYTES = 4096
 
+START_CODE = b'\x00\x00\x00\x01'
+
+
+class Cursor(container.Cursor):
+    """Bytes of a NAL unit read in turn; raises :class:`StreamError`."""
+
+    error = StreamError
+
+
+class FileView:
+    """A file's bytes as the index reads them: searched and sliced, a block at a time.
+
+    source -- the file
+
+    It answers ``len()``, ``find()``, an index and a slice as ``bytes`` does,
+    and holds one block of the file, so indexing a stream costs a block and
+    the index whatever the stream's length. A read the file no longer
+    satisfies raises the source's error.
+    """
+
+    #: bytes held at once
+    BLOCK = 1 << 20
+    #: bytes of the next block read with each one, so that a pattern lying
+    #: across the boundary is found
+    OVERLAP = 8
+
+    def __init__(self, source: container.FileBytes) -> None:
+        self._source = source
+        self._number = -1
+        self._held = b''
+
+    def __len__(self) -> int:
+        return self._source.size
+
+    def _block(self, number: int) -> bytes:
+        """Block `number` of the file and the first bytes of the one after."""
+        if number != self._number:
+            start = number * self.BLOCK
+            count = min(self.BLOCK + self.OVERLAP, len(self) - start)
+            self._held = self._source.read(start, count, 'the stream')
+            self._number = number
+        return self._held
+
+    @overload
+    def __getitem__(self, key: int) -> int: ...
+
+    @overload
+    def __getitem__(self, key: slice) -> bytes: ...
+
+    def __getitem__(self, key: int | slice) -> int | bytes:
+        if isinstance(key, slice):
+            start, stop, _ = key.indices(len(self))
+            first = self._number * self.BLOCK
+            if first <= start <= stop <= first + len(self._held):
+                return self._held[start - first:stop - first]
+            return self._source.read(start, max(stop - start, 0), 'a NAL unit')
+        if not 0 <= key < len(self):
+            raise IndexError(f'byte {key} of a stream of {len(self)}')
+        return self._block(key // self.BLOCK)[key % self.BLOCK]
+
+    def find(self, pattern: bytes, start: int = 0) -> int:
+        """Where `pattern` first occurs at or after `start`, or -1."""
+        position = max(start, 0)
+        while position < len(self):
+            number = position // self.BLOCK
+            first = number * self.BLOCK
+            found = self._block(number).find(pattern, position - first)
+            if found >= 0:
+                return first + found
+            position = first + self.BLOCK
+        return -1
+
 
 def nal_spans(data: Any) -> list[tuple[int, int, int]]:
     """Each NAL unit in `data` as ``(start code offset, payload offset, end)``.
 
     A four-byte start code is the three-byte one behind a zero byte, and the
     zero is counted with the start code. Trailing zero bytes are left out of
-    the unit before them.
+    the unit before them, and a unit of no bytes is left out altogether, so
+    every span holds its unit's first byte.
     """
     starts = []
     position = data.find(b'\x00\x00\x01')
@@ -99,26 +172,32 @@ def codec_of(data: Any, spans: list[tuple[int, int, int]]) -> str:
 
 
 def has_recovery_point(rbsp: bytes) -> bool:
-    """Whether an SEI RBSP carries a recovery point message."""
-    position = 0
-    while position < len(rbsp) and rbsp[position] != 0x80:
-        kind = size = 0
-        while position < len(rbsp) and rbsp[position] == 0xFF:
-            kind += 255
-            position += 1
-        if position >= len(rbsp):
-            return False
-        kind += rbsp[position]
-        position += 1
-        while position < len(rbsp) and rbsp[position] == 0xFF:
-            size += 255
-            position += 1
-        if position >= len(rbsp):
-            return False
-        size += rbsp[position]
-        position += 1 + size
-        if kind == SEI_RECOVERY_POINT:
-            return True
+    """Whether an SEI RBSP carries a recovery point message.
+
+    A message cut short ends the search: what came before it has been read,
+    and the rest is not a message.
+    """
+    cursor = Cursor(rbsp, 'an SEI message')
+    try:
+        while cursor.remaining:
+            kind = size = 0
+            byte = cursor.u8()
+            if byte == 0x80:                    # the trailing bits: no more messages
+                break
+            while byte == 0xFF:
+                kind += 255
+                byte = cursor.u8()
+            kind += byte
+            byte = cursor.u8()
+            while byte == 0xFF:
+                size += 255
+                byte = cursor.u8()
+            size += byte
+            if kind == SEI_RECOVERY_POINT:
+                return True
+            cursor.skip(size)
+    except StreamError:
+        pass
     return False
 
 
@@ -149,6 +228,9 @@ class _Scan:
         self.units: list[_AccessUnit] = []
         #: The parameter sets in force, each as its NAL unit, by kind and id.
         self._sets: dict[tuple[int, int], bytes] = {}
+        #: Those units as one tuple, which every access unit indexed while
+        #: they stand shares; None after a change, until one is asked for.
+        self._in_force: tuple[bytes, ...] | None = ()
         self._current = _AccessUnit(0, ())
         for start, payload, end in spans:
             self._unit(data, start, payload, end)
@@ -171,17 +253,29 @@ class _Scan:
         """Sample indices in the order the pictures are shown."""
         raise NotImplementedError
 
+    def _set(self, kind: int, identifier: int, unit: bytes) -> None:
+        """Put parameter set `unit` in force in place of any of its kind and id."""
+        if self._sets.get((kind, identifier)) != unit:
+            self._sets[(kind, identifier)] = unit
+            self._in_force = None
+
+    def _parameter_sets(self) -> tuple[bytes, ...]:
+        """The parameter sets in force: one tuple until a set changes."""
+        if self._in_force is None:
+            self._in_force = tuple(self._sets.values())
+        return self._in_force
+
     def _close(self, start: int) -> None:
         """End the current access unit where the next one starts, and begin that one."""
         self._current.end = start
         self.units.append(self._current)
-        self._current = _AccessUnit(start, tuple(self._sets.values()))
+        self._current = _AccessUnit(start, self._parameter_sets())
 
     def _picture(self, header: Any, key: bool) -> None:
         """Note the first slice header of the current access unit's picture."""
         self._current.header = header
         self._current.key = key
-        self._current.parameter_sets = tuple(self._sets.values())
+        self._current.parameter_sets = self._parameter_sets()
 
     def _ordered(self, order: list[int]) -> list[int]:
         """`order`, then the pictures in it nowhere: one that is never shown
@@ -214,12 +308,12 @@ class _H264Scan(_Scan):
             unit = h264_parse.parse_nal(bytes(data[payload:end]))
             sps = h264_parse.parse_sps(unit.rbsp)
             self._sequences[sps.seq_parameter_set_id] = sps
-            self._sets[(kind, sps.seq_parameter_set_id)] = unit.data
+            self._set(kind, sps.seq_parameter_set_id, unit.data)
         elif kind == h264_parse.NAL_PPS:
             unit = h264_parse.parse_nal(bytes(data[payload:end]))
             pps = h264_parse.parse_pps(unit.rbsp, self._sequences)
             self._pictures[pps.pic_parameter_set_id] = pps
-            self._sets[(kind, pps.pic_parameter_set_id)] = unit.data
+            self._set(kind, pps.pic_parameter_set_id, unit.data)
         elif kind == h264_parse.NAL_SEI:
             unit = h264_parse.parse_nal(bytes(data[payload:end]))
             self._recovery_point |= has_recovery_point(unit.rbsp)
@@ -286,17 +380,17 @@ class _HEVCScan(_Scan):
             unit = hevc_parse.parse_nal(bytes(data[payload:end]))
             vps = hevc_parse.parse_vps(unit.rbsp)
             self._videos[vps.vps_video_parameter_set_id] = vps
-            self._sets[(kind, vps.vps_video_parameter_set_id)] = unit.data
+            self._set(kind, vps.vps_video_parameter_set_id, unit.data)
         elif kind == hevc_parse.NAL_SPS:
             unit = hevc_parse.parse_nal(bytes(data[payload:end]))
             sps = hevc_parse.parse_sps(unit.rbsp)
             self._sequences[sps.sps_seq_parameter_set_id] = sps
-            self._sets[(kind, sps.sps_seq_parameter_set_id)] = unit.data
+            self._set(kind, sps.sps_seq_parameter_set_id, unit.data)
         elif kind == hevc_parse.NAL_PPS:
             unit = hevc_parse.parse_nal(bytes(data[payload:end]))
             pps = hevc_parse.parse_pps(unit.rbsp)
             self._pictures[pps.pps_pic_parameter_set_id] = pps
-            self._sets[(kind, pps.pps_pic_parameter_set_id)] = unit.data
+            self._set(kind, pps.pps_pic_parameter_set_id, unit.data)
         elif (kind < hevc_parse.NAL_FIRST_NON_VCL and end - payload > 2
               and data[payload + 2] & 0x80):
             # first_slice_segment_in_pic_flag: the picture's other slice
@@ -335,9 +429,10 @@ class AnnexBReader:
 
     source -- a path, or a binary file object; a file object is read whole
         and stays the caller's to close
-    frame_rate -- ``(numerator, denominator)`` frames per second, when the
-        stream states none or states the wrong one; otherwise the rate its
-        parameter sets state, or :data:`DEFAULT_FRAME_RATE`
+    frame_rate -- ``(numerator, denominator)`` frames per second, each a
+        whole number from 1, when the stream states none or states the wrong
+        one; otherwise the rate its parameter sets state, or
+        :data:`DEFAULT_FRAME_RATE`
 
     codec -- ``'h264'`` or ``'hevc'``, read from the stream and not from the
         file's name
@@ -345,8 +440,11 @@ class AnnexBReader:
         pictures, recovery points and pictures of I slices, and for HEVC the
         intra random access point pictures
 
-    Opening scans the whole stream. A path is mapped rather than read, so a
-    long stream costs its index in memory, not its length.
+    Opening scans the whole stream. A path is read a block at a time and
+    each sample is read from the file when it is asked for, so a long stream
+    costs its index in memory, not its length. A file that has been
+    shortened since it was opened raises
+    :class:`~pyopengl_video.vaapi.h264.StreamError` from :meth:`sample`.
     """
 
     #: Units of a second timestamps are counted in, as in an MPEG system stream.
@@ -354,26 +452,24 @@ class AnnexBReader:
 
     def __init__(self, source: str | Path | BinaryIO,
                  frame_rate: tuple[int, int] | None = None) -> None:
-        self._file: BinaryIO | None = None
-        self._map: mmap.mmap | None = None
-        self._data: Any
+        if frame_rate is not None:
+            frame_rate = bounds.frame_rate(frame_rate, container.ContainerError)
+        self._source: container.FileBytes | None = None
+        self._data = b''
+        self.path: Path | None = None
+        data: Any
         if isinstance(source, (str, Path)):
-            self.path: Path | None = Path(source)
-            self._file = self.path.open('rb')  # noqa: OGC121 mapped for reading as samples are asked for
-            try:
-                self._map = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
-            except ValueError:
-                self._map = None
-            self._data = self._map if self._map is not None else b''
+            self._source = container.FileBytes(source, StreamError)
+            self.path = self._source.path
+            data = FileView(self._source)
         else:
-            self.path = None
-            self._data = source.read()
+            data = self._data = source.read()
         try:
-            spans = nal_spans(self._data)
-            self.codec = codec_of(self._data, spans)
-            scan = SCANS[self.codec](self._data, spans)
+            spans = nal_spans(data)
+            self.codec = codec_of(data, spans)
+            scan = SCANS[self.codec](data, spans)
             self._order = scan.display_order()
-        except Exception:
+        except BaseException:
             self.close()
             raise
         self._units = scan.units
@@ -395,13 +491,9 @@ class AnnexBReader:
                 f'{width}x{height}, {len(self)} pictures>')
 
     def close(self) -> None:
-        """Release the mapping and the file, where this reader opened them."""
-        if self._map is not None:
-            self._map.close()
-            self._map = None
-        if self._file is not None:
-            self._file.close()
-            self._file = None
+        """Close the file, where this reader opened it."""
+        if self._source is not None:
+            self._source.close()
 
     def __enter__(self) -> AnnexBReader:
         return self
@@ -421,13 +513,19 @@ class AnnexBReader:
 
         parameter_sets -- put every parameter set seen up to this sample in
             front, which a decoder starting here needs
+
+        Raises :class:`~pyopengl_video.vaapi.h264.StreamError` where the file
+        no longer holds the picture.
         """
         if not 0 <= index < len(self):
             raise IndexError(f'picture {index} of a stream of {len(self)}')
         unit = self._units[index]
-        prefix = b''.join(b'\x00\x00\x00\x01' + entry for entry in unit.parameter_sets)
-        return Sample(data=(prefix if parameter_sets else b'') + bytes(
-                          self._data[unit.start:unit.end]),
+        if self._source is not None:
+            data = self._source.read(unit.start, unit.end - unit.start, f'picture {index}')
+        else:
+            data = self._data[unit.start:unit.end]
+        prefix = b''.join(START_CODE + entry for entry in unit.parameter_sets)
+        return Sample(data=prefix + data if parameter_sets else data,
                       timestamp=self._timestamps[index],
                       duration=self._frame_duration,
                       keyframe=unit.key, index=index)
@@ -439,8 +537,7 @@ class AnnexBReader:
     def parameter_sets(self) -> bytes:
         """The parameter sets the first picture decodes with, as Annex-B:
         SPS and PPS for H.264, and VPS, SPS and PPS for HEVC."""
-        return b''.join(b'\x00\x00\x00\x01' + entry
-                        for entry in self._units[0].parameter_sets)
+        return b''.join(START_CODE + entry for entry in self._units[0].parameter_sets)
 
     def display_order(self) -> list[int]:
         """Sample indices in the order the pictures are shown."""
@@ -448,9 +545,5 @@ class AnnexBReader:
 
     def keyframe_before(self, index: int) -> int:
         """The last sync sample at or before `index`, in decoding order."""
-        found = 0
-        for sync in self.sync_samples:
-            if sync > index:
-                break
-            found = sync
-        return found
+        found = bisect.bisect_right(self.sync_samples, index)
+        return self.sync_samples[found - 1] if found else 0

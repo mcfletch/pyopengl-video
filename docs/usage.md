@@ -141,6 +141,28 @@ textures and framebuffers to the context.
 | `device` | first that has an encoder | Which DRM render node to open, such as `'/dev/dri/renderD128'`. |
 | `bframes` | `0` | Must be zero: this backend codes pictures in display order. |
 
+On `vaapi`, a width or height is even and at most 65472, `bitrate` is 1 to
+2147483647, `gop` 1 to 4294967295 and `qp` 0 to 51. libva carries the frame
+rate as two 16-bit halves, so the ratio in lowest terms has to fit them:
+`(30000, 1001)` does, `(90000, 3003)` is carried as that same ratio, and
+`(100003, 1001)` is refused. A value outside its range is refused before a
+device is opened. A texture handed to `register()` has to be `GL_RGBA8` of the
+encoder's size; OpenGL is asked, and another size or format is refused.
+
+An `encode()` that fails once the picture has gone to the driver stops a
+`vaapi` encoder, since the pictures after it would predict from one the stream
+does not hold. Later calls to `encode()` are refused, `flush()` still returns
+the packets of the pictures coded before the failure, and `close()` releases
+everything. A coded picture the driver marks as overflowing its buffer, or as
+a bad bitstream, is such a failure and is not returned as a packet.
+
+Close a `vaapi` encoder, and each input from `new_input()`, with the OpenGL
+context they were made in current. The libva objects, the display and the
+render node are released whichever context is current. The framebuffers,
+textures and EGL images are objects of that one context: with another
+current, or none, they are kept, `EncoderError` says so, and closing again
+with the right context current gives them back.
+
 Unknown values are refused by name, listing what is known.
 
 ## Getting the frame to the encoder
@@ -264,8 +286,27 @@ frame at the declared rate, rounded to the timescale. `MP4Writer` takes each
 sample's duration from the gap to the next timestamp in display order, and
 uses a packet's own `duration` only for the last sample, so a rate that is not
 a whole number of ticks (24000/1001 fps is 3753.75 at 90 kHz) does not drift
-from the timestamps. Timestamps that do not increase leave it using the
-packets' durations. A frame rate of no frames per second raises `EncoderError`.
+from the timestamps. Timestamps that repeat leave it using the packets'
+durations. A frame rate of no frames per second raises `EncoderError`.
+
+**Count timestamps from the start of the recording.** An MP4 track's decode
+times start at zero, and the file states each display time as a signed 32-bit
+offset from a decode time and each duration in 32 bits. `MP4Writer.write`
+raises `MP4Error` for a packet those fields cannot state, and writes nothing
+of it, so the packets before it still close into a whole movie:
+
+| Refused | The limit, in the timescale's units |
+| --- | --- |
+| a first timestamp too far from zero | under 2^30 (3.3 hours at 90 kHz), and none below -2^30 |
+| a timestamp far behind the latest | at most 2^30 behind |
+| a gap to the next timestamp | at most 2^32 - 1 (13.2 hours at 90 kHz) |
+| a duration | 0 to 2^32 - 1 |
+| a timestamp or a duration that is not a whole number | |
+
+A recording may be any length. One over 2^32 - 1 units long is written with
+64-bit `mdhd`, `tkhd` and `mvhd` boxes wherever a duration needs them. With a
+clock that does not start at zero, such as a monotonic one, subtract its
+first reading from each timestamp.
 
 ## Colour
 
@@ -317,6 +358,19 @@ more memory than a short one; the sample tables are written when the movie
 closes. That means the file is not ready to stream over a network without a
 further pass — the trade for not buffering the video.
 
+The width and the height are each from 1 to 65535 and the timescale from 1 to
+2^32 - 1; `MP4Writer` and `IVFWriter` raise `MP4Error` and `IVFError` for
+anything else before they create the file. A configuration the sample entry
+cannot be made from, such as a parameter set cut short, is refused by
+`write()` with the packet that carried it.
+
+When the `with` block ends in an exception, the writer finishes the file with
+the packets it has and that exception goes on; a failure to finish is logged
+and not raised. `close()` on a movie with no samples removes the file and
+raises `MP4Error`. A movie whose samples came with no parameter sets or
+sequence header cannot be indexed: `close()` raises `MP4Error` and leaves the
+file as an `mdat` box with no `moov`, which no player opens.
+
 What a packet holds depends on the codec:
 
 | Codec | `packet.data` | `encoder.headers()` | Stored in MP4 as |
@@ -338,7 +392,8 @@ with open('out.h265', 'wb') as raw:
 
 AV1 and VP9 have no such raw form, so `IVFWriter` writes theirs: a 32-byte
 header and each packet behind its size and timestamp, which `ffmpeg`, the
-reference decoders and `Movie.open` read.
+reference decoders and `Movie.open` read. An IVF timestamp is a whole number
+from 0 to 2^64 - 1, and `write()` raises `IVFError` for any other.
 
 ```python
 from pyopengl_video.ivf import IVFWriter
@@ -357,9 +412,10 @@ To mux with something else, `Packet` carries everything a container needs:
 | Raised | When |
 | --- | --- |
 | `EncoderUnavailable` | Nothing on this machine can encode what was asked for. The message lists what was available, and why any backend that declined for a fixable reason did so. |
-| `EncoderError` | A texture still in flight was handed back; an unknown preset, tuning or rate control; a size or setting the driver refuses; encoding after `close()`. |
+| `EncoderError` | A texture still in flight was handed back; an unknown preset, tuning or rate control; a size or setting outside its range, or one the driver refuses; encoding after `close()`, or after an `encode()` that failed; closing with another OpenGL context current than the one the inputs were made in. |
 | `NVENCError` | NVIDIA's driver refused a call. Carries the status code, its name, and the driver's own explanation. |
 | `VPLError` | Intel's runtime refused a call, with the same. |
+| `MP4Error`, `IVFError` | A writer was given a size, a timescale, a timestamp or a configuration its file cannot state. Both are `ContainerError`s, which are `VideoError`s and `ValueError`s. |
 
 **One `except EncoderError` is enough** to know whether recording failed, on
 every backend. `NVENCError` and `VPLError` are `EncoderError`s. The VA-API
@@ -368,11 +424,17 @@ and the DMA-BUF shim's `DMABufError` are deliberately *not* encoder errors —
 that shim is shared by every Linux backend and libva decodes as well as
 encodes, so neither is an encoder's failure until an encoder is what raised it —
 and `VAAPIEncoder` translates them at its own boundary, leaving the original on
-`__cause__` where a traceback shows it.
+`__cause__` where a traceback shows it. It translates every other exception a
+setting or a driver brings about the same way, so `IndexError` or
+`MemoryError` does not reach a caller from it either; `KeyboardInterrupt` and
+`SystemExit` pass through.
 
 So a caller catches one thing, and whoever reads the traceback still sees which
 driver said no and what it said. A caller using `pyopengl_video.linux.dmabuf`
-directly, without an encoder, catches `DMABufError` there instead: it names the
+directly, without an encoder, catches `DMABufError` there instead. That is
+also what `export_texture` raises for a texture that is not `GL_RGBA8` of the
+size stated, and what closing an exported or imported image raises with
+another OpenGL context current than the one it was made in. It names the
 texture or the buffer that was refused and the layout it was given, whichever
 entry point declined and whether that driver declines by answering with a null
 handle or by raising.
@@ -427,7 +489,8 @@ game is the game plus a blit.
 - **`vaapi` codes in display order.** `bframes` above zero is refused there,
   in every codec.
 - **One context.** A session belongs to the OpenGL context that was current when
-  it was opened, and every call must come from that context's thread.
+  it was opened, and every call must come from that context's thread, `close()`
+  included: an OpenGL name is deleted only in the context that made it.
 - **No audio.** The muxer writes a video track.
 
 ## Which GPU the encoder is on

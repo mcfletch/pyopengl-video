@@ -12,6 +12,9 @@ Each takes the error class to raise, so an encoder refuses with an
 """
 from __future__ import annotations
 
+import math
+import operator
+
 from pyopengl_video.backend import VideoError
 
 __all__ = ['FIELD_16', 'FIELD_32', 'frame_rate', 'frame_size', 'span', 'whole']
@@ -27,14 +30,23 @@ def whole(value: object, what: str, low: int, high: int,
 
     what -- the value's name, for the message
 
-    Raises `error` for anything else: a fraction, a boolean, a string, or a
-    number outside the range.
+    An integer of any type is taken, a NumPy scalar included, and a float
+    with no fractional part. Raises `error` for anything else: a fraction, a
+    boolean, a string, or a number outside the range.
     """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise error(f'{what} is {value!r}, which is not a whole number')
-    if value != value or value in (float('inf'), float('-inf')) or value != int(value):
-        raise error(f'{what} is {value!r}, which is not a whole number')
-    number = int(value)
+    refusal = f'{what} is {value!r}, which is not a whole number'
+    if isinstance(value, bool):
+        raise error(refusal)
+    if isinstance(value, float):
+        if not math.isfinite(value) or value != int(value):
+            raise error(refusal)
+        number = int(value)
+    else:
+        try:
+            # An integer of any type: a NumPy scalar is one, and is not an int.
+            number = operator.index(value)  # type: ignore[arg-type]  # refused below when it has no __index__
+        except TypeError:
+            raise error(refusal) from None
     if not low <= number <= high:
         raise error(f'{what} is {number}, outside {low} to {high}')
     return number
