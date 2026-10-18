@@ -207,10 +207,16 @@ nothing.
 What the fixes decided, for a maintainer to weigh:
 
 - An object that owns OpenGL names records the context it was made in
-  (`glcontext.Owner`) and refuses to delete them in any other, a context that
-  shares objects with it included: EGL has no query for which contexts share.
-  Everything that is not OpenGL is released first, and closing again in the
-  right context finishes.
+  (`glcontext.Owner`) and deletes them only where the names are its own.
+  Textures, programs and sync objects are deleted in that context or any
+  that shares objects with it; framebuffers and vertex arrays, which OpenGL
+  does not share, in that context alone. EGL, GLX and WGL have no query for
+  which contexts share, so the first `Owner` in a share group leaves a shader
+  object there whose source is a random token, and a context where that name
+  reads back with that source is one of the group. Everything that is not
+  OpenGL is released first, and closing again in the right context finishes.
+  (Revised 2026-10-13: the first form refused a sharing context as it did
+  any other.)
 - A decoder asks for at most 18 surfaces for its own pictures (AV1 with film
   grain: nine frames of two surfaces), and `output_slots` is 1 to 64.
 - An encoder whose submission fails after the driver has the picture stops:

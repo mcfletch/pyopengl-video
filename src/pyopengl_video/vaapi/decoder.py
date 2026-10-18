@@ -180,9 +180,9 @@ class _Pool:
     back is waited on before its surface is decoded into again, so the decoder
     never writes a picture OpenGL is still reading.
 
-    The textures, images and fences belong to the OpenGL context current when
-    the pool is made, and :meth:`close` releases them only with that context
-    current.
+    The textures, images and fences belong to the share group of the OpenGL
+    context current when the pool is made, and :meth:`close` releases them
+    with that context current or one that shares objects with it.
     """
 
     def __init__(self, device: Device, format: Format, count: int) -> None:
@@ -289,11 +289,11 @@ class _Pool:
     def returned(self, surface: int) -> None:
         """Note the point in OpenGL's commands where a lent surface came back.
 
-        Nothing is noted once the pool's context is destroyed, or with
-        another OpenGL context current: a fence is an object of the context
-        it is made in.
+        Nothing is noted once the pool's context is destroyed, or with an
+        OpenGL context current that does not share objects with the pool's:
+        a fence is an object of the share group it is made in.
         """
-        if self.context and self._owner.is_current():
+        if self.context and self._owner.is_shared():
             self.order.returned(surface)
             previous = self._fences.pop(surface, None)
             if previous is not None:
@@ -311,10 +311,10 @@ class _Pool:
 
         Every release runs whatever the others do. The libva context,
         surfaces and configuration are released whichever OpenGL context is
-        current. With another context current, or none, the textures, images
-        and fences are kept and :class:`DecoderError` says so once the libva
-        objects are gone; closing again with the pool's own context current
-        releases them.
+        current. With a context outside the pool's share group current, or
+        none, the textures, images and fences are kept and
+        :class:`DecoderError` says so once the libva objects are gone; closing
+        again with a context of the group current releases them.
         """
         self.textures = {}
         release_all(self._release_textures, self._destroy_context,
@@ -608,10 +608,11 @@ class VAAPIDecoder(Decoder):
         """Release the surfaces and their textures, frames lent included.
 
         The libva objects, the display and the render node are released
-        whichever OpenGL context is current. The surface textures are OpenGL
-        objects of the context the decoder was opened in: with another
-        current, or none, they are kept, :class:`DecoderError` says so, and
-        closing again with the decoder's own context current releases them.
+        whichever OpenGL context is current. The surface textures belong to
+        the share group of the context the decoder was opened in: with a
+        context outside it current, or none, they are kept,
+        :class:`DecoderError` says so, and closing again with a context of
+        the group current releases them.
         Closing a decoder that has nothing left to release does nothing.
         """
         self._closed = True

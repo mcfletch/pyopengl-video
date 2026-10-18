@@ -65,7 +65,7 @@ src/pyopengl_video/
     colour.py       Colour: H.273 code points and the YUV to RGB transform
     convert.py      NV12Converter: two planes into an RGBA texture
     glstate.py      preserved_state(), which every pass draws inside
-    glcontext.py    Owner: the context an object was made in, asked before it is deleted
+    glcontext.py    Owner: the context and share group an object was made in, asked before it is deleted
     playback.py     Movie, Player and Timeline
     linux/dmabuf.py exporting a texture as a DMA-BUF, and importing one back
     windows/        the Direct3D interop shim every Windows backend uses
@@ -318,10 +318,14 @@ backends interchangeable:
 - **`headers()`** returns the parameter sets as an Annex-B fragment.
 - **`close()`** releases everything and is safe to call twice. It runs every
   release whatever the others do, through `teardown.release_all`, and each
-  release clears its handle first. An OpenGL name is deleted only in the
-  context that made it: an object that owns one takes a `glcontext.Owner`
-  when it makes it and asks `owner.require(...)` before deleting, after
-  everything that is not OpenGL's has been released.
+  release clears its handle first. An OpenGL name is deleted only where it
+  names the object that was made: an object that owns one takes a
+  `glcontext.Owner` when it makes it and asks before deleting, after
+  everything that is not OpenGL's has been released. `owner.require(...)` is
+  for what a share group holds -- textures, programs, sync objects -- and
+  passes in the owning context and any that shares objects with it;
+  `owner.require_own(...)` is for what one context holds -- framebuffers,
+  vertex arrays -- and passes in that context alone.
 
 **Everything a backend raises at a caller is an `EncoderError`.** One `except`
 clause has to be enough to know whether recording failed, so a driver error

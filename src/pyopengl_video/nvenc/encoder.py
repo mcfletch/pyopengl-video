@@ -726,11 +726,12 @@ class NVENCEncoder(Encoder):
 
         Every release runs whatever the others do. The session is ended
         whichever OpenGL context is current, and the inputs' handles are
-        closed to the encoder with it. The textures and framebuffers of
-        :meth:`new_input` are objects of the context they were made in: with
-        another current, or none, they are kept and
-        :class:`~pyopengl_video.encoder.EncoderError` says so once the session
-        is gone; closing again with their own context current deletes them.
+        closed to the encoder with it. The textures of :meth:`new_input`
+        belong to the share group of the context they were made in, and the
+        framebuffers to that context alone: what the current context cannot
+        delete is kept and :class:`~pyopengl_video.encoder.EncoderError` says
+        so once the session is gone; closing again with their own context
+        current deletes it.
         Closing an encoder that has nothing left to release does nothing.
         """
         self._closed = True

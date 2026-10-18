@@ -40,7 +40,7 @@ from pyopengl_video.linux import dmabuf
 from pyopengl_video.vaapi import api
 from tests.conftest import gradient_frame
 
-#: The `contexts` fixture: a second OpenGL context beside the suite's.
+#: The `contexts` fixture: two more OpenGL contexts beside the suite's.
 pytest_plugins = ('tests.other_context',)
 
 SIZE = (320, 240)
@@ -519,6 +519,23 @@ class TestAnotherContextCurrent:
             dmabuf.release_imported_texture(texture, egl_image)
         contexts.use(contexts.first)
         assert glIsTexture(texture)
+
+    def test_an_imported_texture_is_deleted_from_a_context_that_shares(self, imported, contexts):
+        texture, egl_image = imported
+        contexts.use(contexts.sharing)
+        dmabuf.release_imported_texture(texture, egl_image)
+        assert not glIsTexture(texture)
+        assert egl_image.image is None
+        contexts.use(contexts.first)
+        assert not glIsTexture(texture)
+
+    @pytest.mark.usefixtures('exportable')
+    def test_an_export_closes_in_a_context_that_shares(self, upload_texture, contexts):
+        image = dmabuf.export_texture(upload_texture(gradient_frame(*SIZE)), *SIZE)
+        contexts.use(contexts.sharing)
+        image.close()
+        assert image.planes == ()
+        assert image._image is None  # noqa: SLF001 - the EGLImage, which the close gave back
 
     def test_releasing_an_imported_texture_twice_deletes_one_texture(self, imported):
         texture, egl_image = imported

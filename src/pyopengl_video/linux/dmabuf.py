@@ -150,9 +150,10 @@ class ExportedImage:
 
         The descriptors are closed whichever OpenGL context is current. The
         image is given back on the display it was made on, with the context
-        the texture was exported in current; with another current, or none,
-        it is kept, :class:`DMABufError` says so once the descriptors are
-        closed, and closing again in the right context gives it back.
+        the texture was exported in current or one that shares objects with
+        it; with a context outside that share group current, or none, it is
+        kept, :class:`DMABufError` says so once the descriptors are closed,
+        and closing again in a context of the group gives it back.
         """
         release_all(self._close_descriptors, self._destroy_image)
 
@@ -518,9 +519,10 @@ def release_imported_texture(texture: int, image: ImportedImage | None) -> None:
     texture -- the texture; read only where `image` is None, since the image
         records which texture it still has to give back
 
-    The texture is deleted in the context that made it. With another context
-    current, or none, nothing is released and :class:`DMABufError` says so:
-    the name belongs to something else there.
+    The texture is deleted in the context that made it or one that shares
+    objects with it. With a context outside that share group current, or
+    none, nothing is released and :class:`DMABufError` says so: the name
+    belongs to something else there.
     """
     from OpenGL.GL import glDeleteTextures  # noqa: PLC0415 - OpenGL.GL stays off the probe path
 

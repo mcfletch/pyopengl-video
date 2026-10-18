@@ -131,10 +131,12 @@ whose read fails stays with the encoder, and `flush()` returns it.
 `close()` on an `nvenc` encoder ends the session whichever OpenGL context is
 current: it finishes the pictures still held for reordering, unmaps and
 unregisters the inputs, destroys the output buffers and then the session. The
-textures and framebuffers of `new_input()` are OpenGL objects of the context
-they were made in. With another current, or none, they are kept,
-`EncoderError` says so once the session is gone, and closing again with their
-own context current deletes them. An encoder that is collected unclosed ends
+textures of `new_input()` belong to the share group of the context they were
+made in, and the framebuffers to that context alone. With a context that
+shares objects with it current, the textures are deleted, the framebuffers are
+kept and `EncoderError` says so once the session is gone; with a context
+outside the group current, or none, both are kept. Closing again with their
+own context current deletes what is left. An encoder that is collected unclosed ends
 its session, warns with a `ResourceWarning`, and leaves those textures and
 framebuffers to the context.
 
@@ -181,10 +183,12 @@ a bad bitstream, is such a failure and is not returned as a packet.
 
 Close a `vaapi` encoder, and each input from `new_input()`, with the OpenGL
 context they were made in current. The libva objects, the display and the
-render node are released whichever context is current. The framebuffers,
-textures and EGL images are objects of that one context: with another
-current, or none, they are kept, `EncoderError` says so, and closing again
-with the right context current gives them back.
+render node are released whichever context is current. The textures, fences
+and EGL images belong to that context's share group, and are released with it
+or any context that shares objects with it current. The framebuffers belong
+to that one context. What cannot be released where `close()` is called is
+kept, `EncoderError` says so, and closing again with the right context current
+gives it back.
 
 Unknown values are refused by name, listing what is known.
 
@@ -435,7 +439,7 @@ To mux with something else, `Packet` carries everything a container needs:
 | Raised | When |
 | --- | --- |
 | `EncoderUnavailable` | Nothing on this machine can encode what was asked for. The message lists what was available, and why any backend that declined for a fixable reason did so. |
-| `EncoderError` | A texture still in flight was handed back; an unknown preset, tuning or rate control; a size or setting outside its range, or one the driver refuses; encoding after `close()`, or after an `encode()` that failed; closing with another OpenGL context current than the one the inputs were made in. |
+| `EncoderError` | A texture still in flight was handed back; an unknown preset, tuning or rate control; a size or setting outside its range, or one the driver refuses; encoding after `close()`, or after an `encode()` that failed; closing with an OpenGL context current that cannot delete what the inputs hold: one outside their share group for a texture, any but their own for a framebuffer. |
 | `NVENCError` | NVIDIA's driver refused a call. Carries the status code, its name, and the driver's own explanation. |
 | `VPLError` | Intel's runtime refused a call, with the same. |
 | `MP4Error`, `IVFError` | A writer was given a size, a timescale, a timestamp or a configuration its file cannot state. Both are `ContainerError`s, which are `VideoError`s and `ValueError`s. |
@@ -457,7 +461,8 @@ driver said no and what it said. A caller using `pyopengl_video.linux.dmabuf`
 directly, without an encoder, catches `DMABufError` there instead. That is
 also what `export_texture` raises for a texture that is not `GL_RGBA8` of the
 size stated, and what closing an exported or imported image raises with
-another OpenGL context current than the one it was made in. It names the
+an OpenGL context current that does not share objects with the one it was
+made in. It names the
 texture or the buffer that was refused and the layout it was given, whichever
 entry point declined and whether that driver declines by answering with a null
 handle or by raising.
@@ -513,7 +518,8 @@ game is the game plus a blit.
   in every codec.
 - **One context.** A session belongs to the OpenGL context that was current when
   it was opened, and every call must come from that context's thread, `close()`
-  included: an OpenGL name is deleted only in the context that made it.
+  included. A texture is deleted in the context that made it or one that
+  shares objects with it; a framebuffer only in the context that made it.
 - **No audio.** The muxer writes a video track.
 
 ## Which GPU the encoder is on

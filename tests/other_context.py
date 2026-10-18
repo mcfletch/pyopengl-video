@@ -1,8 +1,11 @@
-"""A second OpenGL context, for what must not happen across two of them.
+"""Two more OpenGL contexts, for what must and must not happen across contexts.
 
-An OpenGL name means something only in the context that made it, and the two
-contexts here share nothing, so each numbers its objects from one: a texture
-made in one has the name of a texture in the other.
+An OpenGL name means something only in the share group that made it. The
+`second` context shares nothing with the suite's, so each numbers its objects
+from one: a texture made in one has the name of a texture in the other. The
+`sharing` context is in the suite's share group: a texture, program or sync
+object of either is the same object in the other, and a framebuffer or vertex
+array is not.
 """
 import sys
 
@@ -18,12 +21,13 @@ from OpenGL.GL import (
 
 
 class Contexts:
-    """The suite's context and another one, with nothing shared between them."""
+    """The suite's context, one that shares nothing with it, and one that shares its objects."""
 
-    def __init__(self, glfw, first, second):
+    def __init__(self, glfw, first, second, sharing):
         self._glfw = glfw
         self.first = first
         self.second = second
+        self.sharing = sharing
 
     def use(self, window):
         """Make `window`'s context current on this thread; None for no context."""
@@ -43,17 +47,21 @@ class Contexts:
 
 @pytest.fixture
 def contexts(gl_context):
-    """The suite's context and a second one; the suite's is current again afterwards."""
+    """The suite's context and two more; the suite's is current again afterwards."""
     import glfw  # noqa: PLC0415 - the gl_context fixture has skipped where there is none
 
     glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
     if sys.platform.startswith('linux'):
         glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)
-    second = glfw.create_window(64, 64, 'pyopengl-video tests, second context', None, None)
-    if not second:
-        pytest.skip('no second OpenGL context available')
+    made = []
     try:
-        yield Contexts(glfw, gl_context, second)
+        for title, share in (('second context', None), ('sharing context', gl_context)):
+            window = glfw.create_window(64, 64, f'pyopengl-video tests, {title}', None, share)
+            if not window:
+                pytest.skip(f'no {title} available')
+            made.append(window)
+        yield Contexts(glfw, gl_context, *made)
     finally:
         glfw.make_context_current(gl_context)
-        glfw.destroy_window(second)
+        for window in made:
+            glfw.destroy_window(window)

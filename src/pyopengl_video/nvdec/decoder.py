@@ -525,7 +525,8 @@ class _Session:
     are made as they are first needed (:class:`Outputs`), and each is kept for
     the session's life.
 
-    owner -- the OpenGL context the textures are made in
+    owner -- the OpenGL context the textures are made in, whose share group
+        they belong to
     decoded -- the pictures the hardware decoder has decoded, by index, which
         are the ones a later picture may predict from and the ones that may
         be shown
@@ -670,11 +671,11 @@ class _Session:
         """Destroy the decoder and give back every texture pair.
 
         The hardware decoder is destroyed whichever OpenGL context is
-        current. The textures are objects of the context the session was made
-        in: with another current, or none, they are kept, registered with
-        CUDA as they were, and :class:`DecoderError` says so once the decoder
-        is gone. Closing again with the session's own context current
-        releases them.
+        current. The textures belong to the share group of the context the
+        session was made in: with a context outside it current, or none, they
+        are kept, registered with CUDA as they were, and
+        :class:`DecoderError` says so once the decoder is gone. Closing again
+        with a context of the group current releases them.
         """
         release_all(self.stop, self._release_textures)
 
@@ -719,10 +720,11 @@ def _callback(*, shows: bool = False) -> Callable[[Callable[..., int]], Callable
     return wrap
 
 
-#: What a decode or a flush with the wrong OpenGL context current is told.
+#: What a decode or a flush with no context of the share group current is told.
 WRONG_CONTEXT = (
-    'the OpenGL context this decoder was opened in is not current on this '
-    'thread, and its pictures are copied into textures of that context')
+    'neither the OpenGL context this decoder was opened in nor one that '
+    'shares objects with it is current on this thread, and its pictures are '
+    'copied into textures of that context')
 
 
 class NVDECDecoder(Decoder):
@@ -747,9 +749,9 @@ class NVDECDecoder(Decoder):
     8-bit stream and ``'p010'`` from a 10-bit one, each holding its own copy
     of the picture.
 
-    The decoder belongs to the OpenGL context current when it is made:
-    :meth:`decode` and :meth:`flush` raise :class:`DecoderError` with another
-    context current, or none.
+    The decoder's textures belong to the share group of the OpenGL context
+    current when it is made: :meth:`decode` and :meth:`flush` raise
+    :class:`DecoderError` with a context outside that group current, or none.
 
     An AV1 stream is read by this package's parser before NVIDIA's
     (:class:`pyopengl_video.nvdec.av1.Gate`). A sample that breaks the AV1
@@ -783,7 +785,7 @@ class NVDECDecoder(Decoder):
         self._deinterlace = DEINTERLACE_MODES[deinterlace]
         self._headers = bytes(headers)
         self._closed = False
-        #: The context the plane textures are made in, and deleted in.
+        #: The context the plane textures are made in; its share group deletes them.
         self._owner = Owner.current()
         #: AV1 alone: what reads each sample before NVIDIA's parser does.
         self._gate = Gate() if name == codecs.AV1 else None
@@ -1147,12 +1149,12 @@ class NVDECDecoder(Decoder):
     def _retire(self, session: _Session) -> None:
         """Stop a session's decoder; keep its textures while they cannot be deleted.
 
-        That is while frames of them are held, and while the context that
-        owns them is not the one current: :meth:`close` deletes them then.
+        That is while frames of them are held, and while no context of
+        their share group is current: :meth:`close` deletes them then.
         """
         if session in self._retired:
             self._retired.remove(session)
-        if self._lends_from(session) or not self._owner.is_current():
+        if self._lends_from(session) or not self._owner.is_shared():
             session.stop()
         else:
             session.close()
@@ -1164,10 +1166,10 @@ class NVDECDecoder(Decoder):
 
         Every release runs whatever the others do. The parser and the
         hardware decoders are released whichever OpenGL context is current.
-        The plane textures are objects of the context the decoder was opened
-        in: with another current, or none, they are kept,
-        :class:`DecoderError` says so, and closing again with the decoder's
-        own context current releases them. Closing a decoder that has
+        The plane textures belong to the share group of the context the
+        decoder was opened in: with a context outside it current, or none,
+        they are kept, :class:`DecoderError` says so, and closing again with
+        a context of the group current releases them. Closing a decoder that has
         nothing left to release does nothing.
         """
         self._closed = True
@@ -1201,5 +1203,5 @@ class NVDECDecoder(Decoder):
             raise DecoderError('this decoder has been closed')
 
     def _require_context(self) -> None:
-        if not self._owner.is_current():
+        if not self._owner.is_shared():
             raise DecoderError(WRONG_CONTEXT)

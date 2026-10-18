@@ -1,8 +1,9 @@
 """The NVDEC decoder and the OpenGL context it was opened in, on real hardware.
 
-A texture name means something only in the context that made it. A decoder
-that made its plane textures in one context and deleted them with another
-current would delete that context's textures of the same names, and one that
+A texture name means something only in the share group that made it. A
+decoder that made its plane textures in one context and deleted them with a
+context outside its share group current would delete that context's textures
+of the same names, and one that
 decoded with no context current handed out frames whose textures were never
 made (N10 of ``plans/SECURITY-REVIEW.md``). Also here: what the decoder does
 with a picture the parser shows that it never decoded (N6), with the pictures
@@ -57,9 +58,9 @@ class TestDecodingInAnotherContext:
             for sample in samples[:8]:
                 found += md5s(decoder.decode(sample))
             contexts.use(None if other == 'none' else contexts.second)
-            with pytest.raises(DecoderError, match='is not current on this thread'):
+            with pytest.raises(DecoderError, match='shares objects with it is current on this thread'):
                 decoder.decode(samples[8])
-            with pytest.raises(DecoderError, match='is not current on this thread'):
+            with pytest.raises(DecoderError, match='shares objects with it is current on this thread'):
                 decoder.flush()
             contexts.use(contexts.first)
             for sample in samples[8:]:
@@ -69,6 +70,39 @@ class TestDecodingInAnotherContext:
         finally:
             contexts.use(contexts.first)
             decoder.close()
+
+
+class TestAContextThatShares:
+    """The plane textures are the share group's, in whichever of its contexts is current."""
+
+    def test_decoding_carries_on_in_it(self, contexts, interop):  # noqa: F811 - the fixture imported above
+        samples = samples_of('high_bpyramid')
+        decoder = NVDECDecoder(interop=interop)
+        try:
+            found = []
+            for sample in samples[:8]:
+                found += md5s(decoder.decode(sample))
+            contexts.use(contexts.sharing)
+            for sample in samples[8:]:
+                found += md5s(decoder.decode(sample))
+            found += md5s(decoder.flush())
+            assert found == H264['high_bpyramid']['md5']
+        finally:
+            contexts.use(contexts.first)
+            decoder.close()
+
+    def test_closing_in_it_deletes_the_textures(self, contexts, interop):  # noqa: F811 - the fixture imported above
+        decoder = NVDECDecoder(interop=interop)
+        frames = [frame for sample in samples_of('high_bpyramid')[:10]
+                  for frame in decoder.decode(sample)]
+        names = sorted({name for frame in frames for name in frame.planes})
+        assert names and all(glIsTexture(name) for name in names)
+        contexts.use(contexts.sharing)
+        decoder.close()
+        assert not any(glIsTexture(name) for name in names)
+        contexts.use(contexts.first)
+        assert not any(glIsTexture(name) for name in names)
+        decoder.close()
 
 
 class TestClosingInAnotherContext:

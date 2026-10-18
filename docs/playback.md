@@ -301,8 +301,10 @@ with MP4Reader('movie.mp4') as movie:
   holds no surfaces and refuses each picture until a sequence begins that the
   device takes.
 - An NVDEC decoder copies each picture into textures of the OpenGL context
-  it was opened in. `decode()` and `flush()` raise `DecoderError` with
-  another context current, or none, and decode again once its own is.
+  it was opened in. `decode()` and `flush()` work with that context current
+  or one that shares objects with it; with a context outside the share group
+  current, or none, they raise `DecoderError`, and decode again once one of
+  the group is.
 - An NVDEC decoder reads each picture NVIDIA's parser builds before the
   hardware is handed it. A picture that states more bitstream than the
   parser was fed, names a surface the decoder was not made with, or predicts
@@ -319,13 +321,18 @@ with MP4Reader('movie.mp4') as movie:
   handed the temporal delimiter, the sequence headers, the frame headers and
   the tile groups of a sample; its metadata and padding OBUs are left out,
   and so are those of an MP4's `av1C` configuration.
-- Close a decoder and an `NV12Converter` with the OpenGL context they were
-  made in current. A VA-API decoder releases its libva objects, the display
-  and the render node whichever context is current, and an NVDEC decoder its
-  parser and its hardware decoders; a decoder's textures, and the
-  converter's program and framebuffers, are objects of that one context. With
-  another current, or none, they are kept, `DecoderError` says so, and
-  closing again with the right context current gives them back.
+- Close a decoder with the OpenGL context it was made in current, or one
+  that shares objects with it. A VA-API decoder releases its libva objects,
+  the display and the render node whichever context is current, and an NVDEC
+  decoder its parser and its hardware decoders; a decoder's textures belong
+  to the share group. With a context outside the group current, or none,
+  they are kept, `DecoderError` says so, and closing again with a context of
+  the group current gives them back.
+- Close an `NV12Converter` with the OpenGL context it was made in current.
+  Its two programs belong to the share group, and its vertex array and
+  framebuffers to that one context: a context that shares objects with it
+  deletes the programs, keeps the rest and raises `DecoderError`, and closing
+  again with the converter's own context current gives them back.
 
 `MP4Reader.audio` reports each audio track's codec, sample rate, channels and
 configuration, and reads its samples. No audio is decoded yet; see *Audio* in

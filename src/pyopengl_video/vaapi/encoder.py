@@ -189,8 +189,12 @@ class InputHandle(inputs.InputHandle):
 
     def _held(self) -> list[Callable[[], object]]:
         """A release for each OpenGL object the handle still holds, the fence first."""
-        fence = [self.forget_fence] if self.fence is not None else []
+        fence = [self._delete_fence] if self.fence is not None else []
         return [*fence, *super()._held()]
+
+    def _delete_fence(self) -> None:
+        self.owner.require("an encoder input's fence", EncoderError)
+        self.forget_fence()
 
     def forget_fence(self) -> None:
         """Delete the fence made when drawing last finished, if there is one."""
@@ -821,11 +825,11 @@ class VAAPIEncoder(Encoder):
 
         Every release runs whatever the others do, and the display and the
         render node are closed last, always. Each registered input's EGL
-        image belongs to the OpenGL context it was registered in: with
-        another current, or none, the image is kept,
-        :class:`~pyopengl_video.encoder.EncoderError` says so once everything
-        of libva's is released, and closing again with that context current
-        gives it back. Closing an encoder with nothing left to release does
+        image belongs to the share group of the OpenGL context it was
+        registered in: with a context outside it current, or none, the image
+        is kept, :class:`~pyopengl_video.encoder.EncoderError` says so once
+        everything of libva's is released, and closing again with a context
+        of the group current gives it back. Closing an encoder with nothing left to release does
         nothing.
         """
         self._closed = True

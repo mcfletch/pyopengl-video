@@ -41,7 +41,7 @@ from pyopengl_video.inputs import (
     delete_framebuffer,
 )
 
-#: The `contexts` fixture: a second OpenGL context beside the suite's.
+#: The `contexts` fixture: two more OpenGL contexts beside the suite's.
 pytest_plugins = ('tests.other_context',)
 
 
@@ -228,6 +228,47 @@ class TestAnotherContextCurrent:
         handle.close()
         contexts.use(None)
         handle.close()
+
+
+class TestAContextThatSharesCurrent:
+    """A texture is the share group's; a framebuffer is its own context's."""
+
+    def test_a_texture_is_deleted_from_a_context_that_shares(self, contexts):
+        handle = InputHandle()
+        handle.texture = texture = create_rgba_texture(32, 16)
+        handle.owns_texture = True
+        contexts.use(contexts.sharing)
+        assert glIsTexture(texture)
+        handle.close()
+        assert not glIsTexture(texture)
+        contexts.use(contexts.first)
+        assert not glIsTexture(texture)
+
+    def test_a_texture_is_deleted_from_the_context_its_own_shares_with(self, contexts):
+        contexts.use(contexts.sharing)
+        handle = InputHandle()
+        handle.texture = texture = create_rgba_texture(32, 16)
+        handle.owns_texture = True
+        contexts.use(contexts.first)
+        handle.close()
+        assert not glIsTexture(texture)
+
+    def test_the_framebuffer_is_kept_for_its_own_context(self, contexts):
+        handle = ForeignTextureEncoder().new_input()
+        texture, framebuffer = handle.texture, handle.framebuffer
+        contexts.use(contexts.sharing)
+        victim = create_framebuffer(texture)
+        try:
+            with pytest.raises(EncoderError, match='framebuffer.*not shared'):
+                handle.close()
+            assert not glIsTexture(texture)
+            assert glIsFramebuffer(victim), "the sharing context's own framebuffer was deleted"
+        finally:
+            delete_framebuffer(victim)
+        contexts.use(contexts.first)
+        assert glIsFramebuffer(framebuffer)
+        handle.close()
+        assert not glIsFramebuffer(framebuffer)
 
 
 class TestClosingWhenADeleteFails:

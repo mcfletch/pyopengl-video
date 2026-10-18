@@ -273,10 +273,13 @@ class NV12Converter:
     has drawn into; :meth:`close` gives them back. The GL state the pass
     changes is restored before :meth:`draw` returns, on every path out.
 
-    Those objects belong to the context it was built in. :meth:`close` and
-    :meth:`forget` raise :class:`~pyopengl_video.decoder.DecoderError` and
-    delete nothing with another context current, or none, and work once its
-    own is current again.
+    The two programs belong to the share group of the context the pass was
+    built in, and the vertex array and the framebuffers to that context alone.
+    With a context that shares objects with it current, :meth:`close` deletes
+    the programs, keeps the rest and raises
+    :class:`~pyopengl_video.decoder.DecoderError`, as :meth:`forget` does;
+    with a context outside the group current, or none, nothing is deleted.
+    Closing again with its own context current gives back what is left.
     """
 
     def __init__(self) -> None:
@@ -419,7 +422,7 @@ class NV12Converter:
         """Delete the framebuffer kept for `target`, before the texture is deleted."""
         if target not in self._framebuffers:
             return
-        self._owner.require('the conversion pass', DecoderError)
+        self._owner.require_own("the conversion pass's framebuffer", DecoderError)
         glDeleteFramebuffers(1, [self._framebuffers.pop(target)])
 
     def close(self) -> None:
@@ -427,29 +430,31 @@ class NV12Converter:
 
         Safe to call twice. Every one is given back whatever the others do.
         """
-        if not (self._framebuffers or self._vertex_array or self._program
-                or self._copy_program):
-            return
-        self._owner.require('the conversion pass', DecoderError)
         release_all(*(functools.partial(self.forget, target)
                       for target in list(self._framebuffers)),
                     self._delete_vertex_array, self._delete_program,
                     self._delete_copy_program)
 
     def _delete_vertex_array(self) -> None:
+        if not self._vertex_array:
+            return
+        self._owner.require_own("the conversion pass's vertex array", DecoderError)
         vertex_array, self._vertex_array = self._vertex_array, 0
-        if vertex_array:
-            glDeleteVertexArrays(1, [vertex_array])
+        glDeleteVertexArrays(1, [vertex_array])
 
     def _delete_program(self) -> None:
+        if not self._program:
+            return
+        self._owner.require("the conversion pass's program", DecoderError)
         program, self._program = self._program, 0
-        if program:
-            glDeleteProgram(program)
+        glDeleteProgram(program)
 
     def _delete_copy_program(self) -> None:
+        if not self._copy_program:
+            return
+        self._owner.require("the conversion pass's copy program", DecoderError)
         program, self._copy_program = self._copy_program, 0
-        if program:
-            glDeleteProgram(program)
+        glDeleteProgram(program)
 
 
 def generate_mipmaps(texture: int) -> None:

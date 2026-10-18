@@ -35,8 +35,8 @@ class InputHandle:
         attachment, which is what a blit names as its destination
     owns_texture -- whether closing this handle should delete the texture too,
         which is so when the encoder made it and not when a caller handed one in
-    owner -- the OpenGL context current when the handle was made, which is
-        the one its framebuffer and texture belong to
+    owner -- the OpenGL context current when the handle was made: the
+        framebuffer belongs to it, and the texture to its share group
     """
 
     texture: int = 0
@@ -71,19 +71,14 @@ class InputHandle:
         Safe to call twice. An encoder's handle unregisters itself from the
         encoder first, so inputs and encoder may be closed in either order.
 
-        Both are objects of the context the handle was made in. With another
-        context current, or none, nothing is deleted and
-        :class:`~pyopengl_video.encoder.EncoderError` says so; closing again
-        with the handle's own context current gives them back.
+        The texture is deleted with the handle's own context current or one
+        that shares objects with it. The framebuffer belongs to the handle's
+        own context alone: in a sharing context it is kept and
+        :class:`~pyopengl_video.encoder.EncoderError` says so. With a context
+        outside the share group current, or none, nothing is deleted. Closing
+        again with the handle's own context current gives back what is left.
         """
-        held = self._held()
-        if not held:
-            return
-        from pyopengl_video.encoder import (  # noqa: PLC0415 - the encoder module imports this one
-            EncoderError,
-        )
-        self.owner.require('an encoder input', EncoderError)
-        release_all(*held)
+        release_all(*self._held())
 
     def _held(self) -> list[Callable[[], object]]:
         """A release for each OpenGL object the handle still holds."""
@@ -95,12 +90,23 @@ class InputHandle:
         return held
 
     def _delete_framebuffer(self) -> None:
+        self.owner.require_own("an encoder input's framebuffer", _encoder_error())
         framebuffer, self.framebuffer = self.framebuffer, 0
         delete_framebuffer(framebuffer)
 
     def _delete_texture(self) -> None:
+        self.owner.require("an encoder input's texture", _encoder_error())
         texture, self.texture = self.texture, 0
         delete_texture(texture)
+
+
+def _encoder_error() -> type[Exception]:
+    """:class:`~pyopengl_video.encoder.EncoderError`, whose module imports this one."""
+    from pyopengl_video.encoder import (  # noqa: PLC0415 - the encoder module imports this one
+        EncoderError,
+    )
+
+    return EncoderError
 
 
 def create_rgba_texture(width: int, height: int) -> int:

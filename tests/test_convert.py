@@ -51,6 +51,7 @@ from OpenGL.GL import (
     glGetTexLevelParameteriv,
     glIsEnabled,
     glIsProgram,
+    glIsVertexArray,
     glPixelStorei,
     glTexImage2D,
     glTexParameteri,
@@ -67,7 +68,7 @@ from pyopengl_video.colour import (
 from pyopengl_video.convert import NV12Converter, create_output_texture
 from pyopengl_video.decoder import DecodedFrame, DecoderError
 
-#: The `contexts` fixture: a second OpenGL context beside the suite's.
+#: The `contexts` fixture: two more OpenGL contexts beside the suite's.
 pytest_plugins = ('tests.other_context',)
 
 pytestmark = pytest.mark.gl
@@ -417,6 +418,27 @@ class TestTheContextItWasBuiltIn:
             converter.forget(target)
         contexts.use(contexts.first)
         converter.forget(target)
+        converter.close()
+
+    def test_a_context_that_shares_deletes_the_program_and_keeps_the_rest(
+            self, textures, contexts):
+        converter = NV12Converter()
+        target = textures.output(8, 8)
+        luma, chroma = textures(*planes(100, 128, 128))
+        converter.draw(luma, chroma, visible=VISIBLE, colour=Colour(), target=target,
+                       size=(8, 8))
+        program = converter._program  # noqa: SLF001 - the name the share group holds
+        vertex_array = converter._vertex_array  # noqa: SLF001 - the name its own context holds
+        contexts.use(contexts.sharing)
+        with pytest.raises(DecoderError, match='framebuffer.*not shared'):
+            converter.forget(target)
+        with pytest.raises(DecoderError, match='not shared'):
+            converter.close()
+        assert not glIsProgram(program)
+        contexts.use(contexts.first)
+        assert glIsVertexArray(vertex_array)
+        converter.close()
+        assert not glIsVertexArray(vertex_array)
         converter.close()
 
 
