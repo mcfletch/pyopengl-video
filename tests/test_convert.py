@@ -315,6 +315,49 @@ class TestRGBAFrames:
         finally:
             glDisable(GL_BLEND)
 
+    @pytest.mark.parametrize('visible', [
+        (0, 0, 49, 30), (0, 0, 36, 41), (20, 0, 36, 30), (-1, 0, 36, 30),
+        (0, 0, 0, 30), (0, 0, 36.5, 30),
+    ])
+    def test_a_rectangle_that_is_not_inside_the_texture_is_refused(
+            self, converter, textures, visible):
+        _, texture = self.picture(textures)
+        with pytest.raises(DecoderError, match='visible'):
+            converter.copy(texture, visible=visible, target=textures.output(8, 8),
+                           size=(8, 8), texture_size=TEXTURE)
+
+    @pytest.mark.parametrize('size', [(37, 30), (36, 31), (0, 30)])
+    def test_a_size_the_rectangle_does_not_cover_is_refused(self, converter, textures, size):
+        _, texture = self.picture(textures)
+        with pytest.raises(DecoderError, match='size'):
+            converter.copy(texture, visible=VISIBLE, target=textures.output(8, 8),
+                           size=size, texture_size=TEXTURE)
+
+    def test_a_frame_whose_rectangle_leaves_its_texture_is_refused(self, converter, textures):
+        _, texture = self.picture(textures)
+        frame = DecodedFrame(timestamp=0, duration=0, planes=(texture,), layout='rgba',
+                             texture_size=TEXTURE, visible=(0, 0, 64, 64), colour=Colour(),
+                             on_release=lambda _frame: None)
+        with pytest.raises(DecoderError, match='visible'):
+            converter.convert(frame, textures.output(64, 64))
+
+    def test_the_shader_holds_the_fetch_to_the_texture(self, converter, textures):
+        """A rectangle past the texture, with no texture size to refuse it by."""
+        data = np.full((16, 16, 4), (200, 100, 50, 255), np.uint8)
+        texture = textures.rgba(data)
+        target = textures.output(32, 32)
+        converter.copy(texture, visible=(0, 0, 32, 32), target=target)
+        assert (read(target, 32, 32)[..., :3] == (200, 100, 50)).all()
+
+    def test_the_shader_holds_the_fetch_to_the_visible_rectangle(self, converter, textures):
+        """The pass itself, drawn larger than its rectangle: the padding is not read."""
+        data = np.full((*TEXTURE[::-1], 4), (PADDING, PADDING, PADDING, 255), np.uint8)
+        data[:VISIBLE[3], :VISIBLE[2]] = (200, 100, 50, 255)
+        texture = textures.rgba(data)
+        target = textures.output(*TEXTURE)
+        converter._copy_pass(texture, VISIBLE, target, TEXTURE)  # noqa: SLF001 - the shader, with the refusals in front of it stepped around
+        assert (read(target, *TEXTURE)[..., :3] == (200, 100, 50)).all()
+
     def test_a_frame_that_is_not_one_of_the_layouts_is_refused(self, converter, textures):
         frame = DecodedFrame(timestamp=0, duration=1, planes=(1,), layout='yuy2',
                              texture_size=TEXTURE, visible=VISIBLE, colour=Colour(),

@@ -173,7 +173,13 @@ void main() {
     // The output's row 0 is the picture's bottom, the source's row 0 its top.
     vec2 source = vec2(visible.x + gl_FragCoord.x,
                        visible.y + visible.w - gl_FragCoord.y);
-    colour = vec4(texelFetch(picture, ivec2(floor(source)), 0).rgb, 1.0);
+    // A fetch outside the texture is undefined, so the texel is held to the
+    // visible rectangle and then to the texture, whatever the uniforms say.
+    ivec2 first = ivec2(visible.xy);
+    ivec2 last = max(first + ivec2(visible.zw) - 1, first);
+    ivec2 texel = min(max(ivec2(floor(source)), first), last);
+    texel = clamp(texel, ivec2(0), max(textureSize(picture, 0) - 1, ivec2(0)));
+    colour = vec4(texelFetch(picture, texel, 0).rgb, 1.0);
 }
 '''
 
@@ -235,9 +241,10 @@ def checked_rectangle(visible: tuple[int, int, int, int], size: tuple[int, int] 
                       ) -> tuple[tuple[int, int, int, int], tuple[int, int]]:
     """A visible rectangle and an output size the pass reads only the picture for.
 
-    visible -- ``(x, y, width, height)`` in luma texels
+    visible -- ``(x, y, width, height)`` in texels of the texture read: the
+        luma plane, or an RGBA picture
     size -- the output size, or None for the rectangle's own
-    texture_size -- the luma texture's size, or None where it is not known
+    texture_size -- that texture's size, or None where it is not known
 
     Returns the rectangle and the size as whole numbers. Raises
     :class:`~pyopengl_video.decoder.DecoderError` for a rectangle that is
@@ -304,7 +311,8 @@ class NV12Converter:
             raise DecoderError('this frame has been released; its surface may '
                                'already hold another picture')
         if frame.layout == 'rgba':
-            self.copy(frame.planes[0], visible=frame.visible, target=target)
+            self.copy(frame.planes[0], visible=frame.visible, target=target,
+                      texture_size=frame.texture_size)
             return
         if frame.layout not in LAYOUT_DEPTHS:
             raise DecoderError(f'a {frame.layout} frame has no conversion')
@@ -371,15 +379,29 @@ class NV12Converter:
             glDrawArrays(GL_TRIANGLES, 0, 3)
 
     def copy(self, picture: int, *, visible: tuple[int, int, int, int], target: int,
-             size: tuple[int, int] | None = None) -> None:
+             size: tuple[int, int] | None = None,
+             texture_size: tuple[int, int] | None = None) -> None:
         """Draw the `visible` part of an RGBA texture into `target`, flipped to OpenGL's orientation.
 
         picture -- an RGBA texture, first row at the top
-        visible -- ``(x, y, width, height)`` of the picture in it
+        visible -- ``(x, y, width, height)`` of the picture in it, in whole
+            texels: not empty, and inside `texture_size` where that is given
         target -- an RGBA texture, usually from :func:`create_output_texture`
-        size -- the target's size; the visible size by default
+        size -- how much of the target is drawn, from its lower left; the
+            visible size by default and no larger
+        texture_size -- the picture texture's ``(width, height)``, which
+            `visible` is checked against
+
+        Raises :class:`~pyopengl_video.decoder.DecoderError` for a rectangle
+        or a size outside those limits, before anything is drawn.
         """
-        width, height = size or visible[2:]
+        visible, size = checked_rectangle(visible, size, texture_size)
+        self._copy_pass(picture, visible, target, size)
+
+    def _copy_pass(self, picture: int, visible: tuple[int, int, int, int], target: int,
+                   size: tuple[int, int]) -> None:
+        """Copy, with the rectangle and the size taken as they are given."""
+        width, height = size
         framebuffer = self._framebuffer(target)
         with preserved_state(DISABLED_FOR_THE_PASS, units=1):
             for capability in DISABLED_FOR_THE_PASS:

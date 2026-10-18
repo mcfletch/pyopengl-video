@@ -293,7 +293,8 @@ with MP4Reader('movie.mp4') as movie:
   `visible`, an optional `texture_size` to check it against, and an optional
   `size`: how much of the target is drawn, from its lower left, one output
   texel for each luma texel. It is the visible size by default and may be
-  smaller, never larger.
+  smaller, never larger. `NV12Converter.copy()` takes one RGBA texture with
+  the same `visible`, `texture_size` and `size`.
 - A VA-API decoder raises only `DecoderError`: whatever a stream or the
   driver brings about is translated, with the original on `__cause__`. A
   sequence that asks for more decode surfaces than any codec needs (18) is
