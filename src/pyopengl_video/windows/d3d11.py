@@ -275,7 +275,11 @@ class Device:
         finally:
             release(interface)
         if multithread:
-            self._protect()
+            try:
+                self._protect()
+            except Exception:
+                self.close()
+                raise
 
     @staticmethod
     def _adapter_interface(adapter: Adapter | None) -> tuple[c_void_p, Adapter | None]:

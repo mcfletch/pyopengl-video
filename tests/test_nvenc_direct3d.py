@@ -139,6 +139,12 @@ class TestOnTheNVIDIAGPU:
         assert pixels[:4] == bytes((255, 0, 0, 255))
         assert len(pixels) == SIZE[0] * SIZE[1] * 4
 
+    def test_an_input_held_for_drawing_is_not_encoded(self, encoder):
+        """The encoder would read a frame OpenGL is still writing."""
+        handle = encoder.new_input()
+        with handle.for_drawing(), pytest.raises(EncoderError, match='held for drawing'):
+            encoder.encode(handle, timestamp=0)
+
     def test_the_encoder_gives_back_everything_it_made(self, nvenc_available):  # noqa: ARG002 - requested to skip off NVIDIA
         built = NVENCEncoder(*SIZE)
         handles = [built.new_input() for _ in range(built.input_slots)]

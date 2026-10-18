@@ -23,6 +23,7 @@ import ctypes
 import dataclasses
 import logging
 import time
+from collections.abc import Callable
 from ctypes import byref, c_void_p
 from typing import Any
 
@@ -133,6 +134,35 @@ def extension_buffers(codec: str) -> list[Any]:
     return found
 
 
+class VPLInput(interop.SharedTexture):
+    """A shared texture with the surface the runtime is given for it.
+
+    surface -- this input's own ``mfxFrameSurface1``. An encoder that reorders
+        keeps the surfaces it has been given until their pictures are coded, and
+        a surface must not change while it does, so the inputs cannot share one.
+    forget -- called as the input closes, so the allocator stops resolving a
+        texture that is gone
+    """
+
+    surface: api.mfxFrameSurface1
+    forget: Callable[[], None] | None = None
+
+    @property
+    def in_use(self) -> bool:
+        """Whether the runtime still holds the surface."""
+        return bool(self.surface.Data.Locked)
+
+    def close(self) -> None:
+        """Stop the allocator resolving this texture, then give it back."""
+        if self.in_use:
+            raise EncoderError('this input is still held by the encoder; it can be '
+                               'closed once its picture has come out')
+        if self.forget is not None:
+            self.forget()
+            self.forget = None
+        super().close()
+
+
 class VPLEncoder(Encoder):
     """H.264, HEVC, AV1 or VP9 from OpenGL, on Intel hardware, through Direct3D 11.
 
@@ -186,7 +216,7 @@ class VPLEncoder(Encoder):
         self._closed = False
         self._initialised = False
         self._frames = 0
-        self._inputs: list[interop.SharedTexture] = []
+        self._inputs: list[VPLInput] = []
         self.session = c_void_p()
         self.device: d3d11.Device | None = None
         self.interop: interop.InteropDevice | None = None
@@ -343,8 +373,6 @@ class VPLEncoder(Encoder):
         self.parameters = settled
         self.reorders_frames = settled.mfx.GopRefDist > 1
         self._bitstream = self._create_bitstream(settled)
-        self._surface = api.mfxFrameSurface1()
-        self._frame_info(self._surface.Info)
 
     def _create_bitstream(self, settled: api.mfxVideoParam) -> api.mfxBitstream:
         """A buffer for the compressed pictures, sized as the driver asked."""
@@ -373,8 +401,20 @@ class VPLEncoder(Encoder):
         self._require_open()
         assert self.interop is not None and self.allocator is not None
         width, height = self.size
-        shared = self.interop.create_texture(width, height, SURFACE_FORMAT)
-        self.allocator.adopt(shared.resource)
+        shared = self.interop.create_texture(
+            width, height, SURFACE_FORMAT, factory=VPLInput)
+        assert isinstance(shared, VPLInput)
+        shared.surface = api.mfxFrameSurface1()
+        self._frame_info(shared.surface.Info)
+        identifier = self.allocator.adopt(shared.resource)
+        shared.surface.Data.MemId = c_void_p(identifier)
+        allocator = self.allocator
+
+        def forget() -> None:
+            allocator.forget(identifier)
+            self._inputs = [kept for kept in self._inputs if kept is not shared]
+
+        shared.forget = forget
         self._inputs.append(shared)
         return shared
 
@@ -388,12 +428,21 @@ class VPLEncoder(Encoder):
                force_idr: bool = False) -> list[Packet]:
         """Submit the picture in `handle`; return whatever came out."""
         self._require_open()
-        if not isinstance(handle, interop.SharedTexture):
-            raise EncoderError('encode() wants a handle from new_input()')
+        if not any(kept is handle for kept in self._inputs):
+            raise EncoderError('encode() wants an open handle from this encoder\'s '
+                               'new_input()')
+        if handle.held:
+            raise EncoderError(
+                'this input is still held for drawing; encode after leaving its '
+                'for_drawing scope, which is what hands it to the encoder')
+        if handle.in_use:
+            raise EncoderError(
+                'this input is still being encoded; cycle through at least '
+                f'{self.input_slots} inputs so the encoder is never handed one it '
+                'has not finished with')
         duration = self.frame_duration(duration)
 
-        surface = self._surface
-        surface.Data.MemId = ctypes.cast(handle.resource.pointer, c_void_p)
+        surface = handle.surface
         surface.Data.TimeStamp = int(timestamp)
         surface.Data.FrameOrder = self._frames
         self._frames += 1
@@ -526,21 +575,31 @@ class VPLEncoder(Encoder):
         if self._initialised and self.session:
             self.api.MFXVideoENCODE_Close(self.session)
             self._initialised = False
-        for shared in self._inputs:
-            shared.close()
-        self._inputs = []
-        if self.session:
-            self.api.MFXClose(self.session)
-            self.session = c_void_p()
-        if self.allocator is not None:
-            self.allocator.close()
-            self.allocator = None
-        if self.interop is not None:
-            self.interop.close()
-            self.interop = None
-        if self.device is not None:
-            self.device.close()
-            self.device = None
+        # Closing an input deletes its OpenGL objects, which raises where no
+        # context is current -- a destructor running after the window is gone.
+        # The session and the device are released whatever the inputs do.
+        try:
+            if self.session:
+                self.api.MFXClose(self.session)
+                self.session = c_void_p()
+            for shared in list(self._inputs):
+                shared.surface.Data.Locked = 0      # the session is closed: nothing holds it
+                shared.close()
+        finally:
+            self._inputs = []
+            try:
+                if self.allocator is not None:
+                    self.allocator.close()
+                    self.allocator = None
+            finally:
+                try:
+                    if self.interop is not None:
+                        self.interop.close()
+                        self.interop = None
+                finally:
+                    if self.device is not None:
+                        self.device.close()
+                        self.device = None
 
     def __del__(self) -> None:
         # A recording that ended in an exception should still give the driver

@@ -229,6 +229,62 @@ def test_reusing_a_texture_the_encoder_still_holds_says_so():
         encoder.close()
 
 
+class TestWhenOpenGLFailsDuringClose:
+    """The session is a limited driver resource, and closing must give it back.
+
+    An encoder closed with no context current -- from a destructor after the
+    window is gone -- cannot delete its OpenGL objects.
+    """
+
+    def test_the_session_is_released_anyway(self, nvenc_available, monkeypatch):  # noqa: ARG002 - requested to skip where there is no NVENC
+        import OpenGL.GL  # noqa: PLC0415 - the module whose entry point is replaced
+
+        built = NVENCEncoder(*SIZE, fps=30)
+        built.new_input()
+        destroyed = []
+        destroy = built.api.nvEncDestroyEncoder
+        monkeypatch.setattr(built.api, 'nvEncDestroyEncoder',
+                            lambda session: destroyed.append(session) or destroy(session))
+
+        def no_context(*_arguments):
+            raise RuntimeError('no context is current')
+
+        monkeypatch.setattr(OpenGL.GL, 'glDeleteFramebuffers', no_context)
+        with pytest.raises(RuntimeError, match='no context'):
+            built.close()
+        assert len(destroyed) == 1
+        assert built.session.value is None
+        assert built.direct3d is None or built.direct3d.device is None
+        monkeypatch.undo()
+        built.close()                               # already closed; nothing to do
+
+
+class TestWhatEncodeAccepts:
+    def test_an_input_from_another_encoder_is_refused(self, encoder):
+        with NVENCEncoder(*SIZE, fps=30) as other:
+            foreign = other.new_input()
+            with pytest.raises(EncoderError, match='not registered with this encoder'):
+                encoder.encode(foreign, timestamp=0)
+
+    def test_a_closed_input_is_refused_by_name(self, encoder):
+        handle = encoder.new_input()
+        handle.close()
+        with pytest.raises(EncoderError, match='not registered with this encoder'):
+            encoder.encode(handle, timestamp=0)
+
+    def test_a_failed_submission_leaves_nothing_waiting(self, encoder, monkeypatch):
+        """The input can be closed afterwards, and the next picture encodes."""
+        handle = encoder.new_input()
+        put_frame(handle, gradient_frame(*SIZE))
+        real = encoder.api.nvEncEncodePicture
+        monkeypatch.setattr(encoder.api, 'nvEncEncodePicture', lambda *_arguments: 20)
+        with pytest.raises(EncoderError, match='nvEncEncodePicture'):
+            encoder.encode(handle, timestamp=0)
+        monkeypatch.setattr(encoder.api, 'nvEncEncodePicture', real)
+        assert len(encoder.encode(handle, timestamp=0)) == 1
+        handle.close()
+
+
 class TestClosingAnInput:
     """The driver reads a texture as it unregisters it, so it must still exist.
 

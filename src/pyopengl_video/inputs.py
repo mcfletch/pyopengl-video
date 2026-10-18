@@ -53,8 +53,8 @@ class InputHandle:
     def close(self) -> None:
         """Give back the framebuffer, and the texture if this handle made it.
 
-        Safe to call twice. Unregistering the input from the encoder is the
-        encoder's own business, done when it closes.
+        Safe to call twice. An encoder's handle unregisters itself from the
+        encoder first, so inputs and encoder may be closed in either order.
         """
         delete_framebuffer(self.framebuffer)
         self.framebuffer = 0

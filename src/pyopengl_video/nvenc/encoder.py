@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import ctypes
 import logging
-import sys
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -39,6 +38,7 @@ from pyopengl_video.encoder import (
     frame_rate_ratio,
 )
 from pyopengl_video.nvenc import api
+from pyopengl_video.nvenc.api import DIRECTX_PLATFORM
 
 if TYPE_CHECKING:
     from pyopengl_video.nvenc.direct3d import Direct3DInputs
@@ -50,9 +50,12 @@ __all__ = ['NVENCEncoder', 'InputHandle', 'DEFAULT_BITS_PER_PIXEL',
            'DIRECTX_PLATFORM', 'RegisteredInput', 'SPARE_OUTPUT_BUFFERS', 'configure_codec', 'current_gl_renderer',
            'open_session', 'session_codecs', 'unsupported_device_detail']
 
-#: Where textures reach the encoder through Direct3D 11 rather than by OpenGL
-#: name. NVIDIA supports the OpenGL device type on Linux alone.
-DIRECTX_PLATFORM = sys.platform == 'win32'
+#: The statuses that mean the device was not one the encoder could use, as
+#: opposed to the driver being out of sessions or failing for its own reasons.
+DEVICE_STATUSES = frozenset(
+    api.STATUS_NAMES.index(name) for name in
+    ('ERR_NO_ENCODE_DEVICE', 'ERR_UNSUPPORTED_DEVICE', 'ERR_INVALID_ENCODERDEVICE',
+     'ERR_INVALID_DEVICE'))
 
 #: How many compressed-output buffers to keep, over and above the frames the
 #: encoder may hold for reordering.
@@ -119,10 +122,11 @@ def open_session(library: api.NvEncodeAPI,
     status = library.nvEncOpenEncodeSessionEx(
         ctypes.byref(params), ctypes.byref(session))
     if status != api.NV_ENC_SUCCESS:
-        raise api.NVENCError(
-            status, 'nvEncOpenEncodeSessionEx',
-            unsupported_device_detail() if device is None else
-            'the Direct3D device must be on the NVIDIA GPU that holds the encoder')
+        detail = ''
+        if status in DEVICE_STATUSES:
+            detail = (unsupported_device_detail() if device is None else
+                      'the Direct3D device must be on the NVIDIA GPU that holds the encoder')
+        raise api.NVENCError(status, 'nvEncOpenEncodeSessionEx', detail)
     return session
 
 
@@ -460,9 +464,6 @@ class NVENCEncoder(Encoder):
         held = config.frameIntervalP + (
             config.rcParams.lookaheadDepth if config.rcParams.enableLookahead else 0)
         self.input_slots = held + 1
-        # The driver copies the configuration during initialisation; holding it
-        # keeps the pointer we passed valid for the length of that call.
-        self._config = preset_config
 
     def _create_bitstream_buffer(self) -> ctypes.c_void_p:
         """One buffer for the driver to write a compressed picture into."""
@@ -570,13 +571,25 @@ class NVENCEncoder(Encoder):
         self._require_open()
         duration = self.frame_duration(duration)
 
+        if not any(kept is handle for kept in self._registered):
+            raise EncoderError(
+                'this input is not registered with this encoder: it was closed, '
+                'or it came from another encoder')
+        if getattr(handle, 'held', False):
+            raise EncoderError(
+                'this input is still held for drawing; encode after leaving its '
+                'for_drawing scope, which is what hands it to the encoder')
         if any(pending.handle is handle for pending in self._pending):
             raise EncoderError(
                 f'texture {handle.texture} is still being encoded; cycle through at '
                 f'least {self.input_slots} registered textures so the encoder is '
                 'never handed one it has not finished with')
         mapped = self._map(handle)
-        output = self._acquire_output()
+        try:
+            output = self._acquire_output()
+        except Exception:
+            self._unmap(mapped)
+            raise
         picture = api.NV_ENC_PIC_PARAMS()
         picture.version = self.api.struct_version(7, big=True)
         picture.inputWidth, picture.inputHeight = self.size
@@ -591,10 +604,14 @@ class NVENCEncoder(Encoder):
             picture.encodePicFlags = api.NV_ENC_PIC_FLAG_FORCEIDR
 
         status = self.api.nvEncEncodePicture(self.session, ctypes.byref(picture))
+        if status not in (api.NV_ENC_SUCCESS, api.NV_ENC_ERR_NEED_MORE_INPUT):
+            # Nothing was submitted, so nothing is left waiting for a picture.
+            self._unmap(mapped)
+            self._free_output.append(output)
+            self.api.check(status, 'nvEncEncodePicture', self.session)
         self._pending.append(_Submission(output=output, mapped=mapped, handle=handle))
         if status == api.NV_ENC_ERR_NEED_MORE_INPUT:
             return []
-        self.api.check(status, 'nvEncEncodePicture', self.session)
         return self._drain()
 
     def flush(self) -> list[Packet]:
@@ -638,15 +655,23 @@ class NVENCEncoder(Encoder):
         for buffer in getattr(self, '_free_output', []):
             self.api.nvEncDestroyBitstreamBuffer(self.session, buffer)
         self._free_output = []
-        for handle in list(self._registered):
-            handle.close()
-        self._registered = []
-        if self.session:
-            self.api.nvEncDestroyEncoder(self.session)
-            self.session = ctypes.c_void_p()
-        if self.direct3d is not None:
-            self.direct3d.close()
-            self.direct3d = None
+        # Closing an input deletes its OpenGL objects, which raises where no
+        # context is current -- a destructor running after the window is gone.
+        # The session is a limited driver resource and the Direct3D device is a
+        # GPU allocation, so they are released whatever the inputs do.
+        try:
+            for handle in list(self._registered):
+                handle.close()
+        finally:
+            self._registered = []
+            try:
+                if self.session:
+                    self.api.nvEncDestroyEncoder(self.session)
+                    self.session = ctypes.c_void_p()
+            finally:
+                if self.direct3d is not None:
+                    self.direct3d.close()
+                    self.direct3d = None
 
     # ------------------------------------------------------------ internals
 
@@ -678,9 +703,11 @@ class NVENCEncoder(Encoder):
         packets = []
         while self._pending:
             submission = self._pending.popleft()
-            packets.append(self._read(submission.output))
-            self._unmap(submission.mapped)
-            self._free_output.append(submission.output)
+            try:
+                packets.append(self._read(submission.output))
+            finally:
+                self._unmap(submission.mapped)
+                self._free_output.append(submission.output)
         return packets
 
     def _read(self, output: ctypes.c_void_p) -> Packet:

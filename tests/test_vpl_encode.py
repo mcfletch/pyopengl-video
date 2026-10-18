@@ -401,3 +401,68 @@ def test_a_recording_is_a_complete_mp4_holding_every_frame(blit_source, tmp_path
     avcc = path_to(movie, 'moov', 'trak', 'mdia', 'minf', 'stbl', 'stsd', 'avc1', 'avcC')
     assert avcc[0] == 1
     assert avcc[1] in (0x42, 0x4d, 0x64)
+
+
+class TestInputsBelongToTheEncoder:
+    def test_closing_an_input_stops_the_allocator_resolving_it(self, encoder):
+        handle = encoder.new_input()
+        identifier = ctypes.cast(handle.resource.pointer, c_void_p).value
+        assert identifier in encoder.allocator.external
+        handle.close()
+        assert identifier not in encoder.allocator.external
+
+    def test_every_input_has_a_surface_of_its_own(self, encoder):
+        first, second = encoder.new_input(), encoder.new_input()
+        assert first.surface is not second.surface
+        assert first.surface.Data.MemId != second.surface.Data.MemId
+
+    def test_an_input_from_another_encoder_is_refused(self, encoder):
+        with VPLEncoder(320, 240, fps=30) as other:
+            foreign = other.new_input()
+            with pytest.raises(EncoderError, match='open handle from this encoder'):
+                encoder.encode(foreign, timestamp=0)
+
+    def test_a_closed_input_is_refused(self, encoder):
+        handle = encoder.new_input()
+        handle.close()
+        with pytest.raises(EncoderError, match='open handle from this encoder'):
+            encoder.encode(handle, timestamp=0)
+
+    def test_an_input_held_for_drawing_is_not_encoded(self, encoder):
+        handle = encoder.new_input()
+        with handle.for_drawing(), pytest.raises(EncoderError, match='held for drawing'):
+            encoder.encode(handle, timestamp=0)
+
+
+@pytest.mark.usefixtures('vpl_available')
+def test_reordered_pictures_come_out_for_the_frames_that_went_in():
+    """Each picture is coded from its own input, not from whichever was drawn last."""
+    encoder = VPLEncoder(320, 240, fps=30, bframes=2, gop=30, bitrate=2_000_000)
+    try:
+        ring = [encoder.new_input() for _ in range(encoder.input_slots + 2)]
+        packets = []
+        for index in range(12):
+            handle = ring[index % len(ring)]
+            draw(handle, (index % 10) / 10)
+            packets.extend(encoder.encode(handle, timestamp=index * 3000))
+        packets.extend(encoder.flush())
+    finally:
+        encoder.close()
+    assert sorted(packet.timestamp for packet in packets) == [i * 3000 for i in range(12)]
+
+
+@pytest.mark.usefixtures('vpl_available')
+def test_the_session_and_device_are_released_when_opengl_cannot_clean_up(monkeypatch):
+    import OpenGL.GL  # noqa: PLC0415 - the module whose entry point is replaced
+
+    built = VPLEncoder(320, 240, fps=30)
+    built.new_input()
+
+    def no_context(*_arguments):
+        raise RuntimeError('no context is current')
+
+    monkeypatch.setattr(OpenGL.GL, 'glDeleteFramebuffers', no_context)
+    with pytest.raises(RuntimeError, match='no context'):
+        built.close()
+    assert built.device is None and built.interop is None and built.allocator is None
+    assert built.session.value is None

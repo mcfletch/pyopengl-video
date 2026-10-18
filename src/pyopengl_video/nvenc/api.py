@@ -59,6 +59,11 @@ LIBRARY_NAME = library_name()
 # written out because ctypes offers the Windows spellings on Windows alone, and
 # a checker reading this file on either platform should see only the ones that
 # exist there.
+#: Where textures reach the encoder through Direct3D 11 rather than by OpenGL
+#: name. NVIDIA supports the OpenGL device type on Linux alone.
+DIRECTX_PLATFORM = sys.platform == 'win32'
+
+# a checker narrows by the literal comparison, not by a name bound to it
 if sys.platform == 'win32':
     _LOADER = ctypes.WinDLL
     FUNCTYPE = ctypes.WINFUNCTYPE

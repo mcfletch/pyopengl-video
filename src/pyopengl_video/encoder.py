@@ -97,7 +97,9 @@ class Encoder(ABC):
     and close it when the recording ends -- as a context manager, if that suits::
 
         with open_encoder(1920, 1080, fps=60) as encoder:
-            handle = encoder.register(texture)
+            handle = encoder.new_input()
+            with handle.for_drawing():
+                copy_the_frame_into(handle.framebuffer)
             packets = encoder.encode(handle, timestamp)
     """
 

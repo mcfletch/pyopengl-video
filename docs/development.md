@@ -227,11 +227,20 @@ serve. Silence
 matters as much as speed: a driver that logs to stderr on open must be given a
 callback that swallows it, since a library must not print during discovery.
 
-The encoder implements five methods, and the contract around them is what makes
+The encoder implements six methods, and the contract around them is what makes
 backends interchangeable:
 
-- **`register(texture, target)`** returns a handle. Registration is the
-  expensive half, and handles are reused for the whole recording.
+- **`new_input()`** returns a handle: a texture to draw into, a framebuffer
+  filling it, and a `for_drawing()` scope for backends that share the texture
+  with another API. It is how a caller gets an input on every backend. The
+  base class makes a plain texture and calls `register()`; a backend whose
+  inputs must be allocated by the driver overrides it and sets
+  `allocates_inputs`. A handle unregisters itself as it closes, and `encode()`
+  refuses one that is closed, from another encoder, held for drawing, or still
+  being encoded.
+- **`register(texture, target)`** returns a handle for a texture the caller
+  made, on backends that accept one. Registration is the expensive half, and
+  handles are reused for the whole recording.
 - **`encode(handle, timestamp, duration, force_idr)`** returns a *list* of
   packets, possibly empty. Backends that hold frames back set
   `reorders_frames` and return packets in decode order carrying display

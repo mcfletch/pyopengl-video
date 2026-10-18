@@ -135,9 +135,11 @@ class Direct3DInputs:
 
     def close(self) -> None:
         """Close every texture made here, then the bridge and the device."""
-        if self.interop is not None:
-            self.interop.close()
-            self.interop = None
-        if self.device is not None:
-            self.device.close()
-            self.device = None
+        try:
+            if self.interop is not None:
+                self.interop.close()
+                self.interop = None
+        finally:
+            if self.device is not None:
+                self.device.close()
+                self.device = None

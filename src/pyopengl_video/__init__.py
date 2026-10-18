@@ -7,10 +7,12 @@ has a video encoder on the same die. This package hands one to the other::
     from pyopengl_video.mp4 import MP4Writer
 
     with open_encoder(1920, 1080, fps=60, bitrate=12_000_000) as encoder:
-        handle = encoder.register(texture)
+        handles = [encoder.new_input() for _ in range(encoder.input_slots)]
         with MP4Writer('out.mp4', encoder) as movie:
             for frame in range(600):
-                render()
+                handle = handles[frame % len(handles)]
+                with handle.for_drawing():
+                    render_into(handle.framebuffer)
                 movie.write(encoder.encode(handle, timestamp=frame * 1500))
             movie.write(encoder.flush())
 

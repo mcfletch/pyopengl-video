@@ -73,6 +73,42 @@ class TestWhatASessionOffers:
         assert session_codecs(FakeLibrary([]), ctypes.c_void_p(1)) == {}
 
 
+class TestOpeningASession:
+    """A refused session is explained by what the driver said was wrong."""
+
+    class Refusing:
+        api_version = 1
+
+        def __init__(self, status):
+            self.status = status
+
+        def struct_version(self, revision, big=False):  # noqa: ARG002 - the interface's signature
+            return revision
+
+        def nvEncOpenEncodeSessionEx(self, params, session):  # noqa: ARG002 - the interface's signature
+            return self.status
+
+    def refused(self, name, device=None):
+        status = api.STATUS_NAMES.index(name)
+        with pytest.raises(api.NVENCError) as caught:
+            nvenc_encoder.open_session(self.Refusing(status), device)
+        return str(caught.value)
+
+    def test_a_device_the_encoder_cannot_use_says_which_gpu_it_wants(self):
+        message = self.refused('ERR_UNSUPPORTED_DEVICE', ctypes.c_void_p(1))
+        assert 'NVIDIA GPU' in message
+
+    def test_a_session_limit_is_not_blamed_on_the_device(self):
+        """The driver is out of sessions however good the device is."""
+        message = self.refused('ERR_INCOMPATIBLE_CLIENT_KEY', ctypes.c_void_p(1))
+        assert 'NVIDIA GPU' not in message
+        assert 'INCOMPATIBLE_CLIENT_KEY' in message
+
+    def test_an_opengl_session_is_not_blamed_on_the_context_for_other_failures(self):
+        message = self.refused('ERR_OUT_OF_MEMORY')
+        assert 'context' not in message
+
+
 class TestDiscovery:
     def test_the_record_lists_every_codec_the_backend_drives(self):
         assert nvenc.BACKEND.codecs == frozenset({'h264', 'hevc', 'av1'})

@@ -156,8 +156,8 @@ class SharedTexture(InputHandle):
         self.texture = int(texture)
         self.target = int(GL_TEXTURE_2D)
         self.handle = handle
-        self.framebuffer = create_framebuffer(self.texture, self.target)
         self._locked = False
+        self.framebuffer = create_framebuffer(self.texture, self.target)
 
     @property
     def size(self) -> tuple[int, int]:
@@ -212,17 +212,22 @@ class SharedTexture(InputHandle):
 
     def close(self) -> None:
         """Unregister the texture and give both views of it back."""
-        if self.texture:
-            if self._locked:
-                self.relinquish()
-            delete_framebuffer(self.framebuffer)
-            self.framebuffer = 0
-            if self.handle is not None and self.interop.pointer is not None:
-                wglDXUnregisterObjectNV(self.interop.pointer, self.handle)
-            self.handle = None
-            glDeleteTextures([self.texture])
-            self.texture = 0
-        self.resource.close()
+        try:
+            if self.texture:
+                try:
+                    if self._locked:
+                        self.relinquish()
+                    delete_framebuffer(self.framebuffer)
+                    self.framebuffer = 0
+                finally:
+                    if self.handle is not None and self.interop.pointer is not None:
+                        wglDXUnregisterObjectNV(self.interop.pointer, self.handle)
+                    self.handle = None
+                glDeleteTextures([self.texture])
+                self.texture = 0
+        finally:
+            self.resource.close()
+            self.interop.forget(self)
 
     def __enter__(self) -> SharedTexture:
         return self
@@ -272,18 +277,30 @@ class InteropDevice:
             resource.close()
             raise InteropError(error, 'wglDXRegisterObjectNV',
                                f'{width}x{height} DXGI format {format}')
-        shared = (factory or SharedTexture)(self, resource, name, handle)
+        try:
+            shared = (factory or SharedTexture)(self, resource, name, handle)
+        except Exception:
+            wglDXUnregisterObjectNV(self.pointer, handle)
+            glDeleteTextures([name])
+            resource.close()
+            raise
         self._textures.append(shared)
         return shared
 
+    def forget(self, texture: SharedTexture) -> None:
+        """Stop tracking a texture that has been closed."""
+        self._textures = [kept for kept in self._textures if kept is not texture]
+
     def close(self) -> None:
         """Close every texture made here, then the bridge. Safe to call twice."""
-        for texture in self._textures:
-            texture.close()
-        self._textures = []
-        if self.pointer is not None:
-            wglDXCloseDeviceNV(self.pointer)
-            self.pointer = None
+        try:
+            for texture in list(self._textures):
+                texture.close()
+        finally:
+            self._textures = []
+            if self.pointer is not None:
+                wglDXCloseDeviceNV(self.pointer)
+                self.pointer = None
 
     def __enter__(self) -> InteropDevice:
         return self

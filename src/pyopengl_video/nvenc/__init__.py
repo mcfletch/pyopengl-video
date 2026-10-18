@@ -21,7 +21,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from pyopengl_video.encoder import Backend
-from pyopengl_video.nvenc.api import _LOADER, CODEC_GUIDS, LIBRARY_NAME
+from pyopengl_video.nvenc.api import _LOADER, CODEC_GUIDS, DIRECTX_PLATFORM, LIBRARY_NAME
 
 log = logging.getLogger(__name__)
 
@@ -38,10 +38,6 @@ ASSUMED_SIZES = {'h264': H264_MAX_SIZE, 'hevc': MAX_SIZE, 'av1': MAX_SIZE}
 #: Where NvEncodeAPI accepts an OpenGL device, which is what lets a texture be
 #: handed over by name. NVIDIA states this as Linux only.
 OPENGL_DEVICE_PLATFORM = sys.platform.startswith('linux')
-
-#: Where the frame reaches the encoder as a Direct3D 11 texture shared with
-#: OpenGL, which is how NVENC is reached from OpenGL on Windows.
-DIRECTX_PLATFORM = sys.platform == 'win32'
 
 
 def _context_reason() -> str:
