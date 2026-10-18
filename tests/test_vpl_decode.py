@@ -10,7 +10,9 @@ and the last two through a stream the Intel encoder made from known colours.
 import hashlib
 import json
 import sys
+from ctypes import c_void_p
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -61,6 +63,25 @@ class TestWithNoDriver:
         assert colour_of_header(unstated) == Colour()
         assert vpp_signal(Colour(), 480).InTransferMatrix == api.MFX_TRANSFERMATRIX_BT601
         assert vpp_signal(Colour(), 1080).InTransferMatrix == api.MFX_TRANSFERMATRIX_BT709
+
+    def test_a_failing_release_does_not_keep_the_device_from_being_given_back(self):
+        decoder = object.__new__(VPLDecoder)     # state set directly: building one needs a driver
+        interop_device, allocator, device = mock.Mock(), mock.Mock(), mock.Mock()
+        interop_device.close.side_effect = RuntimeError('interop')
+        vars(decoder).update(
+            _closed=False, _lent={}, _processing=True, _decoding=True, session=c_void_p(1),
+            api=mock.Mock(), interop=interop_device, allocator=allocator, device=device)
+        decoder.api.MFXVideoVPP_Close.side_effect = RuntimeError('video processor')
+        with pytest.raises(RuntimeError):
+            decoder.close()
+        decoder.api.MFXVideoDECODE_Close.assert_called_once()
+        decoder.api.MFXClose.assert_called_once()
+        interop_device.close.assert_called_once()
+        allocator.close.assert_called_once()
+        device.close.assert_called_once()
+        assert decoder.device is None
+        decoder.close()                           # closed: nothing is released twice
+        device.close.assert_called_once()
 
     def test_a_stated_colour_description_is_read_from_the_header(self):
         stated = api.mfxExtVideoSignalInfo()

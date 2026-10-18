@@ -28,6 +28,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import time
+from contextlib import ExitStack
 from ctypes import byref, c_void_p
 from typing import Any
 
@@ -536,28 +537,60 @@ class VPLDecoder(Decoder):
             raise DecoderError('this decoder has been closed')
 
     def close(self) -> None:
-        """Release the session, the textures and the device, frames lent included."""
+        """Release the session, the textures and the device, frames lent included.
+
+        Every release is attempted even when an earlier one raises, so the
+        device is given back whatever OpenGL or the runtime does on the way.
+        The first error is raised once all of them have run.
+        """
         if getattr(self, '_closed', True):
             return
         self._closed = True
+        with ExitStack() as releases:
+            # ExitStack runs last-in first-out and chains a later error onto an earlier one.
+            releases.callback(self._release_device)
+            releases.callback(self._release_allocator)
+            releases.callback(self._release_interop)
+            releases.callback(self._release_session)
+            releases.callback(self._release_frames)
+
+    def _release_frames(self) -> None:
+        errors: list[Exception] = []
         for frame in list(self._lent):
-            frame.release()
-        if self._processing:
-            self.api.MFXVideoVPP_Close(self.session)
-            self._processing = False
-        if self._decoding:
-            self.api.MFXVideoDECODE_Close(self.session)
-            self._decoding = False
-        if self.session:
-            self.api.MFXClose(self.session)
-            self.session = c_void_p()
-        if self.interop is not None:
-            self.interop.close()
-            self.interop = None
-        if self.allocator is not None:
-            self.allocator.close()
-            self.allocator = None
-        if self.device is not None:
-            self.device.close()
-            self.device = None
+            try:
+                frame.release()
+            except Exception as error:      # noqa: BLE001  # every frame is handed back; the first failure is re-raised below
+                errors.append(error)
+        if errors:
+            raise errors[0]
+
+    def _release_session(self) -> None:
+        try:
+            if self._processing:
+                self._processing = False
+                self.api.MFXVideoVPP_Close(self.session)
+        finally:
+            try:
+                if self._decoding:
+                    self._decoding = False
+                    self.api.MFXVideoDECODE_Close(self.session)
+            finally:
+                if self.session:
+                    session, self.session = self.session, c_void_p()
+                    self.api.MFXClose(session)
+
+    def _release_interop(self) -> None:
+        interop_device, self.interop = self.interop, None
+        if interop_device is not None:
+            interop_device.close()
+
+    def _release_allocator(self) -> None:
+        allocator, self.allocator = self.allocator, None
         self._surfaces = None
+        if allocator is not None:
+            allocator.close()
+
+    def _release_device(self) -> None:
+        device, self.device = self.device, None
+        if device is not None:
+            device.close()
