@@ -69,7 +69,11 @@ src/pyopengl_video/
     nvenc/encoder.py    the encoder: register, map, encode, lock, unmap
     nvdec/api.py    ctypes over NVDEC and the CUDA driver API it decodes into
     nvdec/decoder.py    the decoder: parser callbacks, the copy into textures
-    vpl/            Intel's oneVPL, over the Windows interop
+    vpl/api.py      ctypes over oneVPL: packed structures, status names, entry points
+    vpl/allocator.py    the Direct3D 11 surfaces the runtime allocates through us
+    vpl/encoder.py  the encoder: shared textures in, a stream out
+    vpl/decoder.py  the decoder: Direct3D surfaces, the video processor, shared textures out
+    presentation.py durations and the pool of output textures that copying decoders share
     vaapi/api.py    ctypes over libva: display, config, context, surfaces, buffers
     vaapi/device.py a libva display on a render node, shared by both directions
     vaapi/hevc_api.py, av1_api.py, vp9_api.py   each codec's libva structures
@@ -382,6 +386,15 @@ These tests need no driver:
 A new decoder backend uses the parser only if its driver wants parsed syntax.
 NVDEC and oneVPL parse the stream themselves. Every backend shares the
 `Decoder` interface, the `DecodedFrame` lending rule and the conversion pass.
+
+The oneVPL decoder has no bit-exact reference to compare with, because the
+video processor converts to RGB on the GPU. `tests/test_vpl_decode.py` holds
+the frame count, display order, timestamps and size of every fixture, and
+decodes a stream the Intel encoder made from known colours to check the colour
+and the orientation. oneVPL needs the surfaces the decoder asked for at
+initialisation to be the ones the application decodes into, so
+`SurfaceAllocator.latest` names the most recent allocation and the decoder
+takes its work surfaces from that.
 Its hardware test is the same checksum comparison.
 
 ## How the NVDEC backend works

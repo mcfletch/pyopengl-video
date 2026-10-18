@@ -45,6 +45,7 @@ STRUCTURES = [
     api.mfxExtVP9Param,
     api.mfxExtAV1BitstreamParam,
     api.mfxExtVideoSignalInfo,
+    api.mfxExtVPPVideoSignalInfo,
     api.mfxEncodeCtrl,
     api.mfxFrameAllocRequest,
     api.mfxFrameAllocResponse,

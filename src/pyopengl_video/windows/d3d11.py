@@ -22,6 +22,7 @@ from pyopengl_video.windows.com import GUID, InteropError, check, guid, load, me
 DXGI_FORMAT_R8G8B8A8_UNORM = 28          # bytes R, G, B, A
 DXGI_FORMAT_B8G8R8A8_UNORM = 87          # bytes B, G, R, A
 DXGI_FORMAT_NV12 = 103
+DXGI_FORMAT_P010 = 104
 
 D3D_DRIVER_TYPE_UNKNOWN = 0
 D3D_DRIVER_TYPE_HARDWARE = 1
@@ -40,6 +41,7 @@ D3D11_MAP_READ = 1
 
 IID_IDXGIFactory1 = guid('770aae78-f26f-4dba-a829-253c83d1b387')
 IID_ID3D10Multithread = guid('9b7e4e00-342c-4106-a19f-4f2704f689f0')
+IID_ID3D11VideoDevice = guid('10ec4d5b-975a-4689-b9e4-d0aac30fe333')
 
 # Vtable slots, counted from IUnknown. Named here so that the number appears
 # once, beside the interface it belongs to.
@@ -48,6 +50,7 @@ _GET_DESC1 = 10                          # IDXGIAdapter1
 _CREATE_TEXTURE_2D = 5                   # ID3D11Device
 _MAP, _UNMAP, _COPY_RESOURCE = 14, 15, 47    # ID3D11DeviceContext
 _SET_MULTITHREAD_PROTECTED = 5           # ID3D10Multithread
+_GET_PROFILE_COUNT, _GET_PROFILE, _CHECK_DECODER_FORMAT = 11, 12, 13    # ID3D11VideoDevice
 
 DXGI_ERROR_NOT_FOUND = -2005270526       # the end of an adapter enumeration
 
@@ -182,12 +185,14 @@ class Texture:
     """
 
     def __init__(self, device: Device, pointer: c_void_p, width: int, height: int,
-                 format: int):
+                 format: int, array_size: int = 1):
         self.device = device
         self.pointer = pointer
         self.width = int(width)
         self.height = int(height)
         self.format = int(format)
+        #: How many subresources the texture holds; more than one for an array
+        self.array_size = int(array_size)
 
     def read(self) -> bytes:
         """The pixels, row by row with no padding.
@@ -306,7 +311,8 @@ class Device:
     def create_texture(self, width: int, height: int,
                        format: int = DXGI_FORMAT_B8G8R8A8_UNORM, *,
                        bind: int | None = None, usage: int = D3D11_USAGE_DEFAULT,
-                       cpu_access: int = 0, misc: int = 0) -> Texture:
+                       cpu_access: int = 0, misc: int = 0,
+                       array_size: int = 1) -> Texture:
         """Allocate a texture on this device.
 
         The default binding is render target plus shader resource, which is what
@@ -315,10 +321,10 @@ class Device:
         that is the only one D3D11 allows for it.
         """
         if bind is None:
-            bind = (D3D11_BIND_DECODER if format == DXGI_FORMAT_NV12
+            bind = (D3D11_BIND_DECODER if format in (DXGI_FORMAT_NV12, DXGI_FORMAT_P010)
                     else D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE)
         description = D3D11_TEXTURE2D_DESC(
-            Width=int(width), Height=int(height), MipLevels=1, ArraySize=1,
+            Width=int(width), Height=int(height), MipLevels=1, ArraySize=int(array_size),
             Format=int(format), SampleDescCount=1, SampleDescQuality=0,
             Usage=usage, BindFlags=bind, CPUAccessFlags=cpu_access, MiscFlags=misc)
         created = c_void_p()
@@ -327,7 +333,28 @@ class Device:
             self.pointer, byref(description), None, byref(created)),
             'ID3D11Device::CreateTexture2D',
             f'{width}x{height} DXGI format {format}')
-        return Texture(self, created, width, height, format)
+        return Texture(self, created, width, height, format, array_size)
+
+    def decoder_profiles(self) -> list[GUID]:
+        """The decoder profiles this GPU offers, as the identifiers D3D11 names them by.
+
+        Empty when the device was built without video support or the driver
+        offers no video decoder.
+        """
+        video = query_interface_or_none(self.pointer, IID_ID3D11VideoDevice)
+        if video is None:
+            return []
+        try:
+            count = method(video, _GET_PROFILE_COUNT)(video)
+            found = []
+            for index in range(max(0, count)):
+                profile = GUID()
+                if method(video, _GET_PROFILE, c_uint32, POINTER(GUID))(
+                        video, index, byref(profile)) >= 0:
+                    found.append(profile)
+            return found
+        finally:
+            release(video)
 
     def close(self) -> None:
         """Release the device and its context. Safe to call twice."""

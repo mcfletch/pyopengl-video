@@ -1,4 +1,4 @@
-"""The conversion pass: NV12 planes into an RGBA texture, the right way up.
+"""The conversion pass: a decoded picture into an RGBA texture, the right way up.
 
 Every hardware decoder here produces two planes: full-size luma, and half-size
 interleaved Cb and Cr. An 8-bit stream gives NV12, read as ``GL_R8`` and
@@ -12,6 +12,10 @@ into the output texture's framebuffer, applying in one pass:
 - the vertical flip: a surface's first row is the picture's top, and a GL
   texture's first row is its bottom
 - the chroma siting, with chroma reads held inside the visible picture
+
+A backend whose hardware converts to RGB itself hands over an ``'rgba'`` frame,
+and :meth:`NV12Converter.convert` copies that with the same crop and flip, no
+matrix involved.
 
 The output is ``GL_SRGB8_ALPHA8``: the values are stored as computed, and a
 sampler reading the texture linearises them as it does any 8-bit colour image.
@@ -145,6 +149,19 @@ void main() {
 }
 '''
 
+COPY_FRAGMENT_SHADER = '''#version 330 core
+uniform sampler2D picture;
+uniform vec4 visible;            // x, y, width, height in texels, top first
+out vec4 colour;
+
+void main() {
+    // The output's row 0 is the picture's bottom, the source's row 0 its top.
+    vec2 source = vec2(visible.x + gl_FragCoord.x,
+                       visible.y + visible.w - gl_FragCoord.y);
+    colour = vec4(texelFetch(picture, ivec2(floor(source)), 0).rgb, 1.0);
+}
+'''
+
 #: Capabilities a renderer may have left on that would change the pass's
 #: result: blending, tests, culling and the sRGB encode on write.
 DISABLED_FOR_THE_PASS = (GL_BLEND, GL_DEPTH_TEST, GL_STENCIL_TEST, GL_SCISSOR_TEST,
@@ -182,9 +199,9 @@ def _compile(kind: int, source: str) -> int:
     return int(shader)
 
 
-def _program() -> int:
+def _program(fragment: str = FRAGMENT_SHADER) -> int:
     shaders = [_compile(GL_VERTEX_SHADER, VERTEX_SHADER),
-               _compile(GL_FRAGMENT_SHADER, FRAGMENT_SHADER)]
+               _compile(GL_FRAGMENT_SHADER, fragment)]
     program = int(glCreateProgram())
     for shader in shaders:
         glAttachShader(program, shader)
@@ -199,7 +216,7 @@ def _program() -> int:
 
 
 class NV12Converter:
-    """Draws NV12 or P010 planes into RGBA textures.
+    """Draws decoded frames into RGBA textures: NV12 or P010 planes, or a picture already RGBA.
 
     Built and used on the thread whose OpenGL context is current. It owns a
     program, an empty vertex array and one framebuffer per output texture it
@@ -209,6 +226,9 @@ class NV12Converter:
 
     def __init__(self) -> None:
         self._program = _program()
+        self._copy_program = _program(COPY_FRAGMENT_SHADER)
+        self._copy_uniforms = {name: glGetUniformLocation(self._copy_program, name)
+                               for name in ('picture', 'visible')}
         self._vertex_array = int(glGenVertexArrays(1))
         self._framebuffers: dict[int, int] = {}
         self._uniforms = {name: glGetUniformLocation(self._program, name)
@@ -216,12 +236,19 @@ class NV12Converter:
                                        'chroma_offset', 'yuv_to_rgb')}
 
     def convert(self, frame: DecodedFrame, target: int) -> None:
-        """Draw a decoded ``'nv12'`` or ``'p010'`` frame into `target`, which is frame-sized."""
-        if frame.layout not in LAYOUT_DEPTHS:
-            raise DecoderError(f'a {frame.layout} frame needs no conversion')
+        """Draw a decoded frame into `target`, which is frame-sized.
+
+        An ``'nv12'`` or ``'p010'`` frame is converted with its colour
+        description; an ``'rgba'`` frame is copied.
+        """
         if frame.released:
             raise DecoderError('this frame has been released; its surface may '
                                'already hold another picture')
+        if frame.layout == 'rgba':
+            self.copy(frame.planes[0], visible=frame.visible, target=target)
+            return
+        if frame.layout not in LAYOUT_DEPTHS:
+            raise DecoderError(f'a {frame.layout} frame has no conversion')
         luma, chroma = frame.planes
         self.draw(luma, chroma, visible=frame.visible, colour=frame.colour,
                   target=target, depth=LAYOUT_DEPTHS[frame.layout])
@@ -268,6 +295,32 @@ class NV12Converter:
             glUniformMatrix4fv(uniforms['yuv_to_rgb'], 1, GL_TRUE, matrix)
             glDrawArrays(GL_TRIANGLES, 0, 3)
 
+    def copy(self, picture: int, *, visible: tuple[int, int, int, int], target: int,
+             size: tuple[int, int] | None = None) -> None:
+        """Draw the `visible` part of an RGBA texture into `target`, flipped to OpenGL's orientation.
+
+        picture -- an RGBA texture, first row at the top
+        visible -- ``(x, y, width, height)`` of the picture in it
+        target -- an RGBA texture, usually from :func:`create_output_texture`
+        size -- the target's size; the visible size by default
+        """
+        width, height = size or visible[2:]
+        framebuffer = self._framebuffer(target)
+        with preserved_state(DISABLED_FOR_THE_PASS, units=1):
+            for capability in DISABLED_FOR_THE_PASS:
+                glDisable(capability)
+            glColorMask(True, True, True, True)
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer)
+            glViewport(0, 0, width, height)
+            glUseProgram(self._copy_program)
+            glBindVertexArray(self._vertex_array)
+            glActiveTexture(GL_TEXTURE0)
+            glBindTexture(GL_TEXTURE_2D, picture)
+            glBindSampler(0, 0)
+            glUniform1i(self._copy_uniforms['picture'], 0)
+            glUniform4f(self._copy_uniforms['visible'], *(float(value) for value in visible))
+            glDrawArrays(GL_TRIANGLES, 0, 3)
+
     def _framebuffer(self, target: int) -> int:
         """The framebuffer drawing into `target`, made the first time it is named."""
         found = self._framebuffers.get(target)
@@ -303,9 +356,10 @@ class NV12Converter:
         if self._vertex_array:
             glDeleteVertexArrays(1, [self._vertex_array])
             self._vertex_array = 0
-        if self._program:
-            glDeleteProgram(self._program)
-            self._program = 0
+        for name in ('_program', '_copy_program'):
+            if getattr(self, name):
+                glDeleteProgram(getattr(self, name))
+                setattr(self, name, 0)
 
 
 def generate_mipmaps(texture: int) -> None:

@@ -23,6 +23,7 @@ from OpenGL.GL import (
     GL_RG8,
     GL_RG16,
     GL_RGBA,
+    GL_RGBA8,
     GL_SCISSOR_TEST,
     GL_SRGB8_ALPHA8,
     GL_TEXTURE0,
@@ -63,6 +64,7 @@ from pyopengl_video.colour import (
     Colour,
 )
 from pyopengl_video.convert import NV12Converter, create_output_texture
+from pyopengl_video.decoder import DecodedFrame, DecoderError
 
 pytestmark = pytest.mark.gl
 
@@ -111,6 +113,12 @@ def textures(gl_context):  # noqa: ARG001 - requested so a GL context is current
                 plane((chroma.astype(np.uint16) << 6), GL_RG16, GL_RG, GL_UNSIGNED_SHORT))
 
     nv12.p010 = p010
+
+    def rgba(data):
+        """A texture holding an RGBA picture given first row at the top."""
+        return plane(data, GL_RGBA8, GL_RGBA)
+
+    nv12.rgba = rgba
 
     def output(width, height):
         texture = create_output_texture(width, height)
@@ -245,6 +253,69 @@ class TestGeometry:
         assert abs(row[6] - on_sample[0]) <= 1
         assert abs(row[8] - on_sample[1]) <= 1
         assert abs(row[7] - between) <= 1
+
+
+class TestRGBAFrames:
+    """A picture a decoder converted itself is copied: cropped and flipped, nothing more."""
+
+    def picture(self, textures):
+        """A 48x40 RGBA picture whose red is the row and green the column."""
+        width, height = TEXTURE
+        data = np.zeros((height, width, 4), np.uint8)
+        data[..., 0] = np.arange(height, dtype=np.uint8)[:, None] * 5
+        data[..., 1] = np.arange(width, dtype=np.uint8)[None, :] * 4
+        data[..., 3] = 255
+        return data, textures.rgba(data)
+
+    def test_the_picture_is_cropped_and_comes_out_the_right_way_up(self, converter, textures):
+        data, texture = self.picture(textures)
+        visible = (4, 6, 30, 24)
+        width, height = visible[2:]
+        target = textures.output(width, height)
+        converter.copy(texture, visible=visible, target=target)
+        found = read(target, width, height)
+        x, y = visible[:2]
+        assert (found[..., :3] == data[y:y + height, x:x + width, :3][::-1]).all()
+
+    def test_a_frame_of_that_layout_goes_through_convert(self, converter, textures):
+        data, texture = self.picture(textures)
+        width, height = VISIBLE[2:]
+        target = textures.output(width, height)
+        frame = DecodedFrame(timestamp=0, duration=1, planes=(texture,), layout='rgba',
+                             texture_size=TEXTURE, visible=VISIBLE, colour=Colour(),
+                             on_release=lambda _frame: None)
+        converter.convert(frame, target)
+        assert (read(target, width, height)[..., :3] == data[:height, :width, :3][::-1]).all()
+
+    def test_the_copy_leaves_the_state_it_found(self, converter, textures):
+        data, texture = self.picture(textures)
+        width, height = VISIBLE[2:]
+        target = textures.output(width, height)
+        glEnable(GL_BLEND)
+        glViewport(1, 2, 3, 4)
+        before = (int(glGetIntegerv(GL_CURRENT_PROGRAM)),
+                  int(glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)),
+                  int(glGetIntegerv(GL_VERTEX_ARRAY_BINDING)),
+                  [int(value) for value in glGetIntegerv(GL_VIEWPORT)],
+                  int(glGetIntegerv(GL_TEXTURE_BINDING_2D)))
+        try:
+            converter.copy(texture, visible=VISIBLE, target=target)
+            after = (int(glGetIntegerv(GL_CURRENT_PROGRAM)),
+                     int(glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)),
+                     int(glGetIntegerv(GL_VERTEX_ARRAY_BINDING)),
+                     [int(value) for value in glGetIntegerv(GL_VIEWPORT)],
+                     int(glGetIntegerv(GL_TEXTURE_BINDING_2D)))
+            assert after == before
+            assert glIsEnabled(GL_BLEND)
+        finally:
+            glDisable(GL_BLEND)
+
+    def test_a_frame_that_is_not_one_of_the_layouts_is_refused(self, converter, textures):
+        frame = DecodedFrame(timestamp=0, duration=1, planes=(1,), layout='yuy2',
+                             texture_size=TEXTURE, visible=VISIBLE, colour=Colour(),
+                             on_release=lambda _frame: None)
+        with pytest.raises(DecoderError, match='yuy2 frame has no conversion'):
+            converter.convert(frame, textures.output(4, 4))
 
 
 class TestState:

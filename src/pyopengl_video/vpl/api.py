@@ -1,4 +1,4 @@
-"""ctypes declarations for oneVPL, Intel's video encoding interface.
+"""ctypes declarations for oneVPL, Intel's video encoding and decoding interface.
 
 ``libvpl.dll`` is a dispatcher: it finds the runtime the installed driver
 provides -- on older parts the Media SDK, on newer ones the oneVPL runtime --
@@ -76,6 +76,7 @@ MFX_CODEC_AV1 = fourcc('AV1 ')
 MFX_FOURCC_NV12 = fourcc('NV12')
 MFX_FOURCC_RGB4 = fourcc('RGB4')       # bytes B, G, R, A
 MFX_FOURCC_BGR4 = fourcc('BGR4')       # bytes R, G, B, A
+MFX_FOURCC_P010 = fourcc('P010')       # NV12's layout at 16 bits a sample, 10 in the high bits
 
 MFX_IMPL_SOFTWARE = 0x0001
 MFX_IMPL_HARDWARE = 0x0002
@@ -86,6 +87,8 @@ MFX_IMPL_VIA_VAAPI = 0x0400
 
 MFX_IOPATTERN_IN_VIDEO_MEMORY = 0x01
 MFX_IOPATTERN_IN_SYSTEM_MEMORY = 0x02
+MFX_IOPATTERN_OUT_VIDEO_MEMORY = 0x10
+MFX_IOPATTERN_OUT_SYSTEM_MEMORY = 0x20
 
 MFX_PICSTRUCT_PROGRESSIVE = 0x01
 MFX_CHROMAFORMAT_YUV420 = 1
@@ -117,8 +120,21 @@ MFX_HANDLE_VA_DISPLAY = 4
 MFX_EXTBUFF_CODING_OPTION_SPSPPS = fourcc('COSP')
 MFX_EXTBUFF_VIDEO_SIGNAL_INFO = fourcc('VSIN')
 MFX_EXTBUFF_CODING_OPTION_VPS = fourcc('COVP')
+MFX_EXTBUFF_VPP_VIDEO_SIGNAL_INFO = fourcc('VVSI')
 MFX_EXTBUFF_VP9_PARAM = fourcc('9PAR')
 MFX_EXTBUFF_AV1_BITSTREAM_PARAM = fourcc('A1BS')
+
+#: What the video processor is told a YUV picture's matrix and range are.
+MFX_TRANSFERMATRIX_UNKNOWN = 0
+MFX_TRANSFERMATRIX_BT709 = 1
+MFX_TRANSFERMATRIX_BT601 = 2
+MFX_NOMINALRANGE_UNKNOWN = 0
+MFX_NOMINALRANGE_0_255 = 1
+MFX_NOMINALRANGE_16_235 = 2
+
+#: Bitstream flags: the buffer holds whole frames, or ends the stream.
+MFX_BITSTREAM_COMPLETE_FRAME = 0x0001
+MFX_BITSTREAM_EOS = 0x0002
 
 MFX_TIMESTAMP_UNKNOWN = 0xFFFFFFFFFFFFFFFF
 
@@ -126,6 +142,7 @@ MFX_TIMESTAMP_UNKNOWN = 0xFFFFFFFFFFFFFFFF
 MFX_MEMTYPE_DXVA2_DECODER_TARGET = 0x0010
 MFX_MEMTYPE_SYSTEM_MEMORY = 0x0040
 MFX_MEMTYPE_FROM_ENCODE = 0x0100
+MFX_MEMTYPE_FROM_DECODE = 0x0200
 MFX_MEMTYPE_INTERNAL_FRAME = 0x0001
 MFX_MEMTYPE_EXTERNAL_FRAME = 0x0002
 
@@ -149,7 +166,12 @@ STATUS_NAMES = {
     5: 'MFX_WRN_INCOMPATIBLE_VIDEO_PARAM', 6: 'MFX_WRN_VALUE_NOT_CHANGED',
     7: 'MFX_WRN_OUT_OF_RANGE', 10: 'MFX_WRN_FILTER_SKIPPED',
 }
+MFX_ERR_UNSUPPORTED = -3
 MFX_ERR_MORE_DATA = -10
+MFX_ERR_MORE_SURFACE = -11
+MFX_ERR_INCOMPATIBLE_VIDEO_PARAM = -14
+MFX_ERR_REALLOC_SURFACE = -22
+MFX_WRN_VIDEO_PARAM_CHANGED = 3
 MFX_ERR_NOT_FOUND = -9
 MFX_WRN_DEVICE_BUSY = 2
 MFX_WRN_PARTIAL_ACCELERATION = 4
@@ -406,6 +428,21 @@ class mfxExtVideoSignalInfo(Structure):
     ]
 
 
+class mfxExtVPPVideoSignalInfo(Structure):
+    """The matrix and range the video processor converts from and to. pack(4).
+
+    Not interchangeable with :class:`mfxExtVideoSignalInfo`: this one is the
+    video processor's, and without it the processor assumes a matrix of its own.
+    """
+
+    _pack_ = 4
+    _fields_ = [
+        ('Header', mfxExtBuffer), ('reserved1', u16 * 4),
+        ('InTransferMatrix', u16), ('InNominalRange', u16), ('reserved2', u16 * 6),
+        ('OutTransferMatrix', u16), ('OutNominalRange', u16), ('reserved3', u16 * 6),
+    ]
+
+
 class mfxEncodeCtrl(Structure):
     """Per-picture instructions, such as demanding a key frame. pack(8)."""
 
@@ -475,6 +512,7 @@ EXPECTED_SIZES = {
     'mfxExtVP9Param': 256,
     'mfxExtAV1BitstreamParam': 72,
     'mfxExtVideoSignalInfo': 20,
+    'mfxExtVPPVideoSignalInfo': 48,
     'mfxEncodeCtrl': 56,
     'mfxFrameAllocRequest': 92,
     'mfxFrameAllocResponse': 32,
@@ -512,6 +550,25 @@ PROTOTYPES: dict[str, list[Any]] = {
     'MFXVideoCORE_SetHandle': [c_void_p, c_int32, c_void_p],
     'MFXVideoCORE_SetFrameAllocator': [c_void_p, POINTER(mfxFrameAllocator)],
     'MFXVideoCORE_SyncOperation': [c_void_p, c_void_p, u32],
+    'MFXVideoDECODE_Query': [c_void_p, POINTER(mfxVideoParam), POINTER(mfxVideoParam)],
+    'MFXVideoDECODE_DecodeHeader': [c_void_p, POINTER(mfxBitstream),
+                                    POINTER(mfxVideoParam)],
+    'MFXVideoDECODE_QueryIOSurf': [c_void_p, POINTER(mfxVideoParam),
+                                   POINTER(mfxFrameAllocRequest)],
+    'MFXVideoDECODE_Init': [c_void_p, POINTER(mfxVideoParam)],
+    'MFXVideoDECODE_Reset': [c_void_p, POINTER(mfxVideoParam)],
+    'MFXVideoDECODE_Close': [c_void_p],
+    'MFXVideoDECODE_GetVideoParam': [c_void_p, POINTER(mfxVideoParam)],
+    'MFXVideoDECODE_DecodeFrameAsync': [
+        c_void_p, POINTER(mfxBitstream), POINTER(mfxFrameSurface1),
+        POINTER(POINTER(mfxFrameSurface1)), POINTER(c_void_p)],
+    'MFXVideoVPP_QueryIOSurf': [c_void_p, POINTER(mfxVideoParam),
+                                POINTER(mfxFrameAllocRequest)],
+    'MFXVideoVPP_Init': [c_void_p, POINTER(mfxVideoParam)],
+    'MFXVideoVPP_Close': [c_void_p],
+    'MFXVideoVPP_RunFrameVPPAsync': [
+        c_void_p, POINTER(mfxFrameSurface1), POINTER(mfxFrameSurface1),
+        c_void_p, POINTER(c_void_p)],
     'MFXVideoENCODE_Query': [c_void_p, POINTER(mfxVideoParam), POINTER(mfxVideoParam)],
     'MFXVideoENCODE_QueryIOSurf': [c_void_p, POINTER(mfxVideoParam),
                                    POINTER(mfxFrameAllocRequest)],
@@ -544,6 +601,18 @@ class VPL:
         MFXVideoCORE_SetHandle: Callable[..., int]
         MFXVideoCORE_SetFrameAllocator: Callable[..., int]
         MFXVideoCORE_SyncOperation: Callable[..., int]
+        MFXVideoDECODE_Query: Callable[..., int]
+        MFXVideoDECODE_DecodeHeader: Callable[..., int]
+        MFXVideoDECODE_QueryIOSurf: Callable[..., int]
+        MFXVideoDECODE_Init: Callable[..., int]
+        MFXVideoDECODE_Reset: Callable[..., int]
+        MFXVideoDECODE_Close: Callable[..., int]
+        MFXVideoDECODE_GetVideoParam: Callable[..., int]
+        MFXVideoDECODE_DecodeFrameAsync: Callable[..., int]
+        MFXVideoVPP_QueryIOSurf: Callable[..., int]
+        MFXVideoVPP_Init: Callable[..., int]
+        MFXVideoVPP_Close: Callable[..., int]
+        MFXVideoVPP_RunFrameVPPAsync: Callable[..., int]
         MFXVideoENCODE_Query: Callable[..., int]
         MFXVideoENCODE_QueryIOSurf: Callable[..., int]
         MFXVideoENCODE_Init: Callable[..., int]

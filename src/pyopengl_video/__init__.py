@@ -51,6 +51,7 @@ from pyopengl_video.nvenc import BACKEND as NVENC_BACKEND
 from pyopengl_video.vaapi import BACKEND as VAAPI_BACKEND
 from pyopengl_video.vaapi import DECODER_BACKEND as VAAPI_DECODER_BACKEND
 from pyopengl_video.vpl import BACKEND as VPL_BACKEND
+from pyopengl_video.vpl import DECODER_BACKEND as VPL_DECODER_BACKEND
 
 __version__ = '1.0.0a1'
 
@@ -161,7 +162,7 @@ def _register_builtin_backends() -> None:
     """
     _encoder.BACKENDS.extend([NVENC_BACKEND, VPL_BACKEND, VAAPI_BACKEND])
     _decoder.BACKENDS.extend([NVDEC_DECODER_BACKEND, VAAPI_DECODER_BACKEND,
-                              NVDEC_COPY_DECODER_BACKEND])
+                              VPL_DECODER_BACKEND, NVDEC_COPY_DECODER_BACKEND])
 
 
 _register_builtin_backends()

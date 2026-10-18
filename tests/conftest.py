@@ -175,6 +175,19 @@ def vpl_available(gl_context):  # noqa: ARG001 - requested so a GL context is cu
     return adapter
 
 
+@pytest.fixture
+def vpl_decoder_available(gl_context):  # noqa: ARG001 - requested so a GL context is current first
+    """Skip unless Intel's decoder can write this OpenGL context's textures."""
+    vpl.forget_probe()
+    if not vpl.probe():
+        pytest.skip('no Intel decoder library here (oneVPL is reached through '
+                    'Direct3D, so this backend is Windows-only for now)')
+    if not vpl.decoder_probe():
+        pytest.skip('the Intel decoder is not reachable from this OpenGL context: '
+                    + (vpl.decoder_explain() or 'there is no Intel GPU'))
+    return vpl.decoder_capabilities()
+
+
 def decode_errors(path):
     """What an outside decoder complains about, or None where there is none.
 

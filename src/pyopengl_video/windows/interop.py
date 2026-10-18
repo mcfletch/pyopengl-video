@@ -164,28 +164,47 @@ class SharedTexture(InputHandle):
         """The frame size this texture holds."""
         return (self.resource.width, self.resource.height)
 
-    @contextmanager
-    def for_drawing(self) -> Iterator[SharedTexture]:
-        """Hold the texture for OpenGL, giving it back to Direct3D at the end.
+    @property
+    def held(self) -> bool:
+        """Whether OpenGL holds the texture at the moment."""
+        return self._locked
 
-        The lock is what orders the renderer's writes against the encoder's
-        reads; without it the encoder may read a half-drawn frame. Locking twice
-        over is an error the driver reports, so a nested scope is refused here
-        with a message that says which call is the extra one.
+    def acquire(self) -> None:
+        """Hand the texture to OpenGL, until :meth:`relinquish` gives it back.
+
+        The lock is what orders OpenGL's access against Direct3D's: a renderer's
+        writes against the encoder's reads, or a decoder's writes against the
+        shader that samples them. Locking twice over is an error the driver
+        reports, so it is refused here with a message that says which call is
+        the extra one.
         """
         if self._locked:
             raise InteropError(0, 'wglDXLockObjectsNV',
                                'this texture is already held for drawing')
-        handles = handle_array(self.handle)
-        if not wglDXLockObjectsNV(self.interop.pointer, 1, handles):
+        if not wglDXLockObjectsNV(self.interop.pointer, 1, handle_array(self.handle)):
             raise InteropError(ctypes.GetLastError(), 'wglDXLockObjectsNV')
         self._locked = True
+
+    def relinquish(self) -> None:
+        """Hand the texture back to Direct3D."""
+        if not self._locked:
+            raise InteropError(0, 'wglDXUnlockObjectsNV',
+                               'this texture is not held for drawing')
+        self._locked = False
+        if not wglDXUnlockObjectsNV(self.interop.pointer, 1, handle_array(self.handle)):
+            raise InteropError(ctypes.GetLastError(), 'wglDXUnlockObjectsNV')
+
+    @contextmanager
+    def for_drawing(self) -> Iterator[SharedTexture]:
+        """Hold the texture for OpenGL, giving it back to Direct3D at the end.
+
+        Without the hand-over the encoder may read a half-drawn frame.
+        """
+        self.acquire()
         try:
             yield self
         finally:
-            self._locked = False
-            if not wglDXUnlockObjectsNV(self.interop.pointer, 1, handles):
-                raise InteropError(ctypes.GetLastError(), 'wglDXUnlockObjectsNV')
+            self.relinquish()
 
     def read(self) -> bytes:
         """The pixels, from the Direct3D side. For checking a frame, not moving one."""
@@ -194,6 +213,8 @@ class SharedTexture(InputHandle):
     def close(self) -> None:
         """Unregister the texture and give both views of it back."""
         if self.texture:
+            if self._locked:
+                self.relinquish()
             delete_framebuffer(self.framebuffer)
             self.framebuffer = 0
             if self.handle is not None and self.interop.pointer is not None:

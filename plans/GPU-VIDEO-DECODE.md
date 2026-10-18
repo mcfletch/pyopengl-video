@@ -1,6 +1,7 @@
 # Hardware video decode into an OpenGL texture
 
-**Status:** D1, D2 and D3 landed 2026-10-09: H.264 plays into OpenGL textures
+**Status:** D6 landed 2026-10-17: H.264, HEVC and VP9 play on Intel under Windows
+through oneVPL (see *What landed in D6*). D1, D2 and D3 landed 2026-10-09: H.264 plays into OpenGL textures
 on AMD under Linux, through `pyopengl_video.playback`, with no scenegraph.
 D5 landed 2026-10-12 on NVIDIA under Linux (see *What landed in D5*). On both,
 every picture of the x264 test streams decodes bit-exact against `ffmpeg`'s
@@ -524,7 +525,7 @@ context and holds the frame time.
 | D3 | VA-API H.264 decode with its control layer: POC, DPB, reference lists | landed on AMD; Intel/Linux is the same code, untested |
 | D4 | OpenGLContext: `MovieTexture` on the player, the PyAV extra removed, docs | D3 |
 | D5 | NVDEC with CUDA-GL interop, Linux and Windows | landed on Linux; Windows is the same code, untested |
-| D6 | oneVPL decode with VPP into the interop texture | Intel/Windows, the laptop |
+| D6 | oneVPL decode with VPP into the interop texture | landed on the Intel laptop 2026-10-17 |
 | D7 | Decoding ahead on a worker thread, after D3 to D5 are measured | D5 |
 | D8 | HEVC, AV1 and VP9 on VA-API (control layers of their own), 10-bit as P010, MP4 and IVF for each | landed on AMD 2026-10-12; Intel/Linux is the same code, untested |
 | D9 | AMF decode; fragmented MP4 and WebM | hardware per row |
@@ -599,6 +600,37 @@ VA-API), and four 1080p movies in one context.
 Not run: Windows (`nvcuda.dll`, `nvcuvid.dll`), a WGL context, and a machine
 with two GPUs where the NVIDIA one does not draw; the last was stood in for
 by a llvmpipe context on this machine. Slice groups were not tried.
+
+## What landed in D6
+
+Measured 2026-10-17 on the Intel laptop: UHD Graphics 630, the legacy Media SDK
+runtime behind `libvpl.dll` (API 1.35), a GLFW WGL context on the Intel GPU.
+
+- `vpl/decoder.py`: `VPLDecoder`; `vpl/allocator.py`: `SurfaceAllocator`, moved
+  out of the encoder and extended to decoder surfaces; `presentation.py`:
+  `Presentation` and `Outputs`, moved out of the NVDEC decoder; `vpl/__init__.py`:
+  the decoder backend record, its probe and the profile query behind its
+  capabilities; `windows/d3d11.py`: array textures, P010 and
+  `Device.decoder_profiles()`; `windows/interop.py`: `SharedTexture.acquire()`
+  and `relinquish()`; `convert.py`: `NV12Converter.copy()` and the `'rgba'` layout.
+- `tests/test_vpl_decode.py` and `TestRGBAFrames` in `tests/test_convert.py`.
+
+| Fact | Result |
+| --- | --- |
+| `WGL_NV_DX_interop` registering an `NV12` texture | succeeds; the GL texture it makes reports `GL_RGBA` and no size, with no planes to sample. The video processor stage stays |
+| `MFXVideoDECODE_Init` with `MFXVideoCORE_SetFrameAllocator` | calls `Alloc` once itself, with the request `QueryIOSurf` described; decoding into any other set of surfaces answers `MFX_ERR_UNDEFINED_BEHAVIOR` without reading the bitstream |
+| `mfxExtVideoSignalInfo` attached to `MFXVideoDECODE_DecodeHeader` | filled in for H.264 and HEVC; attached to `MFXVideoDECODE_Init` it fails with `MFX_ERR_INVALID_VIDEO_PARAM` |
+| `MFXVideoDECODE_Query` | answers `MFX_ERR_UNSUPPORTED` for every codec, H.264 included; the codecs a part decodes are read from `ID3D11VideoDevice` decoder profiles instead |
+| The video processor's output surface | the Direct3D texture has to be the size of `mfxFrameInfo.Width` and `Height` (rounded to 16), not the cropped size, or the synchronise fails with `MFX_ERR_DEVICE_FAILED` |
+| Decoder profiles listed by this GPU | H.264, HEVC Main and Main 10, VP9 profiles 0 and 2; no AV1 |
+| Fixtures decoded | every H.264, HEVC and VP9 fixture, 8 and 10 bit, produces the frame count and the display order of the reference; `hevc_main10` is tagged BT.2020 and is refused by name |
+| Against `nvdec-copy` on the NVIDIA part of the same laptop | mean difference 1.5 to 1.9 levels a channel; 11 to 14 percent of channel values differ by more than 4, at the colour edges of the synthetic fixtures, where the video processor's chroma interpolation differs from the shader's. No shift in either direction |
+| Intel encoder to Intel decoder | colour bars return within 6 levels at 8 bits, H.264 and HEVC, and the orientation is the encoder input's |
+
+What is open: nothing has been run at 1080p or measured for speed, the decoder
+synchronises each picture before returning and so does not pipeline, BT.2020
+streams are refused, a picture size change mid-stream is refused, and AV1 and
+the 10-bit HEVC path have not been run on this part.
 
 ## A software floor: OpenH264
 
@@ -691,8 +723,8 @@ OxideAV, measured the same way.
 - A floor for machines with no hardware decoder. OpenH264 was measured and
   set aside (see *A software floor: OpenH264*); OxideAV's H.264 decoder (see
   *Audio*) is the remaining candidate.
-- Whether WGL_NV_DX_interop2 registers an NV12 texture on the Intel laptop. Yes
-  removes the VPP stage from D6.
+- Whether WGL_NV_DX_interop2 registers an NV12 texture on the Intel laptop:
+  answered, see *What landed in D6*.
 - Interlaced streams (field pictures, MBAFF, PAFF). The first VA-API control
   layer refuses them with an error that names the stream's structure. Games
   ship progressive video, and a recording from this package is always

@@ -11,7 +11,7 @@ import sys
 import pytest
 
 from pyopengl_video.vpl import api
-from pyopengl_video.vpl.encoder import SurfaceAllocator
+from pyopengl_video.vpl.allocator import SurfaceAllocator
 from pyopengl_video.windows import d3d11
 
 pytestmark = pytest.mark.skipif(sys.platform != 'win32',
@@ -88,10 +88,28 @@ def test_an_unknown_surface_is_reported_as_not_found(allocator):
 
 def test_a_format_with_no_direct3d_equivalent_is_refused(allocator):
     response = api.mfxFrameAllocResponse()
-    status = allocator.allocate(None, request_for(api.fourcc('P010')),
+    status = allocator.allocate(None, request_for(api.fourcc('AYUV')),
                                 ctypes.pointer(response))
     assert status == -3                                # MFX_ERR_UNSUPPORTED
     assert not allocator.owned
+
+
+def test_ten_bit_surfaces_are_made_in_the_ten_bit_format(allocator):
+    response = api.mfxFrameAllocResponse()
+    status = allocator.allocate(None, request_for(api.MFX_FOURCC_P010),
+                                ctypes.pointer(response))
+    assert status == api.MFX_ERR_NONE
+    assert {texture.format for texture in allocator.owned.values()} == {
+        d3d11.DXGI_FORMAT_P010}
+
+
+def test_a_decoder_s_surfaces_can_be_read_by_the_video_processor(allocator):
+    request = request_for(api.MFX_FOURCC_NV12)
+    request.contents.Type = api.MFX_MEMTYPE_FROM_DECODE | api.MFX_MEMTYPE_EXTERNAL_FRAME
+    response = api.mfxFrameAllocResponse()
+    assert allocator.allocate(None, request, ctypes.pointer(response)) == api.MFX_ERR_NONE
+    assert len(allocator.latest) == 3
+    assert allocator.latest == [response.mids[slot] for slot in range(3)]
 
 
 def test_asking_for_no_surfaces_succeeds_without_making_any(allocator):

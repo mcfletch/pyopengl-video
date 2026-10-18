@@ -43,8 +43,9 @@ texture = player.frame_at(seconds)       # right way up, sRGB
 `examples/play_movie.py` plays a file in a window.
 [docs/playback.md](docs/playback.md) covers the player, the decoders and what
 they decode. H.264, HEVC, AV1 and VP9 decode on AMD under Linux through VA-API,
-at 8 and 10 bits, and H.264 on NVIDIA through NVDEC. Intel on Linux and NVIDIA
-on Windows run the same code, untested. Intel and AMD on Windows are
+at 8 and 10 bits, H.264 on NVIDIA through NVDEC, and H.264, HEVC and VP9 on
+Intel under Windows through oneVPL. Intel on Linux and NVIDIA on Windows run
+the same code as the backends above, untested. AMD on Windows is
 [planned](plans/GPU-VIDEO-DECODE.md).
 
 ## What it needs

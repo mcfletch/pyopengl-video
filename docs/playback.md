@@ -33,7 +33,7 @@ MP4, IVF and raw-stream readers are part of this package.
 | `vaapi` | AMD, VCN | Linux | H.264, HEVC, AV1, VP9 | two DMA-BUF planes imported as textures | working |
 | `vaapi` | Intel, Gen9 and later | Linux | H.264, HEVC, AV1, VP9 | the same | the same code, untested |
 | `nvdec-copy` | NVIDIA | Linux, Windows | H.264 | CUDA memory copied through host memory into two textures | working on Linux |
-| `vpl` | Intel | Windows | | a Direct3D 11 texture | [planned](../plans/GPU-VIDEO-DECODE.md) |
+| `vpl` | Intel, Gen9 and later | Windows | H.264, HEVC, VP9 | a Direct3D 11 texture converted to RGB on the GPU | working |
 
 The codecs are the ones the backend drives. A GPU decodes those its hardware
 has, and `decoders()` lists them for this machine.
@@ -52,6 +52,20 @@ From a GLX or WGL context the backend reports itself unavailable. Where no
 other backend serves the context either, `movie.player()` raises
 `DecoderUnavailable` saying the context is not an EGL context. It also needs the VA-API driver for the GPU: `mesa-va-drivers` for
 AMD, `intel-media-va-driver` for Intel.
+
+**The `vpl` backend needs the OpenGL context to render on the Intel GPU.** The
+decoder writes Direct3D 11 surfaces, and a texture shared with OpenGL through
+`WGL_NV_DX_interop2` is what carries the picture across, which works only for a
+context on the decoder's own GPU. On a laptop whose NVIDIA GPU draws the
+window the backend reports itself unavailable and says so, and `nvdec-copy`
+serves. oneVPL's video processor converts each decoded picture to RGB using the
+matrix and range the stream states (BT.601 or BT.709; a stream in BT.2020 is
+refused by name), so the frame is an `'rgba'` frame and the conversion pass
+copies it. Its pixels differ from the shader path's by the video processor's
+chroma interpolation. It uses `libvpl.dll` and the Intel graphics driver; a
+10-bit stream converts to 8 bits. AV1 is listed for parts whose Direct3D 11
+decoder profiles include it and has not been run, since the Gen9 part it was
+written on has no AV1 decoder.
 
 **The `nvdec` backend needs the OpenGL context to render on the NVIDIA GPU.**
 NVDEC decodes into CUDA memory, and CUDA copies each picture into a pair of
@@ -219,16 +233,18 @@ with MP4Reader('movie.mp4') as movie:
   textures: a luma texture and a chroma texture, Cb in red and Cr in green.
   An 8-bit stream gives the `'nv12'` layout, `GL_R8` and `GL_RG8`. A 10-bit
   stream gives `'p010'`, `GL_R16` and `GL_RG16`, each sample in the high ten
-  bits of its channel. The picture sits at `visible`, first row at the top, inside
+  bits of its channel. The `vpl` backend gives `'rgba'`: one texture, already
+  converted, held for OpenGL until the frame is released. The picture sits at `visible`, first row at the top, inside
   textures of `texture_size`. Release every frame: a decoder with all its
   textures lent raises `DecoderError` naming the frames held. A caller may
   hold `output_slots` frames at once, 4 by default. On VA-API the textures
-  are the decode surfaces themselves; on NVDEC each frame is a copy of the
-  picture in textures of its own.
-- `NV12Converter.convert(frame, target)` draws a frame of either layout into
-  an RGBA texture of the frame's size. One pass applies colour, crop and the vertical flip. It
-  restores every piece of GL state it changes, so it can run inside a
-  renderer's frame.
+  are the decode surfaces themselves; on NVDEC and oneVPL each frame is a copy
+  of the picture in textures of its own.
+- `NV12Converter.convert(frame, target)` draws a frame of any layout into
+  an RGBA texture of the frame's size. For `'nv12'` and `'p010'` frames one
+  pass applies colour, crop and the vertical flip; for an `'rgba'` frame it
+  applies the crop and the flip. It restores every piece of GL state it
+  changes, so it can run inside a renderer's frame.
 
 `MP4Reader.audio` reports each audio track's codec, sample rate, channels and
 configuration, and reads its samples. No audio is decoded yet; see *Audio* in
