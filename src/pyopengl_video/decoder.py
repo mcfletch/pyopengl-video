@@ -25,8 +25,12 @@ from pyopengl_video.backend import Backend, VideoError, available
 from pyopengl_video.backend import explanations as backend_explanations
 from pyopengl_video.colour import Colour
 
-__all__ = ['BACKENDS', 'DecodedFrame', 'Decoder', 'DecoderError',
+__all__ = ['BACKENDS', 'MAX_OUTPUT_SLOTS', 'DecodedFrame', 'Decoder', 'DecoderError',
            'DecoderUnavailable', 'Sample', 'available_backends', 'explanations']
+
+#: The most frames a caller may ask a decoder to hold unreleased at once. Each
+#: is a copy of the picture or a decode surface, so the count is memory on the GPU.
+MAX_OUTPUT_SLOTS = 64
 
 
 class DecoderError(VideoError):

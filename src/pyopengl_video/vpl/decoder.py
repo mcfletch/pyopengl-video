@@ -32,14 +32,20 @@ from contextlib import ExitStack
 from ctypes import byref, c_void_p
 from typing import Any
 
-from pyopengl_video import codecs
+from pyopengl_video import bounds, codecs
 from pyopengl_video.colour import (
     MATRIX_BT470BG,
     MATRIX_BT601,
     MATRIX_BT709,
     Colour,
 )
-from pyopengl_video.decoder import DecodedFrame, Decoder, DecoderError, Sample
+from pyopengl_video.decoder import (
+    MAX_OUTPUT_SLOTS,
+    DecodedFrame,
+    Decoder,
+    DecoderError,
+    Sample,
+)
 from pyopengl_video.presentation import Outputs, Presentation
 from pyopengl_video.vpl import api
 from pyopengl_video.vpl.allocator import SurfaceAllocator, aligned
@@ -162,7 +168,8 @@ class VPLDecoder(Decoder):
     headers -- the stream's configuration as Annex-B (or the configuration OBUs
         for AV1), when the container keeps it apart from the samples
     size -- accepted for the registry; the stream's own size is used
-    output_slots -- how many frames a caller may hold unreleased at once
+    output_slots -- how many frames a caller may hold unreleased at once, 1 to
+        :data:`~pyopengl_video.decoder.MAX_OUTPUT_SLOTS`
     adapter -- which GPU to decode on; by default the one the current OpenGL
         context is running on, which is the only one it can write without a copy
 
@@ -190,7 +197,8 @@ class VPLDecoder(Decoder):
                 f'the oneVPL backend decodes {", ".join(sorted(CODEC_IDS))}, not {codec!r}')
         del size
         self.codec = codec
-        self.output_slots = int(output_slots)
+        self.output_slots = bounds.whole(output_slots, 'output_slots', 1,
+                                         MAX_OUTPUT_SLOTS, DecoderError)
         self._headers = bytes(headers)
         self._closed = False
         self._primed = False

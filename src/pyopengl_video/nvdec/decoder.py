@@ -80,7 +80,13 @@ from OpenGL.GL import (
 
 from pyopengl_video import bounds, codecs
 from pyopengl_video.colour import Colour
-from pyopengl_video.decoder import DecodedFrame, Decoder, DecoderError, Sample
+from pyopengl_video.decoder import (
+    MAX_OUTPUT_SLOTS,
+    DecodedFrame,
+    Decoder,
+    DecoderError,
+    Sample,
+)
 from pyopengl_video.glcontext import Owner
 from pyopengl_video.nvdec import api, guard
 from pyopengl_video.nvdec.av1 import Gate
@@ -98,10 +104,6 @@ __all__ = ['DEFAULT_OUTPUT_SLOTS', 'DEINTERLACE_MODES', 'Interop', 'NVDECDecoder
 #: How many decoded frames a caller may hold at once, unless it says otherwise.
 #: A player converts each frame as it arrives and holds none for long.
 DEFAULT_OUTPUT_SLOTS = 4
-
-#: The most frames a caller may ask to hold at once: each is a pair of
-#: textures the size of the picture.
-MOST_OUTPUT_SLOTS = 64
 
 #: How an interlaced picture becomes one frame, by the name a caller gives:
 #: ``'weave'`` interleaves the two fields as they were coded, ``'bob'`` scales
@@ -780,7 +782,7 @@ class NVDECDecoder(Decoder):
         del size
         self.codec = name
         self.output_slots = bounds.whole(output_slots, 'output_slots', 1,
-                                         MOST_OUTPUT_SLOTS, DecoderError)
+                                         MAX_OUTPUT_SLOTS, DecoderError)
         self.zero_copy = bool(interop)
         self._deinterlace = DEINTERLACE_MODES[deinterlace]
         self._headers = bytes(headers)

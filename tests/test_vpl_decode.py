@@ -33,7 +33,7 @@ from OpenGL.GL import GL_RGBA8 as RGBA8
 from pyopengl_video import DecoderError, decoders, open_decoder, open_encoder, vpl
 from pyopengl_video.colour import MATRIX_BT601, MATRIX_BT709, MATRIX_BT2020, Colour
 from pyopengl_video.convert import NV12Converter, create_output_texture
-from pyopengl_video.decoder import Sample
+from pyopengl_video.decoder import MAX_OUTPUT_SLOTS, Sample
 from pyopengl_video.mp4 import MP4Writer
 from pyopengl_video.playback import Movie
 from pyopengl_video.vpl import api
@@ -113,6 +113,11 @@ class TestWithNoDriver:
     def test_a_setting_the_decoder_does_not_have_is_refused(self):
         with pytest.raises(DecoderError, match='no setting named speed'):
             VPLDecoder('h264', speed=3)
+
+    @pytest.mark.parametrize('slots', [0, -1, MAX_OUTPUT_SLOTS + 1, 2.5, 'four'])
+    def test_an_output_slot_count_outside_its_range_is_refused(self, slots):
+        with pytest.raises(DecoderError, match='output_slots'):
+            VPLDecoder('h264', output_slots=slots)
 
     def test_a_codec_the_backend_does_not_decode_is_refused(self):
         with pytest.raises(DecoderError, match='not .mpeg2.'):

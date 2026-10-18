@@ -36,7 +36,13 @@ from OpenGL.GL import (
 
 from pyopengl_video import bounds
 from pyopengl_video.colour import Colour
-from pyopengl_video.decoder import DecodedFrame, Decoder, DecoderError, Sample
+from pyopengl_video.decoder import (
+    MAX_OUTPUT_SLOTS,
+    DecodedFrame,
+    Decoder,
+    DecoderError,
+    Sample,
+)
 from pyopengl_video.glcontext import Owner
 from pyopengl_video.linux import dmabuf
 from pyopengl_video.teardown import release_all
@@ -61,9 +67,6 @@ DEFAULT_OUTPUT_SLOTS = 4
 #: decoded, each a reconstruction and the picture shown, which is 18. H.264
 #: and HEVC hold at most 16 pictures and the one being decoded, and VP9 nine.
 MAX_FORMAT_SURFACES = 18
-
-#: The most frames a caller may ask to hold unreleased at once.
-MAX_OUTPUT_SLOTS = 64
 
 
 def as_decoder_error(method: Callable[..., Any]) -> Callable[..., Any]:
