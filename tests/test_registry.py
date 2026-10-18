@@ -87,9 +87,10 @@ def test_packet_carries_what_a_muxer_needs():
     assert packet.keyframe
 
 
-def test_the_nvenc_backend_reports_itself_unavailable_off_linux(monkeypatch):
-    """NVIDIA supports the encoder's OpenGL device type on Linux alone."""
+def test_the_nvenc_backend_reports_itself_unavailable_off_linux_and_windows(monkeypatch):
+    """NVENC is reached from OpenGL through its OpenGL device type on Linux and Direct3D on Windows."""
     monkeypatch.setattr(nvenc, 'OPENGL_DEVICE_PLATFORM', False)
+    monkeypatch.setattr(nvenc, 'DIRECTX_PLATFORM', False)
     assert nvenc.probe() is False
 
 

@@ -148,14 +148,13 @@ def decoder_available(gl_context):  # noqa: ARG001 - requested so a GL context i
 def nvenc_available(gl_context):  # noqa: ARG001 - requested so a GL context is current first
     """Skip unless this machine has an NVIDIA encoder to talk to."""
     if not nvenc.probe():
-        # Two different things fail this, and naming only the library sends a
-        # reader looking for a file that is very often sitting right there:
-        # NVIDIA supports the encoder's OpenGL device type on Linux alone, so
-        # every other platform reports unavailable however good the hardware.
-        pytest.skip('no NVENC encoder reachable from OpenGL here: either the '
-                    'driver library is absent, or this is not Linux, where '
-                    "NVENC's OpenGL device type is the only one supported "
-                    '(see plans/WINDOWS-SUPPORT.md)')
+        # Naming only the library sends a reader looking for a file that is
+        # very often sitting right there: the usual cause on Windows is a
+        # context on the integrated GPU of a hybrid laptop, and elsewhere than
+        # Linux and Windows there is no way in at all.
+        pytest.skip('no NVENC encoder reachable from OpenGL here: '
+                    + (nvenc.explain() or 'the NVIDIA driver library is absent, '
+                       'or this is neither Linux nor Windows'))
     return True
 
 
@@ -219,6 +218,16 @@ def blit(handle, texture, size):
         glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
     glDeleteFramebuffers(1, [source])
+
+
+def put_frame(handle, frame):
+    """Replace the picture in an encoder input with an RGBA array, inside its drawing scope."""
+    height, width = frame.shape[:2]
+    with handle.for_drawing():
+        glBindTexture(GL_TEXTURE_2D, handle.texture)
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+                        GL_RGBA, GL_UNSIGNED_BYTE, frame)
+        glBindTexture(GL_TEXTURE_2D, 0)
 
 
 def gradient_frame(width, height, phase=0):

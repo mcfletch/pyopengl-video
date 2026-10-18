@@ -80,7 +80,7 @@ class TestDiscovery:
         assert nvenc.BACKEND.largest('hevc') == (8192, 8192)
 
     def test_with_no_session_to_ask_every_codec_is_assumed(self, monkeypatch):
-        def refuse(library):  # noqa: ARG001 - the signature of the function replaced
+        def refuse(library, device):  # noqa: ARG001 - the signature of the function replaced
             raise api.NVENCError(2, 'nvEncOpenEncodeSessionEx', 'no context')
 
         monkeypatch.setattr(api.NvEncodeAPI, 'load', classmethod(lambda _cls: FakeLibrary([])))
@@ -91,7 +91,7 @@ class TestDiscovery:
         library = FakeLibrary([api.NV_ENC_CODEC_H264_GUID], SIZES)
         session = ctypes.c_void_p(7)
         monkeypatch.setattr(api.NvEncodeAPI, 'load', classmethod(lambda _cls: library))
-        monkeypatch.setattr(nvenc_encoder, 'open_session', lambda _library: session)
+        monkeypatch.setattr(nvenc_encoder, 'open_session', lambda _library, _device: session)
         assert nvenc.session_codecs() == {'h264': (4096, 4096)}
         assert library.destroyed == [session]
 
@@ -99,7 +99,7 @@ class TestDiscovery:
         library = FakeLibrary([api.NV_ENC_CODEC_H264_GUID])       # no sizes: the query fails
         session = ctypes.c_void_p(7)
         monkeypatch.setattr(api.NvEncodeAPI, 'load', classmethod(lambda _cls: library))
-        monkeypatch.setattr(nvenc_encoder, 'open_session', lambda _library: session)
+        monkeypatch.setattr(nvenc_encoder, 'open_session', lambda _library, _device: session)
         assert nvenc.session_codecs() == nvenc.ASSUMED_SIZES
         assert library.destroyed == [session]
 

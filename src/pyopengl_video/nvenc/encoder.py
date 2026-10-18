@@ -1,10 +1,14 @@
-"""The NVENC encoder: an OpenGL texture in, an H.264 elementary stream out.
+"""The NVENC encoder: an OpenGL frame in, an H.264, HEVC or AV1 stream out.
 
-The session is opened with NvEncodeAPI's OpenGL device type, which is what makes
-the frame's journey a short one -- the encoder reads the texture the renderer
-just wrote, in GPU memory, and nothing crosses the bus but the compressed
-result. A GL context must be current when the encoder is built, and the same
-context must be current for every call afterwards: the session belongs to it.
+On Linux the session is opened with NvEncodeAPI's OpenGL device type, which is
+what makes the frame's journey a short one -- the encoder reads the texture the
+renderer just wrote, in GPU memory, and nothing crosses the bus but the
+compressed result. On Windows the session is opened on a Direct3D 11 device and
+reads Direct3D textures that OpenGL draws into through
+:mod:`pyopengl_video.nvenc.direct3d`; the encoder makes those textures itself,
+so :meth:`NVENCEncoder.new_input` is how an input is obtained on both. A GL
+context must be current when the encoder is built, and the same context must be
+current for every call afterwards: the session belongs to it.
 
 Registration is separate from encoding because it is the expensive half. A
 recorder cycles through a handful of textures so the renderer is never writing
@@ -17,8 +21,11 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import sys
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from OpenGL.GL import GL_RENDERER, GL_TEXTURE_2D, glGetString
 
@@ -33,11 +40,19 @@ from pyopengl_video.encoder import (
 )
 from pyopengl_video.nvenc import api
 
+if TYPE_CHECKING:
+    from pyopengl_video.nvenc.direct3d import Direct3DInputs
+    from pyopengl_video.windows import d3d11
+
 log = logging.getLogger(__name__)
 
 __all__ = ['NVENCEncoder', 'InputHandle', 'DEFAULT_BITS_PER_PIXEL',
-           'SPARE_OUTPUT_BUFFERS', 'configure_codec', 'current_gl_renderer',
+           'DIRECTX_PLATFORM', 'RegisteredInput', 'SPARE_OUTPUT_BUFFERS', 'configure_codec', 'current_gl_renderer',
            'open_session', 'session_codecs', 'unsupported_device_detail']
+
+#: Where textures reach the encoder through Direct3D 11 rather than by OpenGL
+#: name. NVIDIA supports the OpenGL device type on Linux alone.
+DIRECTX_PLATFORM = sys.platform == 'win32'
 
 #: How many compressed-output buffers to keep, over and above the frames the
 #: encoder may hold for reordering.
@@ -80,23 +95,34 @@ def unsupported_device_detail() -> str:
             'the encoder')
 
 
-def open_session(library: api.NvEncodeAPI) -> ctypes.c_void_p:
-    """An encoder session against the OpenGL context current on this thread.
+def open_session(library: api.NvEncodeAPI,
+                 device: ctypes.c_void_p | None = None) -> ctypes.c_void_p:
+    """An encoder session on `device`, or on the OpenGL context current here.
+
+    `device` is an ``ID3D11Device`` on Windows, where the session is opened
+    through Direct3D; without one the session is opened on the OpenGL context
+    current on this thread.
 
     Raises :class:`~pyopengl_video.nvenc.api.NVENCError` where the driver will
-    not take the context, saying which of the two reasons it was.
+    not take the device, saying why where it can.
     """
     params = api.NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS()
     params.version = library.struct_version(1)
-    params.deviceType = api.NV_ENC_DEVICE_TYPE_OPENGL
-    params.device = None                      # the OpenGL device is the current context
+    if device is None:
+        params.deviceType = api.NV_ENC_DEVICE_TYPE_OPENGL
+        params.device = None                  # the OpenGL device is the current context
+    else:
+        params.deviceType = api.NV_ENC_DEVICE_TYPE_DIRECTX
+        params.device = device
     params.apiVersion = library.api_version
     session = ctypes.c_void_p()
     status = library.nvEncOpenEncodeSessionEx(
         ctypes.byref(params), ctypes.byref(session))
     if status != api.NV_ENC_SUCCESS:
         raise api.NVENCError(
-            status, 'nvEncOpenEncodeSessionEx', unsupported_device_detail())
+            status, 'nvEncOpenEncodeSessionEx',
+            unsupported_device_detail() if device is None else
+            'the Direct3D device must be on the NVIDIA GPU that holds the encoder')
     return session
 
 
@@ -195,12 +221,35 @@ def _describe_vui(vui: api.NV_ENC_CONFIG_H264_VUI_PARAMETERS, units_in_tick: int
     vui.timeScale = time_scale
 
 
+class RegisteredInput(inputs.InputHandle):
+    """An input the encoder has registered with the driver.
+
+    registration -- the driver's handle for it, None before it is registered
+        and after it is given back
+    release -- what closing the handle calls first, set by the encoder to
+        unregister it. The driver reads the texture when it unregisters, so a
+        texture freed before then is read after it is gone; unregistering from
+        the handle's own :meth:`close` makes the order the caller closes in
+        immaterial.
+    """
+
+    registration: ctypes.c_void_p | None = None
+    release: Callable[[Any], None] | None = None
+
+    def close(self) -> None:
+        """Unregister from the encoder, then give back the texture."""
+        if self.release is not None:
+            self.release(self)            # refuses an input still being encoded
+            self.release = None
+        super().close()
+
+
 @dataclass
-class InputHandle(inputs.InputHandle):
+class InputHandle(RegisteredInput):
     """A texture the encoder has been told about.
 
     texture/target -- what was registered
-    resource -- the driver's handle for it
+    registration -- the driver's handle for it
     description -- the structure the driver was handed, kept alive alongside the
         registration it describes
     framebuffer/owns_texture -- see
@@ -211,7 +260,7 @@ class InputHandle(inputs.InputHandle):
 
     texture: int = 0
     target: int = 0
-    resource: ctypes.c_void_p | None = None
+    registration: ctypes.c_void_p | None = None
     description: api.NV_ENC_INPUT_RESOURCE_OPENGL_TEX | None = None
     framebuffer: int = 0
     owns_texture: bool = False
@@ -223,7 +272,7 @@ class _Submission:
 
     output: ctypes.c_void_p
     mapped: ctypes.c_void_p
-    handle: InputHandle
+    handle: Any
 
 
 class NVENCEncoder(Encoder):
@@ -249,11 +298,18 @@ class NVENCEncoder(Encoder):
         holds frames back before emitting them and packets come out in decode
         order, which :attr:`reorders_frames` reports.
 
+    adapter -- Windows only: which GPU to encode on. By default it is the one
+        the current OpenGL context runs on, which must be NVIDIA's.
+
     Once open, :attr:`input_slots` says how many textures to cycle through.
+    Obtain each with :meth:`new_input`, which works on both platforms; on
+    Windows it is the only way, since the textures are Direct3D resources.
     """
 
     codec = 'h264'
     zero_copy = True
+    #: Windows inputs are Direct3D resources that only the encoder can make.
+    allocates_inputs = DIRECTX_PLATFORM
 
     #: How many textures a caller should register and cycle through. Set when
     #: the encoder is initialised, from the configuration the driver settled on.
@@ -263,7 +319,12 @@ class NVENCEncoder(Encoder):
                  fps: float | tuple[int, int] = 60, bitrate: int | None = None,
                  preset: str = 'p4', tuning: str = 'high_quality',
                  rate_control: str = 'vbr', gop: int | None = None,
-                 bframes: int = 0):
+                 bframes: int = 0, adapter: d3d11.Adapter | None = None):
+        if adapter is not None and not DIRECTX_PLATFORM:
+            raise EncoderError(
+                'an adapter can be named only on Windows, where a session is '
+                'opened on a Direct3D device; elsewhere it uses the current '
+                'OpenGL context')
         codec = codecs.canonical(codec)
         if codec not in api.CODEC_GUIDS:
             raise EncoderError(
@@ -279,11 +340,14 @@ class NVENCEncoder(Encoder):
         self.bitrate = int(bitrate) if bitrate is not None else self._default_bitrate()
 
         self.api = api.NvEncodeAPI.load()
-        self.session = self._open_session()
         self._closed = False
-        self._registered: list[InputHandle] = []
+        self._registered: list[Any] = []
         self._pending: deque[_Submission] = deque()
+        self.session = ctypes.c_void_p()
+        self.direct3d: Direct3DInputs | None = None
+        self.buffer_format = api.NV_ENC_BUFFER_FORMAT_ABGR
         try:
+            self.session = self._open_session(adapter)
             self._require_codec()
             self._initialise(preset, tuning, rate_control)
             self._free_output = [self._create_bitstream_buffer()
@@ -300,9 +364,21 @@ class NVENCEncoder(Encoder):
     def _default_bitrate(self) -> int:
         return default_bitrate(self.size, self.frame_rate)
 
-    def _open_session(self) -> ctypes.c_void_p:
-        """Open an encoder session against the current OpenGL context."""
-        return open_session(self.api)
+    def _open_session(self, adapter: d3d11.Adapter | None) -> ctypes.c_void_p:
+        """Open an encoder session on the current OpenGL context's GPU.
+
+        Through the context itself on Linux, and through a Direct3D 11 device
+        on the same GPU on Windows.
+        """
+        if not DIRECTX_PLATFORM:
+            return open_session(self.api)
+        from pyopengl_video.nvenc import (  # noqa: PLC0415 - imports the Windows OpenGL bindings
+            direct3d,
+        )
+
+        self.direct3d = direct3d.Direct3DInputs(adapter)
+        self.buffer_format = direct3d.BUFFER_FORMAT
+        return open_session(self.api, self.direct3d.pointer)
 
     def _require_codec(self) -> None:
         """Refuse a codec this GPU's encoder does not have, naming those it has."""
@@ -369,10 +445,10 @@ class NVENCEncoder(Encoder):
         params.encodeWidth = params.maxEncodeWidth = params.darWidth = self.size[0]
         params.encodeHeight = params.maxEncodeHeight = params.darHeight = self.size[1]
         params.frameRateNum, params.frameRateDen = self.frame_rate
-        params.enableEncodeAsync = 0              # Linux reports completion synchronously
+        params.enableEncodeAsync = 0              # completion is reported synchronously
         params.enablePTD = 1                      # the encoder decides picture types
         params.tuningInfo = self._tuning_info
-        params.bufferFormat = api.NV_ENC_BUFFER_FORMAT_ABGR
+        params.bufferFormat = self.buffer_format
         params.encodeConfig = ctypes.pointer(config)
         self.api.check(
             self.api.nvEncInitializeEncoder(self.session, ctypes.byref(params)),
@@ -399,37 +475,92 @@ class NVENCEncoder(Encoder):
 
     # ------------------------------------------------------------- encoding
 
+    def new_input(self) -> Any:
+        """A texture to draw the next frame into, with a framebuffer that fills it.
+
+        Ask for :attr:`input_slots` of them at the start of a recording and
+        cycle through them, drawing into each inside its ``for_drawing`` scope.
+        On Windows the texture is one allocation seen twice, as a Direct3D
+        texture the encoder reads and an OpenGL texture the renderer draws into.
+        """
+        if not DIRECTX_PLATFORM:
+            return super().new_input()
+        self._require_open()
+        assert self.direct3d is not None
+        width, height = self.size
+        shared = self.direct3d.create(width, height)
+        try:
+            shared.registration = self._register_resource(
+                api.NV_ENC_INPUT_RESOURCE_TYPE_DIRECTX,
+                ctypes.cast(shared.resource.pointer, ctypes.c_void_p), 0)
+        except Exception:
+            shared.close()
+            raise
+        return self._adopt(shared)
+
     def register(self, texture: int, target: int | None = None) -> InputHandle:
         """Tell the encoder about `texture`, returning the handle to encode from.
 
         The texture must be RGBA with 8 bits a channel and the encoder's frame
-        size, and it must stay alive as long as the handle does.
+        size, and it must stay alive as long as the handle does. Windows
+        encoders read Direct3D textures and take no others: call
+        :meth:`new_input` there.
         """
+        if DIRECTX_PLATFORM:
+            raise EncoderError(
+                'this encoder reads a Direct3D surface, so it cannot take a texture '
+                'made elsewhere; call new_input() for one it can read')
         target = GL_TEXTURE_2D if target is None else target
         description = api.NV_ENC_INPUT_RESOURCE_OPENGL_TEX(
             texture=int(texture), target=int(target))
-        request = api.NV_ENC_REGISTER_RESOURCE()
-        request.version = self.api.struct_version(5)
-        request.resourceType = api.NV_ENC_INPUT_RESOURCE_TYPE_OPENGL_TEX
-        request.width, request.height = self.size
         # For an OpenGL texture the pitch is the width in components, not bytes
         # of a row of some allocation: four for RGBA.
-        request.pitch = self.size[0] * 4
-        request.resourceToRegister = ctypes.cast(
-            ctypes.byref(description), ctypes.c_void_p)
-        request.bufferFormat = api.NV_ENC_BUFFER_FORMAT_ABGR
+        registration = self._register_resource(
+            api.NV_ENC_INPUT_RESOURCE_TYPE_OPENGL_TEX,
+            ctypes.cast(ctypes.byref(description), ctypes.c_void_p), self.size[0] * 4)
+        handle = InputHandle(
+            texture=int(texture), target=int(target),
+            registration=registration, description=description)
+        return self._adopt(handle)
+
+    def _adopt(self, handle: Any) -> Any:
+        """Keep `handle` registered until it is closed or the encoder is."""
+        handle.release = self._unregister
+        self._registered.append(handle)
+        return handle
+
+    def _unregister(self, handle: Any) -> None:
+        """Give the driver back its registration of `handle`.
+
+        Called by the handle as it closes, and by the encoder for the handles
+        left when it does. Refused for a picture the encoder is still encoding.
+        """
+        if any(pending.handle is handle for pending in self._pending):
+            raise EncoderError(
+                f'texture {handle.texture} is still being encoded; it can be closed '
+                'once the encoder has returned its picture')
+        self._registered = [kept for kept in self._registered if kept is not handle]
+        if handle.registration is not None and self.session:
+            self.api.nvEncUnregisterResource(self.session, handle.registration)
+        handle.registration = None
+
+    def _register_resource(self, kind: int, resource: ctypes.c_void_p,
+                           pitch: int) -> ctypes.c_void_p:
+        """Register `resource` of resource type `kind`, returning the driver's handle."""
+        request = api.NV_ENC_REGISTER_RESOURCE()
+        request.version = self.api.struct_version(5)
+        request.resourceType = kind
+        request.width, request.height = self.size
+        request.pitch = pitch
+        request.resourceToRegister = resource
+        request.bufferFormat = self.buffer_format
         request.bufferUsage = api.NV_ENC_BUFFER_USAGE_INPUT_IMAGE
         self.api.check(
             self.api.nvEncRegisterResource(self.session, ctypes.byref(request)),
             'nvEncRegisterResource', self.session)
-        handle = InputHandle(
-            texture=int(texture), target=int(target),
-            resource=ctypes.c_void_p(request.registeredResource),
-            description=description)
-        self._registered.append(handle)
-        return handle
+        return ctypes.c_void_p(request.registeredResource)
 
-    def encode(self, handle: InputHandle, timestamp: int, duration: int = 0,
+    def encode(self, handle: Any, timestamp: int, duration: int = 0,
                force_idr: bool = False) -> list[Packet]:
         """Submit the picture in `handle`; return whatever the encoder let go of.
 
@@ -452,7 +583,7 @@ class NVENCEncoder(Encoder):
         picture.inputPitch = self.size[0]
         picture.inputBuffer = mapped
         picture.outputBitstream = output
-        picture.bufferFmt = api.NV_ENC_BUFFER_FORMAT_ABGR
+        picture.bufferFmt = self.buffer_format
         picture.pictureStruct = api.NV_ENC_PIC_STRUCT_FRAME
         picture.inputTimeStamp = int(timestamp)
         picture.inputDuration = int(duration)
@@ -507,13 +638,15 @@ class NVENCEncoder(Encoder):
         for buffer in getattr(self, '_free_output', []):
             self.api.nvEncDestroyBitstreamBuffer(self.session, buffer)
         self._free_output = []
-        for handle in self._registered:
-            self.api.nvEncUnregisterResource(self.session, handle.resource)
+        for handle in list(self._registered):
             handle.close()
         self._registered = []
         if self.session:
             self.api.nvEncDestroyEncoder(self.session)
             self.session = ctypes.c_void_p()
+        if self.direct3d is not None:
+            self.direct3d.close()
+            self.direct3d = None
 
     # ------------------------------------------------------------ internals
 
@@ -521,11 +654,11 @@ class NVENCEncoder(Encoder):
         if self._closed:
             raise EncoderError('the encoder is closed')
 
-    def _map(self, handle: InputHandle) -> ctypes.c_void_p:
+    def _map(self, handle: Any) -> ctypes.c_void_p:
         """Make a registered texture readable by the encoder for one picture."""
         request = api.NV_ENC_MAP_INPUT_RESOURCE()
         request.version = self.api.struct_version(4)
-        request.registeredResource = handle.resource
+        request.registeredResource = handle.registration
         self.api.check(
             self.api.nvEncMapInputResource(self.session, ctypes.byref(request)),
             'nvEncMapInputResource', self.session)

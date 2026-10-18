@@ -392,11 +392,16 @@ game is the game plus a blit.
   with two black rows; a player that follows the render size scales the frame
   to 1920x1080. Sizes the encoder does not round, such as 1280x720 and
   3840x2160, are coded as asked.
-- **NVIDIA and AMD on Linux, Intel on Windows.** Intel on Linux is the `vaapi`
-  backend against a different driver and has not been run; NVIDIA on Windows
-  goes through the same Direct3D interop the Intel backend uses, which is
-  written and not yet wired to that encoder. `plans/GPU-VIDEO-ENCODE.md` holds
-  the whole matrix.
+- **NVIDIA on Linux and Windows, AMD on Linux, Intel on Windows.** Intel on
+  Linux is the `vaapi` backend against a different driver and has not been
+  run. `plans/GPU-VIDEO-ENCODE.md` holds the whole matrix.
+- **`nvenc` on Windows needs the OpenGL context on the NVIDIA GPU.** The
+  encoder reads a Direct3D texture that OpenGL draws into, and both must be on
+  one GPU. On a laptop with switchable graphics a program gets the integrated
+  GPU unless Windows is told otherwise: Settings, System, Display, Graphics,
+  then add the Python executable and choose High performance. Without that
+  `encoders()` omits `nvenc` and `open_encoder(..., backend='nvenc')` says why.
+  Inputs come from `encoder.new_input()`; `register()` is refused there.
 - **`vaapi` needs an EGL context**, because exporting a texture as a DMA-BUF is
   an EGL extension — see *Getting the frame to the encoder*.
 - **`vaapi` codes in display order.** `bframes` above zero is refused there,

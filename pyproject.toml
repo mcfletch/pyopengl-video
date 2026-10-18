@@ -137,6 +137,7 @@ module = [
     "pyopengl_video.windows.*",
     "pyopengl_video.vpl",
     "pyopengl_video.vpl.*",
+    "pyopengl_video.nvenc.direct3d",
 ]
 follow_imports = "skip"
 

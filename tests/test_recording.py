@@ -5,7 +5,7 @@ import pytest
 
 from pyopengl_video import open_encoder
 from pyopengl_video.mp4 import MP4Writer
-from tests.conftest import gradient_frame
+from tests.conftest import gradient_frame, put_frame
 from tests.test_mp4 import boxes, path_to
 
 SIZE = (320, 240)
@@ -13,15 +13,14 @@ FRAMES = 24
 
 
 @pytest.fixture
-def movie(tmp_path, nvenc_available, upload_texture):  # noqa: ARG001 - requested to skip where there is no NVENC
+def movie(tmp_path, nvenc_available):  # noqa: ARG001 - requested to skip where there is no NVENC
     """Record a short clip of a moving gradient and return the file's bytes."""
     target = tmp_path / 'clip.mp4'
-    texture = upload_texture(gradient_frame(*SIZE))
     with open_encoder(*SIZE, fps=24, bitrate=2_000_000, gop=12) as encoder:
-        handle = encoder.register(texture)
+        handle = encoder.new_input()
         with MP4Writer(target, encoder) as recording:
             for index in range(FRAMES):
-                upload_texture.update(texture, gradient_frame(*SIZE, phase=index))
+                put_frame(handle, gradient_frame(*SIZE, phase=index))
                 recording.write(encoder.encode(
                     handle, timestamp=index * encoder.timescale // 24))
             recording.write(encoder.flush())
@@ -60,16 +59,15 @@ def test_the_key_frames_are_where_the_gop_puts_them(movie):
 
 
 @pytest.mark.usefixtures('nvenc_available')
-def test_a_reordered_recording_records_composition_times(tmp_path, upload_texture):
+def test_a_reordered_recording_records_composition_times(tmp_path):
     """With B-pictures the file needs composition offsets, and gets them."""
     target = tmp_path / 'bframes.mp4'
     with open_encoder(*SIZE, fps=24, bitrate=2_000_000, gop=24, bframes=2) as encoder:
-        ring = [encoder.register(upload_texture(gradient_frame(*SIZE)))
-                for _ in range(encoder.input_slots)]
+        ring = [encoder.new_input() for _ in range(encoder.input_slots)]
         with MP4Writer(target, encoder) as recording:
             for index in range(FRAMES):
                 handle = ring[index % len(ring)]
-                upload_texture.update(handle.texture, gradient_frame(*SIZE, phase=index))
+                put_frame(handle, gradient_frame(*SIZE, phase=index))
                 recording.write(encoder.encode(
                     handle, timestamp=index * encoder.timescale // 24))
             recording.write(encoder.flush())

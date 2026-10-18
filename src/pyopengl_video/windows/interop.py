@@ -255,8 +255,13 @@ class InteropDevice:
 
     def create_texture(self, width: int, height: int,
                        format: int = d3d11.DXGI_FORMAT_B8G8R8A8_UNORM,
-                       access: int = WGL_ACCESS_WRITE_DISCARD_NV) -> SharedTexture:
-        """A new texture that OpenGL draws into and Direct3D reads."""
+                       access: int = WGL_ACCESS_WRITE_DISCARD_NV,
+                       factory: type[SharedTexture] | None = None) -> SharedTexture:
+        """A new texture that OpenGL draws into and Direct3D reads.
+
+        `factory` is the class to build, for a backend whose textures carry
+        more than :class:`SharedTexture` does; it takes the same arguments.
+        """
         resource = self.device.create_texture(width, height, format)
         name = int(glGenTextures(1))
         handle = wglDXRegisterObjectNV(self.pointer, resource.pointer, name,
@@ -267,7 +272,7 @@ class InteropDevice:
             resource.close()
             raise InteropError(error, 'wglDXRegisterObjectNV',
                                f'{width}x{height} DXGI format {format}')
-        shared = SharedTexture(self, resource, name, handle)
+        shared = (factory or SharedTexture)(self, resource, name, handle)
         self._textures.append(shared)
         return shared
 

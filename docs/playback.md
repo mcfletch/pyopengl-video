@@ -29,10 +29,10 @@ MP4, IVF and raw-stream readers are part of this package.
 | Backend | Hardware | Platform | Codecs | Picture handed over as | State |
 | --- | --- | --- | --- | --- | --- |
 | `nvdec` | NVIDIA | Linux | H.264 | CUDA memory copied on the GPU into two textures | working |
-| `nvdec` | NVIDIA | Windows | H.264 | the same | the same code, untested |
+| `nvdec` | NVIDIA | Windows | H.264 | the same | working, where the OpenGL context is on the NVIDIA GPU |
 | `vaapi` | AMD, VCN | Linux | H.264, HEVC, AV1, VP9 | two DMA-BUF planes imported as textures | working |
 | `vaapi` | Intel, Gen9 and later | Linux | H.264, HEVC, AV1, VP9 | the same | the same code, untested |
-| `nvdec-copy` | NVIDIA | Linux, Windows | H.264 | CUDA memory copied through host memory into two textures | working on Linux |
+| `nvdec-copy` | NVIDIA | Linux, Windows | H.264 | CUDA memory copied through host memory into two textures | working |
 | `vpl` | Intel, Gen9 and later | Windows | H.264, HEVC, VP9 | a Direct3D 11 texture converted to RGB on the GPU | working |
 
 The codecs are the ones the backend drives. A GPU decodes those its hardware

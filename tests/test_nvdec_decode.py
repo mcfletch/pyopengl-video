@@ -467,12 +467,14 @@ class TestPlayingOnTheGPU:
         frames = [gradient_frame(*size, phase=index * 3) for index in range(20)]
         path = tmp_path / 'recorded.mp4'
         encoder = NVENCEncoder(*size, fps=30, bitrate=8_000_000, gop=8)
-        texture = upload_texture(frames[0])
+        source = upload_texture(frames[0])
         try:
-            handle = encoder.register(texture)
+            handles = [encoder.new_input() for _ in range(encoder.input_slots)]
             with MP4Writer(path, encoder) as writer:
                 for index, frame in enumerate(frames):
-                    upload_texture.update(texture, frame)
+                    handle = handles[index % len(handles)]
+                    upload_texture.update(source, frame)
+                    blit(handle, source, size)
                     writer.write(encoder.encode(handle, index * TICK, TICK))
                 writer.write(encoder.flush())
         finally:

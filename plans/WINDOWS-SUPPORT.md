@@ -2,7 +2,7 @@
 
 **Status:** The interop shim and the Intel backend have landed: OpenGLContext
 records a playable MP4 on this machine's Intel GPU, with the frame never leaving
-it. NVIDIA on Windows is next, over the same shim. Every claim below is measured
+it. NVIDIA on Windows has landed over the same shim. Every claim below is measured
 rather than assumed, and the measurements are here.
 
 **Goal:** the same thing Linux has — the renderer's finished frame reaching the
@@ -192,7 +192,7 @@ clock and the muxer are all platform-independent already.
 | W1 | `windows/`: COM helpers, DXGI adapter identity, D3D11 device and textures, `WGL_NV_DX_interop2` shared textures | **landed** |
 | W2 | `Encoder.new_input()` / `for_drawing()`, and `OpenGLContext` following | **landed** |
 | W3 | oneVPL backend: Intel, D3D11 video memory, RGB in | **landed** — OpenGLContext records a playable MP4 on the Intel GPU here |
-| W4 | NVENC DirectX device type reusing the shim | next, once a GL context can be put on the NVIDIA adapter |
+| W4 | NVENC DirectX device type reusing the shim | **landed** - `nvenc/direct3d.py`; H.264 and HEVC encode on the GTX 1650 with the context on it, and NVDEC decodes the H.264 back to the right colours |
 | W5 | PBO readback tier — the floor, and the reference for the zero-copy output | after W4 |
 | W6 | AMF for AMD; Media Foundation where an encoder MFT exists | needs hardware |
 

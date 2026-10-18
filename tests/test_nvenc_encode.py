@@ -13,7 +13,7 @@ from pyopengl_video import EncoderError, open_encoder
 from pyopengl_video.mp4 import MP4Writer, split_annexb
 from pyopengl_video.nvenc import encoder as nvenc_encoder
 from pyopengl_video.nvenc.encoder import NVENCEncoder
-from tests.conftest import decode_errors, gradient_frame
+from tests.conftest import decode_errors, gradient_frame, put_frame
 
 SIZE = (640, 480)
 FRAMES = 30
@@ -46,17 +46,20 @@ def paint(handle, colour):
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
 
 
-def encode_sequence(encoder, texture, upload, frames=FRAMES, still=False):
+def encode_sequence(encoder, frames=FRAMES, still=False):
     """Push `frames` through the encoder, returning every packet produced.
 
-    still -- leave the texture alone between frames, so the sequence is a held
+    still -- leave the pictures alone between frames, so the sequence is a held
         picture rather than a moving one
     """
-    handle = encoder.register(texture)
+    ring = [encoder.new_input() for _ in range(encoder.input_slots)]
+    for handle in ring:
+        put_frame(handle, gradient_frame(*SIZE))
     packets = []
     for index in range(frames):
+        handle = ring[index % len(ring)]
         if not still:
-            upload.update(texture, gradient_frame(*SIZE, phase=index))
+            put_frame(handle, gradient_frame(*SIZE, phase=index))
         packets.extend(encoder.encode(handle, timestamp=index * 3000))
     packets.extend(encoder.flush())
     return packets
@@ -76,31 +79,27 @@ def test_headers_are_a_sequence_and_picture_parameter_set(encoder):
     assert kinds == {7, 8}                       # SPS and PPS, and nothing else
 
 
-def test_every_frame_comes_back_as_a_packet(encoder, upload_texture):
-    texture = upload_texture(gradient_frame(*SIZE))
-    packets = encode_sequence(encoder, texture, upload_texture)
+def test_every_frame_comes_back_as_a_packet(encoder):
+    packets = encode_sequence(encoder)
     assert len(packets) == FRAMES
     assert all(len(packet) > 0 for packet in packets)
 
 
-def test_the_stream_opens_on_a_key_frame_and_repeats_them_at_the_gop(encoder, upload_texture):
-    texture = upload_texture(gradient_frame(*SIZE))
-    packets = encode_sequence(encoder, texture, upload_texture)
+def test_the_stream_opens_on_a_key_frame_and_repeats_them_at_the_gop(encoder):
+    packets = encode_sequence(encoder)
     keyframes = [index for index, packet in enumerate(packets) if packet.keyframe]
     assert keyframes[0] == 0
     assert keyframes == [0, 15]                  # gop=15 over 30 frames
 
 
-def test_timestamps_come_back_as_they_went_in(encoder, upload_texture):
-    texture = upload_texture(gradient_frame(*SIZE))
-    packets = encode_sequence(encoder, texture, upload_texture)
+def test_timestamps_come_back_as_they_went_in(encoder):
+    packets = encode_sequence(encoder)
     assert [packet.timestamp for packet in packets] == [i * 3000 for i in range(FRAMES)]
     assert all(packet.duration == 3000 for packet in packets)
 
 
-def test_a_closed_encoder_refuses_to_encode(encoder, upload_texture):
-    texture = upload_texture(gradient_frame(*SIZE))
-    handle = encoder.register(texture)
+def test_a_closed_encoder_refuses_to_encode(encoder):
+    handle = encoder.new_input()
     encoder.close()
     with pytest.raises(EncoderError):
         encoder.encode(handle, timestamp=0)
@@ -126,13 +125,14 @@ def test_unknown_settings_are_refused_by_name():
 # part no amount of structural checking can show.
 
 @pytest.mark.usefixtures('nvenc_available')
-def test_a_detailed_frame_costs_more_than_a_flat_one(upload_texture):
+def test_a_detailed_frame_costs_more_than_a_flat_one():
     """A key frame of noise is far larger than a key frame of one colour."""
     sizes = {}
     for name, frame in (('flat', flat_frame(*SIZE)), ('noise', noise_frame(*SIZE))):
         encoder = NVENCEncoder(*SIZE, fps=30, bitrate=20_000_000, gop=30)
-        texture = upload_texture(frame)
-        packets = encoder.encode(encoder.register(texture), timestamp=0)
+        handle = encoder.new_input()
+        put_frame(handle, frame)
+        packets = encoder.encode(handle, timestamp=0)
         packets.extend(encoder.flush())
         sizes[name] = sum(len(packet) for packet in packets)
         encoder.close()
@@ -140,7 +140,7 @@ def test_a_detailed_frame_costs_more_than_a_flat_one(upload_texture):
 
 
 @pytest.mark.usefixtures('nvenc_available')
-def test_a_still_sequence_costs_less_than_a_moving_one(upload_texture):
+def test_a_still_sequence_costs_less_than_a_moving_one():
     """Frames that do not change compress to almost nothing after the first.
 
     At a constant quantiser the size of a picture is what it cost to describe;
@@ -150,8 +150,7 @@ def test_a_still_sequence_costs_less_than_a_moving_one(upload_texture):
     sizes = {}
     for name, still in (('still', True), ('moving', False)):
         encoder = NVENCEncoder(*SIZE, fps=30, rate_control='constqp', gop=FRAMES * 2)
-        texture = upload_texture(gradient_frame(*SIZE))
-        packets = encode_sequence(encoder, texture, upload_texture, still=still)
+        packets = encode_sequence(encoder, still=still)
         # after the opening key frame, what did the rest of the sequence cost?
         sizes[name] = sum(len(packet) for packet in packets[1:])
         encoder.close()
@@ -191,18 +190,17 @@ def nal_unit_headers(stream):
 # order, several at a time, carrying display timestamps that run out of order.
 
 @pytest.mark.usefixtures('nvenc_available')
-def test_b_frames_are_held_back_and_come_out_reordered(upload_texture):
+def test_b_frames_are_held_back_and_come_out_reordered():
     encoder = NVENCEncoder(*SIZE, fps=30, bitrate=4_000_000, gop=30, bframes=2)
     try:
         assert encoder.reorders_frames is True
         # a texture the encoder is still holding cannot be handed back to it,
         # so a reordering encoder is fed from a ring
-        ring = [encoder.register(upload_texture(gradient_frame(*SIZE)))
-                for _ in range(encoder.input_slots)]
+        ring = [encoder.new_input() for _ in range(encoder.input_slots)]
         counts, packets = [], []
         for index in range(12):
             handle = ring[index % len(ring)]
-            upload_texture.update(handle.texture, gradient_frame(*SIZE, phase=index))
+            put_frame(handle, gradient_frame(*SIZE, phase=index))
             produced = encoder.encode(handle, timestamp=index * 3000)
             counts.append(len(produced))
             packets.extend(produced)
@@ -218,16 +216,81 @@ def test_b_frames_are_held_back_and_come_out_reordered(upload_texture):
 
 
 @pytest.mark.usefixtures('nvenc_available')
-def test_reusing_a_texture_the_encoder_still_holds_says_so(upload_texture):
+def test_reusing_a_texture_the_encoder_still_holds_says_so():
     """The driver's own answer to this is a bare MAP_FAILED."""
     encoder = NVENCEncoder(*SIZE, fps=30, bframes=2, gop=30)
     try:
-        handle = encoder.register(upload_texture(gradient_frame(*SIZE)))
+        handle = encoder.new_input()
+        put_frame(handle, gradient_frame(*SIZE))
         with pytest.raises(EncoderError, match='cycle through'):
             for index in range(4):
                 encoder.encode(handle, timestamp=index * 3000)
     finally:
         encoder.close()
+
+
+class TestClosingAnInput:
+    """The driver reads a texture as it unregisters it, so it must still exist.
+
+    A caller may close its inputs before the encoder or after it. Unregistering
+    a texture already freed reads freed memory, which faults only when the
+    allocator has reused it.
+    """
+
+    def test_a_closed_input_is_unregistered_while_its_texture_exists(
+            self, encoder, monkeypatch):
+        handle = encoder.new_input()
+        texture_when_unregistered = []
+        unregister = encoder.api.nvEncUnregisterResource
+
+        def spy(session, registration):
+            texture_when_unregistered.append(handle.texture)
+            return unregister(session, registration)
+
+        monkeypatch.setattr(encoder.api, 'nvEncUnregisterResource', spy)
+        handle.close()
+        assert len(texture_when_unregistered) == 1
+        assert texture_when_unregistered[0] != 0
+        assert handle.texture == 0
+
+    def test_an_input_is_unregistered_once_whichever_closes_first(self, encoder, monkeypatch):
+        handle = encoder.new_input()
+        calls = []
+        unregister = encoder.api.nvEncUnregisterResource
+        monkeypatch.setattr(
+            encoder.api, 'nvEncUnregisterResource',
+            lambda session, registration: calls.append(registration) or unregister(
+                session, registration))
+        handle.close()
+        encoder.close()
+        handle.close()
+        assert len(calls) == 1
+
+    def test_closing_the_encoder_closes_the_inputs_it_still_holds(self, encoder):
+        handle = encoder.new_input()
+        encoder.close()
+        assert handle.texture == 0
+        assert handle.registration is None
+
+    @pytest.mark.usefixtures('nvenc_available')
+    def test_an_input_the_encoder_is_still_encoding_cannot_be_closed(self):
+        encoder = NVENCEncoder(*SIZE, fps=30, bframes=2, gop=30)
+        try:
+            ring = [encoder.new_input() for _ in range(encoder.input_slots)]
+            for handle in ring:
+                put_frame(handle, gradient_frame(*SIZE))
+            held = None
+            for index, handle in enumerate(ring):
+                if not encoder.encode(handle, timestamp=index * TICK):
+                    held = handle
+                    break
+            assert held is not None, 'no picture was held back by the reordering'
+            with pytest.raises(EncoderError, match='still being encoded'):
+                held.close()
+            encoder.flush()
+            held.close()                        # the picture came out, so it can
+        finally:
+            encoder.close()
 
 
 class TestMuxing:

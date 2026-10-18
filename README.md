@@ -43,9 +43,9 @@ texture = player.frame_at(seconds)       # right way up, sRGB
 `examples/play_movie.py` plays a file in a window.
 [docs/playback.md](docs/playback.md) covers the player, the decoders and what
 they decode. H.264, HEVC, AV1 and VP9 decode on AMD under Linux through VA-API,
-at 8 and 10 bits, H.264 on NVIDIA through NVDEC, and H.264, HEVC and VP9 on
-Intel under Windows through oneVPL. Intel on Linux and NVIDIA on Windows run
-the same code as the backends above, untested. AMD on Windows is
+at 8 and 10 bits, H.264 on NVIDIA through NVDEC on Linux and Windows, and H.264, HEVC and VP9 on
+Intel under Windows through oneVPL. Intel on Linux runs the same code as the
+backends above, untested. AMD on Windows is
 [planned](plans/GPU-VIDEO-DECODE.md).
 
 ## What it needs
@@ -57,10 +57,10 @@ muxer is part of this package.
 | Backend | Hardware | Platform | Codecs | Frame handed over as | State |
 | --- | --- | --- | --- | --- | --- |
 | `nvenc` | NVIDIA, Kepler and later | Linux | H.264, HEVC, AV1 | an OpenGL texture, in place | H.264 working; HEVC and AV1 written from the header and not yet run |
+| `nvenc` | NVIDIA, Kepler and later | Windows | H.264, HEVC, AV1 | a Direct3D 11 surface OpenGL draws into | H.264 working, decoded back through NVDEC; HEVC runs and has not been decoded; AV1 needs an RTX 40 series part |
 | `vaapi` | AMD, VCN | Linux | H.264, HEVC, AV1 | a DMA-BUF exported from a texture | working |
 | `vpl` | Intel, Gen9 and later | Windows | H.264, HEVC, AV1, VP9 | a Direct3D 11 surface OpenGL draws into | H.264 working; the others written from the headers and not yet run |
 | `vaapi` | Intel, Gen9 and later | Linux | H.264, HEVC, AV1 | the same DMA-BUF | the same code, untested |
-| `nvenc` | NVIDIA | Windows | | the same Direct3D 11 surface | [next](plans/WINDOWS-SUPPORT.md) |
 | `amf` | AMD | Windows | | the same Direct3D 11 surface | [planned](plans/WINDOWS-SUPPORT.md) |
 
 The codecs column is what each backend drives. Which of them a machine gets
@@ -69,9 +69,9 @@ only the codecs it has, and `open_encoder(width, height, codec='av1')` takes
 the first backend whose hardware encodes it.
 
 The frame reaches the encoder by whatever handle the platform has for one.
-NVIDIA takes an OpenGL texture by name, but only on Linux; Intel and AMD on
-Linux take a DMA-BUF exported from one; on Windows every vendor's encoder takes
-a Direct3D 11 texture, and `WGL_NV_DX_interop2` makes one allocation that is a
+NVIDIA takes an OpenGL texture by name on Linux; Intel and AMD on Linux take a
+DMA-BUF exported from one; on Windows every vendor's encoder takes a Direct3D 11
+texture, and `WGL_NV_DX_interop2` makes one allocation that is a
 Direct3D texture and an OpenGL texture at the same time. The muxer, the
 interface and the recorder are the same either way.
 

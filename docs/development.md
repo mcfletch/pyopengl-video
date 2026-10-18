@@ -317,6 +317,25 @@ recording and requires it to be silent; where it is not, the test skips. It is
 not a dependency and the suite does not need it. It earned its keep on the first
 run, on a container whose sample description did not match its samples.
 
+## Choosing the GPU on a hybrid-graphics Windows machine
+
+The Windows backends read a Direct3D texture that the OpenGL context draws into,
+so each runs only when the context is on its vendor's GPU: `nvenc` and
+`nvdec` on NVIDIA, `vpl` on Intel. On a laptop with both, Windows picks a GPU
+for each executable, and the suite's contexts get the integrated one unless that
+is changed. `tools/gpu_preference.py` in the workspace root sets it for the
+virtualenv's interpreters:
+
+```
+python tools/gpu_preference.py set nvidia    # nvenc, nvdec and their round trips run
+python tools/gpu_preference.py set intel     # vpl runs
+python tools/gpu_preference.py show --probe  # what is set, and what a context lands on
+python tools/gpu_preference.py reset         # back to Windows' choice
+```
+
+The tests for the other vendor's backend skip with the GPU they found. Run the
+suite once for each setting to cover every backend a machine has.
+
 ## Adding a codec to the VA-API backend
 
 libva is a slice-level interface. The driver reconstructs or codes blocks, and
