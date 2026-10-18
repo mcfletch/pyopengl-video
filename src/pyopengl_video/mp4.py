@@ -786,7 +786,8 @@ class Track:
             raise MP4Error('a track has no decoding time table (stts)')
         _, _, body = _full_box(table['stts'])
         entries = _table(body, 8)
-        times, durations = [], []
+        times: list[int] = []
+        durations: list[int] = []
         time = 0
         for index in range(entries):
             runs, delta = struct.unpack_from('>II', body, 4 + 8 * index)
