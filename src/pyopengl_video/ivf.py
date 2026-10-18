@@ -147,12 +147,15 @@ class IVFReader:
         keys: list[int] = []
         is_key = _KEYFRAME[self.codec]
         position = self._first
+        end = self._file.seek(0, 2)
         while True:
             self._file.seek(position)
             head = self._file.read(FRAME.size)
             if len(head) < FRAME.size:
                 break
             size, time = FRAME.unpack(head)
+            if position + FRAME.size + size > end:
+                break                                   # a frame cut short by the end of the file
             opening = self._file.read(min(size, 64))
             if len(opening) < min(size, 64):
                 break                                   # a frame cut short by the end of the file

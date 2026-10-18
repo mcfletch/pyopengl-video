@@ -723,3 +723,25 @@ class TestPictureBoundaries:
     def test_an_idr_after_a_non_idr_picture(self):
         make = self.sets()
         assert starts_new_picture(make(), make(idr=True, first_mb_in_slice=8))
+
+
+# --------------------------------------------- limits the specification sets
+
+
+class TestLimitsTheStreamCannotExceed:
+    """A claim past what H.264 allows is refused before anything is sized from it."""
+
+    def test_the_frame_number_width_stops_at_sixteen_bits(self):
+        parse_sps(sps_bytes(log2_max_frame_num_minus4=12))
+        with pytest.raises(StreamError, match='log2_max_frame_num_minus4'):
+            parse_sps(sps_bytes(log2_max_frame_num_minus4=13))
+
+    def test_a_default_reference_count_stops_at_thirty_two(self):
+        sps = parse_sps(sps_bytes())
+        writer = BitWriter()
+        write_pps_head(writer, refs=(31, 0))
+        assert parse_pps(writer.rbsp(), {0: sps}).num_ref_idx_l0_default_active_minus1 == 31
+        writer = BitWriter()
+        write_pps_head(writer, refs=(32, 0))
+        with pytest.raises(StreamError, match='num_ref_idx_active_minus1'):
+            parse_pps(writer.rbsp(), {0: sps})

@@ -452,6 +452,10 @@ def parse_sps(rbsp: bytes) -> SequenceParameterSet:
         if scaling_present:
             scaling_lists = _scaling_lists(reader, 8 if chroma_format_idc != 3 else 12)
     log2_max_frame_num_minus4 = reader.ue()
+    if log2_max_frame_num_minus4 > MAX_LOG2_FRAME_NUM_MINUS4:
+        raise StreamError(
+            f'log2_max_frame_num_minus4 {log2_max_frame_num_minus4} is past '
+            f'{MAX_LOG2_FRAME_NUM_MINUS4}')
     pic_order_cnt_type = reader.ue()
     log2_max_poc_lsb_minus4 = delta_always_zero = 0
     offset_for_non_ref_pic = offset_for_top_to_bottom_field = 0
@@ -556,8 +560,8 @@ def parse_pps(rbsp: bytes,
             width = _ceil_log2(groups_minus1 + 1)
             for _ in range(units):
                 reader.u(width)                 # slice_group_id
-    l0_default = reader.ue()
-    l1_default = reader.ue()
+    l0_default = _reference_count(reader.ue())
+    l1_default = _reference_count(reader.ue())
     weighted_pred = reader.flag()
     weighted_bipred = reader.u(2)
     qp_minus26 = reader.se()
@@ -781,11 +785,30 @@ def _weights(reader: BitReader, count: int, denom: int, chroma_denom: int,
     return tuple(luma), tuple(chromas), any_luma, any_chroma
 
 
+#: What H.264 allows (7.4.2.1.1, 7.4.2.2 and 7.4.3), so a stream that exceeds
+#: them is refused before a loop or a shift is sized from the claim.
+MAX_LOG2_FRAME_NUM_MINUS4 = 12
+MAX_REFERENCE_INDEX = 31
+MAX_WEIGHT_DENOMINATOR = 7
+
+
+def _reference_count(minus1: int) -> int:
+    """A ``num_ref_idx_*_active_minus1`` value, refused where it is past the limit."""
+    if minus1 > MAX_REFERENCE_INDEX:
+        raise StreamError(
+            f'num_ref_idx_active_minus1 {minus1} is past {MAX_REFERENCE_INDEX}')
+    return minus1
+
+
 def _pred_weight_table(reader: BitReader, sps: SequenceParameterSet,
                        l0: int, l1: int | None) -> PredWeightTable:
     denom = reader.ue()
     chroma = sps.chroma_array_type != 0
     chroma_denom = reader.ue() if chroma else 0
+    if max(denom, chroma_denom) > MAX_WEIGHT_DENOMINATOR:
+        raise StreamError(
+            f'a prediction weight denominator of {max(denom, chroma_denom)} is past '
+            f'{MAX_WEIGHT_DENOMINATOR}')
     luma_l0, chroma_l0, luma_flag_l0, chroma_flag_l0 = _weights(
         reader, l0, denom, chroma_denom, chroma)
     if l1 is None:
@@ -875,9 +898,9 @@ def parse_slice_header(unit: NalUnit,
     if slice_type in (SLICE_P, SLICE_SP, SLICE_B):
         override = reader.flag()
         if override:
-            l0 = reader.ue()
+            l0 = _reference_count(reader.ue())
             if slice_type == SLICE_B:
-                l1 = reader.ue()
+                l1 = _reference_count(reader.ue())
     modifications_l0: tuple[tuple[int, int], ...] = ()
     modifications_l1: tuple[tuple[int, int], ...] = ()
     if slice_type not in (SLICE_I, SLICE_SI):

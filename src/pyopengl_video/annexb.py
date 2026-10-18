@@ -103,9 +103,11 @@ def has_recovery_point(rbsp: bytes) -> bool:
     position = 0
     while position < len(rbsp) and rbsp[position] != 0x80:
         kind = size = 0
-        while rbsp[position] == 0xFF:
+        while position < len(rbsp) and rbsp[position] == 0xFF:
             kind += 255
             position += 1
+        if position >= len(rbsp):
+            return False
         kind += rbsp[position]
         position += 1
         while position < len(rbsp) and rbsp[position] == 0xFF:

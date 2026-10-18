@@ -643,6 +643,25 @@ def _children(payload: bytes) -> dict[str, bytes]:
     return found
 
 
+#: The most samples one track may declare. A table claims its length in a
+#: 32-bit field, and a constant-size ``stsz`` carries no entries to check it
+#: against; this is 77 hours at 60 frames a second.
+MAX_SAMPLES = 1 << 24
+
+
+def _table(body: bytes, width: int, offset: int = 4) -> int:
+    """The entry count at the head of a table, checked against the bytes that hold it.
+
+    A box claims its entry count in a 32-bit field; allocating from the claim
+    rather than from the box lets a file of a few hundred bytes ask for gigabytes.
+    """
+    count = struct.unpack_from('>I', body)[0]
+    if offset + count * width > len(body):
+        raise MP4Error(f'a table claims {count} entries of {width} bytes in a box of '
+                       f'{len(body)} bytes')
+    return count
+
+
 def _full_box(payload: bytes) -> tuple[int, int, bytes]:
     """A full box's version, flags and the rest of its payload."""
     word = struct.unpack_from('>I', payload)[0]
@@ -707,11 +726,17 @@ class Track:
             _, _, body = _full_box(table['stsz'])
             size, count = struct.unpack_from('>II', body)
             if size:
+                if count > MAX_SAMPLES:
+                    raise MP4Error(f'a track declares {count} samples')
                 return [size] * count
+            count = _table(body[4:], 4, 4)
             return list(struct.unpack_from(f'>{count}I', body, 8))
         if 'stz2' in table:
             _, _, body = _full_box(table['stz2'])
             field, count = body[3], struct.unpack_from('>I', body, 4)[0]
+            if count * field > 8 * (len(body) - 8):
+                raise MP4Error(f'stz2 claims {count} sizes of {field} bits in a box of '
+                               f'{len(body)} bytes')
             if field == 16:
                 return list(struct.unpack_from(f'>{count}H', body, 8))
             if field == 8:
@@ -725,18 +750,20 @@ class Track:
         """Each sample's file offset, from its chunk's offset and the sizes before it."""
         if 'stco' in table:
             _, _, body = _full_box(table['stco'])
-            chunks = list(struct.unpack_from(f'>{struct.unpack_from(">I", body)[0]}I', body, 4))
+            chunks = list(struct.unpack_from(f'>{_table(body, 4)}I', body, 4))
         elif 'co64' in table:
             _, _, body = _full_box(table['co64'])
-            chunks = list(struct.unpack_from(f'>{struct.unpack_from(">I", body)[0]}Q', body, 4))
+            chunks = list(struct.unpack_from(f'>{_table(body, 8)}Q', body, 4))
         else:
             raise MP4Error('a track has no chunk offset table (stco or co64)')
         if 'stsc' not in table:
             raise MP4Error('a track has no sample-to-chunk table (stsc)')
         _, _, body = _full_box(table['stsc'])
-        entries = struct.unpack_from('>I', body)[0]
+        entries = _table(body, 12)
         runs = [struct.unpack_from('>III', body, 4 + 12 * index)
                 for index in range(entries)]
+        if any(not 1 <= first <= len(chunks) for first, _per_chunk, _description in runs):
+            raise MP4Error('the sample-to-chunk table names a chunk the file does not have')
         offsets: list[int] = []
         for run, (first, per_chunk, _description) in enumerate(runs):
             last = runs[run + 1][0] if run + 1 < len(runs) else len(chunks) + 1
@@ -758,12 +785,12 @@ class Track:
         if 'stts' not in table:
             raise MP4Error('a track has no decoding time table (stts)')
         _, _, body = _full_box(table['stts'])
-        entries = struct.unpack_from('>I', body)[0]
+        entries = _table(body, 8)
         times, durations = [], []
         time = 0
         for index in range(entries):
             runs, delta = struct.unpack_from('>II', body, 4 + 8 * index)
-            for _ in range(runs):
+            for _ in range(min(runs, count - len(times))):
                 times.append(time)
                 durations.append(delta)
                 time += delta
@@ -777,13 +804,13 @@ class Track:
         if 'ctts' not in table:
             return [0] * count
         _, _, body = _full_box(table['ctts'])
-        entries = struct.unpack_from('>I', body)[0]
+        entries = _table(body, 8)
         offsets: list[int] = []
         for index in range(entries):
             # Signed in either version: version 0 files from some muxers carry
             # negative offsets, and no positive one reaches 2**31.
             runs, offset = struct.unpack_from('>Ii', body, 4 + 8 * index)
-            offsets.extend([offset] * runs)
+            offsets.extend([offset] * min(runs, count - len(offsets)))
         return (offsets + [0] * count)[:count]
 
     @staticmethod
@@ -792,7 +819,7 @@ class Track:
         if 'stss' not in table:
             return list(range(count))
         _, _, body = _full_box(table['stss'])
-        entries = struct.unpack_from('>I', body)[0]
+        entries = _table(body, 4)
         return [number - 1 for number in struct.unpack_from(f'>{entries}I', body, 4)]
 
     # ------------------------------------------------------------ samples
@@ -1058,6 +1085,10 @@ class MP4Reader:
 
     def read_at(self, offset: int, size: int) -> bytes:
         """`size` bytes from `offset` in the file."""
+        end = self._file.seek(0, 2)
+        if offset < 0 or size < 0 or offset + size > end:
+            raise MP4Error(f'{size} bytes at {offset} run past the end of a file of '
+                           f'{end} bytes')
         self._file.seek(offset)
         data = self._file.read(size)
         if len(data) != size:
@@ -1104,6 +1135,14 @@ class MP4Reader:
             position += size
 
     def _read_movie(self) -> None:
+        """Index the movie, turning any malformed box into an :class:`MP4Error`."""
+        try:
+            self._parse_movie()
+        except (struct.error, IndexError, StopIteration, UnicodeError,
+                OverflowError, MemoryError) as error:
+            raise MP4Error(f'the movie box is malformed: {error!r}') from error
+
+    def _parse_movie(self) -> None:
         for kind, offset, size in self._top_level():
             if kind == 'moov':
                 movie = self.read_at(offset, size)

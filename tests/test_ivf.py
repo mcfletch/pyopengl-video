@@ -131,6 +131,15 @@ class TestRefusals:
         with pytest.raises(IVFError, match='no frames'):
             IVFReader(io.BytesIO(head))
 
+    @pytest.mark.parametrize('codec', [b'AV01', b'VP90'])
+    def test_a_frame_claiming_more_than_the_file_holds_is_dropped_unread(self, codec):
+        """The size is a 32-bit field; a frame cut short is not allocated from it."""
+        head = struct.pack('<4sHH4sHHIII4x', b'DKIF', 0, 32, codec, 64, 48, 30, 1, 2)
+        whole = struct.pack('<IQ', 8, 0) + obu(2, b'') + bytes(6)
+        cut = struct.pack('<IQ', 0xFFFFFFF0, 1) + bytes(100)
+        reader = IVFReader(io.BytesIO(head + whole + cut))
+        assert len(reader) == 1
+
     def test_the_writer_refuses_a_codec_ivf_does_not_hold(self, tmp_path):
         with pytest.raises(IVFError, match='h264'):
             IVFWriter(tmp_path / 'x.ivf', codec='h264', width=64, height=48, timescale=30)

@@ -26,7 +26,8 @@ def write_default_scaling_list(writer):
 def sps_bytes(*, profile_idc=100, poc_type=0, scaling=None, vui=None,
               frame_mbs_only=1, crop=None, width_mbs=4, height_mbs=4,
               max_num_ref_frames=4, gaps=0, constraint_flags=0, level_idc=30,
-              chroma_format_idc=1, seq_parameter_set_id=0, bit_depth=0):
+              chroma_format_idc=1, seq_parameter_set_id=0, bit_depth=0,
+              log2_max_frame_num_minus4=0):
     """An SPS in the order of 7.3.2.1.1, with the variations under test."""
     writer = BitWriter()
     writer.u(profile_idc, 8)
@@ -48,7 +49,7 @@ def sps_bytes(*, profile_idc=100, poc_type=0, scaling=None, vui=None,
                     write_default_scaling_list(writer)
                 elif entry is not None:
                     write_scaling_list(writer, entry)
-    writer.ue(0)                                # log2_max_frame_num_minus4
+    writer.ue(log2_max_frame_num_minus4)
     writer.ue(poc_type)
     if poc_type == 0:
         writer.ue(2)                            # log2_max_pic_order_cnt_lsb_minus4

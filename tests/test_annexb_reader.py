@@ -132,3 +132,11 @@ def test_a_file_object_is_read_too():
 def test_a_file_with_no_pictures_is_refused():
     with pytest.raises(StreamError, match='no pictures'):
         AnnexBReader(io.BytesIO(b'\x00\x00\x00\x01\x09\xf0'))
+
+
+def test_an_sei_made_only_of_ff_bytes_is_not_a_recovery_point():
+    """The payload-type and size prefixes are runs of 0xFF; a run cannot walk off the end."""
+    from pyopengl_video.annexb import has_recovery_point  # noqa: PLC0415 - used by this case alone
+
+    assert has_recovery_point(b'\xff' * 8) is False
+    assert has_recovery_point(b'\x06\xff\xff') is False
