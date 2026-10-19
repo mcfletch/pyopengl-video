@@ -55,7 +55,7 @@ from pyopengl_video.vaapi import DECODER_BACKEND as VAAPI_DECODER_BACKEND
 from pyopengl_video.vpl import BACKEND as VPL_BACKEND
 from pyopengl_video.vpl import DECODER_BACKEND as VPL_DECODER_BACKEND
 
-__version__ = '1.0.0a2'
+__version__ = '1.0.0a3'
 
 __all__ = [
     'Backend', 'DecodedFrame', 'Decoder', 'DecoderError', 'DecoderUnavailable',
