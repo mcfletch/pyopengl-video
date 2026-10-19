@@ -198,7 +198,7 @@ def chain(*segments):
 def collect(made, allocated=64):
     encoder = object.__new__(VAAPIEncoder)
     inside(encoder)['_coded_size'] = allocated
-    return encoder._collect(ctypes.c_void_p(ctypes.addressof(made[0][0])))
+    return encoder._collect(ctypes.c_void_p(ctypes.addressof(made[0][0])))  # noqa: SLF001 - one step of the encode path, tested alone
 
 
 class TestCollecting:
@@ -232,7 +232,7 @@ class TestCollecting:
         encoder = object.__new__(VAAPIEncoder)
         inside(encoder)['_coded_size'] = 64
         with pytest.raises(EncoderError, match='no address'):
-            encoder._collect(ctypes.c_void_p())
+            encoder._collect(ctypes.c_void_p())  # noqa: SLF001 - one step of the encode path, tested alone
 
     @pytest.mark.parametrize(('status', 'words'), [
         (encoder_module.api.VA_CODED_BUF_STATUS_SLICE_OVERFLOW_MASK | 26, 'overflowed'),
