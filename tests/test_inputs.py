@@ -69,6 +69,11 @@ def test_the_default_bitrate_follows_the_frame_size_and_rate():
     assert large > small
 
 
+def test_the_default_bitrate_codes_foliage_at_1080p60_without_visible_blocking():
+    """Dense moving foliage blocks and smears below about 25 Mbit/s at 1080p60."""
+    assert 25_000_000 <= default_bitrate((1920, 1080), (60, 1)) <= 40_000_000
+
+
 class ForeignTextureEncoder(Encoder):
     """An encoder that takes a texture the caller made, as the Linux ones do."""
 

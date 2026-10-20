@@ -20,6 +20,7 @@ from OpenGL.GL import (
 )
 
 from pyopengl_video import EncoderError, encoders, open_encoder
+from pyopengl_video.encoder import default_bitrate
 from pyopengl_video.linux import dmabuf
 from pyopengl_video.mp4 import MP4Writer, split_annexb
 from pyopengl_video.vaapi import api, h264
@@ -499,7 +500,7 @@ class TestSettings:
     def test_the_default_bitrate_follows_the_frame_size_and_rate(self):
         made = VAAPIEncoder(*SIZE, fps=30)
         try:
-            assert made.bitrate == int(320 * 240 * 30 * 0.07)
+            assert made.bitrate == default_bitrate(SIZE, (30, 1))
         finally:
             made.close()
 

@@ -102,7 +102,7 @@ All are keyword arguments to `open_encoder`. These are taken by every backend:
 | --- | --- | --- |
 | `codec` | `'h264'` | The codec to produce: `'h264'`, `'hevc'`, `'av1'` or `'vp9'`, where the hardware encodes it. |
 | `fps` | `60` | Declared frame rate, a number or `(numerator, denominator)`. A float becomes the broadcast ratio for it, so `29.97` records as `30000/1001`. It sets what the stream says and what rate control believes about time; it paces nothing. |
-| `bitrate` | derived | Target bits per second. The default is the frame size times the rate times `DEFAULT_BITS_PER_PIXEL`, which puts 1080p60 near 8.7 Mbit/s. |
+| `bitrate` | derived | Target bits per second. The default is the frame size times the rate times `DEFAULT_BITS_PER_PIXEL`, which puts 1080p60 near 31 Mbit/s. A scene of flat colour and few edges needs less; `bitrate` sets it. |
 | `gop` | two seconds | Frames between key frames. Every group opens with an IDR picture or an AV1 or VP9 key frame, which is where a player can seek to. `gop=1` makes every frame a key frame. |
 | `bframes` | `0` | B-pictures between reference pictures. Better compression, at the cost of reordering — see below. |
 | `rate_control` | per backend | How the bits are spent; the names differ, below. |
@@ -381,9 +381,25 @@ with MP4Writer('out.mp4', encoder) as movie:
 ```
 
 Compressed data goes into the file as it arrives, so a long recording costs no
-more memory than a short one; the sample tables are written when the movie
-closes. That means the file is not ready to stream over a network without a
-further pass — the trade for not buffering the video.
+more memory than a short one. The file is not ready to stream over a network
+without a further pass, since the sample tables come after the media.
+
+### Checkpoints
+
+A recording that dies before `close()` has media and no sample tables, which no
+player opens. So the writer takes **checkpoints**: it finishes the `mdat` box
+being written, follows it with a complete `moov` box, and carries on in a new
+`mdat`. The next checkpoint turns that `moov` into a `free` box and writes its
+own. A file cut off at any moment plays up to its last checkpoint, with the
+samples after it in an `mdat` that runs to the end of the file.
+
+A finished file is `ftyp`, the segments with their retired boxes, and one
+`moov` last. A recording shorter than the checkpoint size is `ftyp`, `mdat` and
+`moov`. `checkpoint=` is the least number of media bytes between checkpoints
+(4 MiB by default); a checkpoint also waits until the media written since the
+last is 64 times the size of the movie box it writes, so the retired boxes stay
+under about 2% of the file however long it runs. `checkpoint=None` writes the
+tables at the end only, in one `mdat`.
 
 The width and the height are each from 1 to 65535 and the timescale from 1 to
 2^32 - 1; `MP4Writer` and `IVFWriter` raise `MP4Error` and `IVFError` for

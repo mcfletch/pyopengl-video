@@ -503,6 +503,19 @@ def _header_times(duration: int, *between: int) -> tuple[int, bytes]:
     return 0, struct.pack(f'>II{len(between)}II', 0, 0, *between, duration)
 
 
+#: The least media a segment holds before the writer takes a checkpoint, in bytes.
+CHECKPOINT_BYTES = 4 << 20
+
+#: A checkpoint is taken when the media since the last one is this many times the
+#: size of the movie box it writes, so the retired boxes stay a small share of the
+#: file however long the recording runs.
+MOVIE_SHARE = 64
+
+#: The most media one segment holds. A segment's ``mdat`` states its length in
+#: 32 bits.
+LARGEST_SEGMENT = 1 << 30
+
+
 class MP4Writer:
     """Collects packets from an encoder into a playable MP4 file.
 
@@ -524,6 +537,19 @@ class MP4Writer:
 
     description -- the track's :class:`SampleDescription`, which holds the
         configuration the file will state
+    checkpoint -- the least media, in bytes, to write between checkpoints, or
+        None for a file with its tables at the end only
+
+    A checkpoint finishes the ``mdat`` box being written and follows it with a
+    complete ``moov`` box, and the next one turns that box into a ``free`` box
+    and writes its own. A process that dies mid-recording leaves a file that
+    plays up to its last checkpoint, with the samples after it in an ``mdat``
+    that runs to the end of the file. The finished file is ``ftyp``, the
+    segments and their retired boxes, and one ``moov`` last, which every player
+    reads. A recording shorter than `checkpoint` is ``ftyp``, ``mdat`` and
+    ``moov``. Checkpoints are spaced so that the retired boxes are a small share
+    of the file: at least `checkpoint` bytes apart, and further apart as the
+    sample tables grow.
 
     Raises :class:`MP4Error` for a size or a timescale outside those ranges,
     before the file is created.
@@ -541,7 +567,8 @@ class MP4Writer:
                  width: int | None = None, height: int | None = None,
                  timescale: int | None = None, codec: str | None = None,
                  parameter_sets: tuple[bytes, bytes] | None = None,
-                 headers: bytes | None = None):
+                 headers: bytes | None = None,
+                 checkpoint: int | None = CHECKPOINT_BYTES):
         if encoder is not None:
             width, height = encoder.size
             timescale = encoder.timescale
@@ -556,6 +583,9 @@ class MP4Writer:
                              f'not {codec!r}')
         if parameter_sets is not None:
             headers = b''.join(START_CODE + unit for unit in parameter_sets if unit)
+        if checkpoint is not None and checkpoint < 1:
+            raise ValueError(f'checkpoint is a number of bytes from 1, not {checkpoint!r}; '
+                             'None writes the tables at the end only')
         self.path = Path(path)
         # The sample entry states each in 16 bits.
         self.size = bounds.frame_size(width, height, error=MP4Error,
@@ -571,17 +601,22 @@ class MP4Writer:
         self._times = SampleTimes()
         self._sync: list[int] = []
         self._closed = False
+        self._checkpoint = checkpoint
+        #: ``(offset, samples)`` of each finished segment of media
+        self._chunks: list[tuple[int, int]] = []
+        #: where the segment being written starts, or None between segments
+        self._segment: int | None = None
+        self._segment_data = 0
+        self._segment_samples = 0
+        self._segment_bytes = 0
+        #: where the last checkpoint's movie box starts
+        self._movie_at: int | None = None
 
         self._file = self.path.open('wb')  # noqa: OGC121 a recording written as it is captured, the way a camera writes one
         try:
             self._file.write(box(
                 'ftyp', b'isom', struct.pack('>I', 512),
                 b'isom', b'iso2', self.description.code.encode('ascii'), b'mp41'))
-            # A 64-bit `mdat`, so a long recording is not cut short at four
-            # gigabytes. The length is patched in once it is known.
-            self._mdat_position = self._file.tell()
-            self._file.write(struct.pack('>I4sQ', 1, b'mdat', 0))
-            self._data_position = self._file.tell()
         except BaseException:
             self._file.close()
             raise
@@ -620,10 +655,80 @@ class MP4Writer:
                 f'a sample of {len(sample)} bytes after {len(self._sizes)} others: '
                 f'the sample size table counts each in 32 bits')
         self._times.add(packet.timestamp, packet.duration)
+        if self._segment is None:
+            self._open_segment()
         self._file.write(sample)
         if packet.keyframe:
             self._sync.append(len(self._sizes) + 1)      # sample numbers are one-based
         self._sizes.append(len(sample))
+        self._segment_samples += 1
+        self._segment_bytes += len(sample)
+        if self._checkpoint is not None and self._checkpoint_due():
+            self._take_checkpoint()
+
+    def _open_segment(self) -> None:
+        """Start an ``mdat`` box whose length is filled in when the segment ends."""
+        self._segment = self._file.tell()
+        if self._checkpoint is None:
+            # A 64-bit box, so a long recording is not cut short at four gigabytes.
+            self._file.write(struct.pack('>I4sQ', 1, b'mdat', 0))
+        else:
+            # A length of 0 is a box that runs to the end of the file, which is
+            # what the segment is until it is finished.
+            self._file.write(struct.pack('>I4s', 0, b'mdat'))
+        self._segment_data = self._file.tell()
+        self._segment_samples = 0
+        self._segment_bytes = 0
+
+    def _close_segment(self) -> None:
+        """State the length of the segment being written, and keep it as a chunk."""
+        assert self._segment is not None
+        end = self._file.tell()
+        length = end - self._segment
+        if self._checkpoint is None:
+            self._file.seek(self._segment + 8)
+            self._file.write(struct.pack('>Q', length))
+        else:
+            if length > bounds.FIELD_32:
+                raise MP4Error(f'{length} bytes of samples came with no configuration '
+                               'for a decoder, so they could not be indexed')
+            self._file.seek(self._segment)
+            self._file.write(struct.pack('>I', length))
+        self._file.seek(end)
+        self._chunks.append((self._segment_data, self._segment_samples))
+        self._segment = None
+
+    def _checkpoint_due(self) -> bool:
+        """Whether the media since the last checkpoint is worth another movie box."""
+        assert self._checkpoint is not None
+        if self._segment_bytes >= LARGEST_SEGMENT:
+            return True
+        movie_estimate = 4 * len(self._sizes) + 1024
+        return self._segment_bytes >= max(self._checkpoint, MOVIE_SHARE * movie_estimate)
+
+    def _take_checkpoint(self) -> None:
+        """Finish the segment and follow it with the movie as it stands.
+
+        Not taken while the stream has stated no configuration, since a movie
+        box cannot be made without one.
+        """
+        if self.description.missing():
+            return
+        self._close_segment()
+        self._write_movie()
+
+    def _write_movie(self) -> None:
+        """Write the movie box, and turn the one before it into a ``free`` box."""
+        moov = self._moov()
+        position = self._file.tell()
+        self._file.write(moov)
+        self._file.flush()
+        if self._movie_at is not None:
+            self._file.seek(self._movie_at + 4)
+            self._file.write(b'free')
+            self._file.seek(position + len(moov))
+            self._file.flush()
+        self._movie_at = position
 
     def _check_description(self) -> None:
         """Build the sample entry whenever the configuration has changed.
@@ -659,12 +764,9 @@ class MP4Writer:
                 raise MP4Error(
                     f'{self.path} has no {missing}, so it has no index: give '
                     'headers, or let the encoder repeat them in the stream')
-            moov = self._moov()
-            end = self._file.tell()
-            self._file.seek(self._mdat_position + 8)
-            self._file.write(struct.pack('>Q', end - self._mdat_position))
-            self._file.seek(end)
-            self._file.write(moov)
+            if self._segment is not None:
+                self._close_segment()
+                self._write_movie()
         finally:
             self._file.close()
 
@@ -769,16 +871,20 @@ class MP4Writer:
 
     def _stsc(self) -> bytes:
         # Every sample sits in one chunk, so the map has a single entry.
-        return full_box('stsc', 0, 0, struct.pack('>I', 1),
-                        struct.pack('>III', 1, len(self._sizes), 1))
+        entries: list[tuple[int, int]] = []
+        for number, (_, count) in enumerate(self._chunks, 1):
+            if not entries or entries[-1][1] != count:
+                entries.append((number, count))
+        return full_box('stsc', 0, 0, struct.pack('>I', len(entries)),
+                        *(struct.pack('>III', first, count, 1) for first, count in entries))
 
     def _stsz(self) -> bytes:
         return full_box('stsz', 0, 0, struct.pack('>II', 0, len(self._sizes)),
                         *(struct.pack('>I', size) for size in self._sizes))
 
     def _co64(self) -> bytes:
-        return full_box('co64', 0, 0, struct.pack('>I', 1),
-                        struct.pack('>Q', self._data_position))
+        return full_box('co64', 0, 0, struct.pack('>I', len(self._chunks)),
+                        *(struct.pack('>Q', offset) for offset, _ in self._chunks))
 
 
 # =================================================================== reading

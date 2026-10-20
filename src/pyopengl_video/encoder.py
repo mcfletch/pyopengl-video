@@ -42,8 +42,9 @@ __all__ = ['BACKENDS', 'Backend', 'Encoder', 'EncoderError', 'EncoderUnavailable
 log = logging.getLogger(__name__)
 
 #: Bits per pixel per second, used when a caller names no bitrate. 1080p60 lands
-#: near 8.7 Mbit/s, which is a reasonable quality for screen-captured 3D.
-DEFAULT_BITS_PER_PIXEL = 0.07
+#: near 31 Mbit/s. Dense foliage at 60 frames a second changes every pixel
+#: between frames, and at a quarter of this rate it blocks and smears.
+DEFAULT_BITS_PER_PIXEL = 0.25
 
 
 def frame_rate_ratio(fps: float | tuple[int, int]) -> tuple[int, int]:
