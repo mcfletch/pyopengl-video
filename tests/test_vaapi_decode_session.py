@@ -468,7 +468,7 @@ class Recording:
 class TestClosingTheDecoder:
     def decoder(self, **parts):
         made = object.__new__(decoder_module.VAAPIDecoder)
-        made._closed = False  # noqa: SLF001 - the state a decoder built by __init__ starts in
+        made._closed = False
         for name, value in parts.items():
             setattr(made, name, value)
         return made
