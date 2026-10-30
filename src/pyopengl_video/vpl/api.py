@@ -207,11 +207,13 @@ class VPLError(EncoderError):
 
 # -------------------------------------------------------------- structures
 # Each carries the packing its MFX_PACK_BEGIN_* directive gives it in the
-# header. The value is load-bearing: see this module's docstring.
+# header. The value is load-bearing: see this module's docstring. `_layout_`
+# names the layout `_pack_` has always implied; Python 3.14 asks for it.
 
 
 class mfxVersion(Structure):
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [('Minor', u16), ('Major', u16)]
 
     def __str__(self) -> str:
@@ -220,17 +222,20 @@ class mfxVersion(Structure):
 
 class _Geometry(Structure):
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [('Width', u16), ('Height', u16), ('CropX', u16), ('CropY', u16),
                 ('CropW', u16), ('CropH', u16)]
 
 
 class _BufferGeometry(Structure):
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [('BufferSize', u64), ('reserved5', u32)]
 
 
 class _GeometryUnion(Union):
     _pack_ = 4
+    _layout_ = 'ms'
     _anonymous_ = ('frame',)
     _fields_ = [('frame', _Geometry), ('buffer', _BufferGeometry)]
 
@@ -239,6 +244,7 @@ class mfxFrameInfo(Structure):
     """Format and geometry of a surface. pack(4), and 68 bytes because of it."""
 
     _pack_ = 4
+    _layout_ = 'ms'
     _anonymous_ = ('geometry',)
     _fields_ = [
         ('reserved', u32 * 4), ('ChannelId', u16), ('BitDepthLuma', u16),
@@ -263,6 +269,7 @@ class mfxInfoMFX(Structure):
     """
 
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [
         ('reserved', u32 * 7), ('LowPower', u16), ('BRCParamMultiplier', u16),
         ('FrameInfo', mfxFrameInfo),
@@ -288,11 +295,13 @@ class mfxInfoMFX(Structure):
 
 class mfxInfoVPP(Structure):
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [('reserved', u32 * 8), ('In', mfxFrameInfo), ('Out', mfxFrameInfo)]
 
 
 class _CodecUnion(Union):
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [('mfx', mfxInfoMFX), ('vpp', mfxInfoVPP)]
 
 
@@ -300,6 +309,7 @@ class mfxVideoParam(Structure):
     """What an encoder is configured with. pack(8)."""
 
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [
         ('AllocId', u32), ('reserved', u32 * 2), ('reserved3', u16),
         ('AsyncDepth', u16),
@@ -321,6 +331,7 @@ class mfxVideoParam(Structure):
 
 class _ExtParamUnion(Union):
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [('ExtParam', c_void_p), ('reserved2', u64)]
 
 
@@ -332,6 +343,7 @@ class mfxFrameData(Structure):
     """
 
     _pack_ = 8
+    _layout_ = 'ms'
     _anonymous_ = ('external',)
     _fields_ = [
         ('external', _ExtParamUnion), ('NumExtParam', u16), ('reserved', u16 * 9),
@@ -344,11 +356,13 @@ class mfxFrameData(Structure):
 
 class mfxStructVersion(Structure):
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [('Minor', u8), ('Major', u8)]
 
 
 class _SurfaceInterfaceUnion(Union):
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [('FrameInterface', c_void_p), ('reserved', u32 * 2)]
 
 
@@ -356,6 +370,7 @@ class mfxFrameSurface1(Structure):
     """One picture handed to the encoder. pack(8)."""
 
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [
         ('interface', _SurfaceInterfaceUnion), ('Version', mfxStructVersion),
         ('reserved1', u16 * 3), ('Info', mfxFrameInfo), ('Data', mfxFrameData),
@@ -364,12 +379,14 @@ class mfxFrameSurface1(Structure):
 
 class _BitstreamHeader(Structure):
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [('EncryptedData', c_void_p), ('ExtParam', c_void_p),
                 ('NumExtParam', u16), ('reserved1', u16), ('CodecId', u32)]
 
 
 class _BitstreamHeaderUnion(Union):
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [('header', _BitstreamHeader), ('reserved', u32 * 6)]
 
 
@@ -382,6 +399,7 @@ class mfxBitstream(Structure):
     """
 
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [
         ('header', _BitstreamHeaderUnion), ('DecodeTimeStamp', i64),
         ('TimeStamp', u64), ('Data', POINTER(u8)), ('DataOffset', u32),
@@ -392,6 +410,7 @@ class mfxBitstream(Structure):
 
 class mfxExtBuffer(Structure):
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [('BufferId', u32), ('BufferSz', u32)]
 
 
@@ -399,6 +418,7 @@ class mfxExtCodingOptionSPSPPS(Structure):
     """Where the encoder writes its parameter sets. pack(8)."""
 
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [
         ('Header', mfxExtBuffer), ('SPSBuffer', POINTER(u8)), ('PPSBuffer', POINTER(u8)),
         ('SPSBufSize', u16), ('PPSBufSize', u16), ('SPSId', u16), ('PPSId', u16),
@@ -409,6 +429,7 @@ class mfxExtCodingOptionVPS(Structure):
     """Where the encoder writes HEVC's video parameter set. pack(8)."""
 
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [
         ('Header', mfxExtBuffer), ('VPSBuffer', POINTER(u8)), ('VPSBufSize', u16),
         ('VPSId', u16), ('reserved', u16 * 6),
@@ -423,6 +444,7 @@ class mfxExtVP9Param(Structure):
     """
 
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [
         ('Header', mfxExtBuffer), ('FrameWidth', u16), ('FrameHeight', u16),
         ('WriteIVFHeaders', u16), ('reserved1', c_int16 * 6),
@@ -436,6 +458,7 @@ class mfxExtAV1BitstreamParam(Structure):
     """Whether an AV1 stream is wrapped in IVF headers. pack(4)."""
 
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [('Header', mfxExtBuffer), ('WriteIVFHeaders', u16), ('reserved', u16 * 31)]
 
 
@@ -448,6 +471,7 @@ class mfxExtVideoSignalInfo(Structure):
     """
 
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [
         ('Header', mfxExtBuffer), ('VideoFormat', u16), ('VideoFullRange', u16),
         ('ColourDescriptionPresent', u16), ('ColourPrimaries', u16),
@@ -463,6 +487,7 @@ class mfxExtVPPVideoSignalInfo(Structure):
     """
 
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [
         ('Header', mfxExtBuffer), ('reserved1', u16 * 4),
         ('InTransferMatrix', u16), ('InNominalRange', u16), ('reserved2', u16 * 6),
@@ -474,6 +499,7 @@ class mfxEncodeCtrl(Structure):
     """Per-picture instructions, such as demanding a key frame. pack(8)."""
 
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [
         ('Header', mfxExtBuffer), ('reserved', u32 * 4), ('reserved1', u16),
         ('MfxNalUnitType', u16), ('SkipFrame', u16), ('QP', u16), ('FrameType', u16),
@@ -486,6 +512,7 @@ class mfxFrameAllocRequest(Structure):
     """What the runtime is asking the allocator for. pack(4)."""
 
     _pack_ = 4
+    _layout_ = 'ms'
     _fields_ = [
         ('AllocId', u32), ('reserved3', u32 * 3), ('Info', mfxFrameInfo),
         ('Type', u16), ('NumFrameMin', u16), ('NumFrameSuggested', u16),
@@ -497,6 +524,7 @@ class mfxFrameAllocResponse(Structure):
     """What the allocator gave it. pack(8)."""
 
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [
         ('AllocId', u32), ('reserved', u32 * 3), ('mids', POINTER(c_void_p)),
         ('NumFrameActual', u16), ('reserved2', u16),
@@ -515,6 +543,7 @@ class mfxFrameAllocator(Structure):
     """The five callbacks the runtime allocates surfaces through. pack(8)."""
 
     _pack_ = 8
+    _layout_ = 'ms'
     _fields_ = [
         ('reserved', u32 * 4), ('pthis', c_void_p), ('Alloc', ALLOC_FUNC),
         ('Lock', LOCK_FUNC), ('Unlock', LOCK_FUNC), ('GetHDL', GETHDL_FUNC),
