@@ -11,11 +11,16 @@ The sizes and offsets are those of the API as published in the oneVPL headers
 them from the headers where a C compiler is available.
 """
 import ctypes
+import importlib
 import json
+import pkgutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+import pyopengl_video
 from pyopengl_video.vpl import api
 
 #: Written by ``tools/record_vpl_abi.py`` where a C compiler is available. When
@@ -108,3 +113,31 @@ def test_check_passes_a_warning_through_but_raises_on_a_failure():
 
 def test_the_library_is_named_for_the_platform():
     assert api.library_name().startswith('libvpl')
+
+
+def _packed_structures():
+    """Every ctypes structure or union a module of the package declares with ``_pack_``"""
+    found = []
+    for module_info in pkgutil.walk_packages(pyopengl_video.__path__, 'pyopengl_video.'):
+        try:
+            module = importlib.import_module(module_info.name)
+        except (ImportError, OSError):
+            continue      # a platform's binding where that platform's library is not
+        for value in vars(module).values():
+            if (isinstance(value, type) and issubclass(value, (ctypes.Structure, ctypes.Union))
+                    and value.__module__ == module.__name__ and '_pack_' in value.__dict__):
+                found.append(value)
+    return found
+
+
+def test_every_packed_structure_names_its_layout():
+    """Python 3.14 warns of a ``_pack_`` with no ``_layout_`` (DeprecationWarning)."""
+    packed = _packed_structures()
+    assert len(packed) >= 28
+    assert [cls.__qualname__ for cls in packed if '_layout_' not in cls.__dict__] == []
+
+
+def test_the_vpl_binding_imports_without_a_deprecation_warning():
+    done = subprocess.run([sys.executable, '-W', 'error::DeprecationWarning', '-c',
+                           'import pyopengl_video.vpl.api'], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
