@@ -66,8 +66,8 @@ def probe() -> bool:
 
     NVIDIA supports the encoder's OpenGL device type on Linux alone. On Windows
     the frame reaches the encoder through Direct3D, which needs the OpenGL
-    context to be on an NVIDIA GPU; on a hybrid-graphics laptop that is the
-    program's graphics preference in Windows' display settings.
+    context to be on an NVIDIA GPU; on a hybrid-graphics laptop the GPU is
+    chosen by the program's graphics preference in Windows' display settings.
     """
     if not (OPENGL_DEVICE_PLATFORM or DIRECTX_PLATFORM):
         log.debug('NVENC is reached from OpenGL on Linux and Windows, not on %s',

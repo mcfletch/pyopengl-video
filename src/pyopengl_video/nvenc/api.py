@@ -1,7 +1,7 @@
 """ctypes declarations for NvEncodeAPI, NVIDIA's video encoder interface.
 
 ``libnvidia-encode.so.1`` exports two entry points. ``NvEncodeAPIGetMaxSupportedVersion``
-says how new an interface the installed driver understands, and
+gives the newest interface version the installed driver supports, and
 ``NvEncodeAPICreateInstance`` fills in a table of function pointers; every other
 call goes through that table. :class:`NvEncodeAPI` wraps both, and binds the
 handful of calls this package makes.
@@ -857,7 +857,7 @@ class NvEncodeAPI:
         return cls._instance
 
     def _max_supported_version(self) -> tuple[int, int]:
-        """The newest interface version the installed driver understands."""
+        """The newest interface version the installed driver supports."""
         self.library.NvEncodeAPIGetMaxSupportedVersion.argtypes = [POINTER(c_uint32)]
         self.library.NvEncodeAPIGetMaxSupportedVersion.restype = c_int
         packed = c_uint32()

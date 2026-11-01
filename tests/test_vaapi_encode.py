@@ -729,7 +729,7 @@ class TestADurationNobodyGaveIsOneFrame:
 
     def test_and_the_movie_that_makes_has_a_length(self, encoder, handles,
                                                    tmp_path):
-        """The whole point, and what a player actually refuses."""
+        """A movie with no length is one a player refuses."""
         path = tmp_path / 'timed.mp4'
         with MP4Writer(str(path), encoder=encoder) as writer:
             for index in range(FRAMES):

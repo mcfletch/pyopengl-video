@@ -189,7 +189,7 @@ class ImportedImage:
         return f'<{type(self).__name__} texture {self.texture} of {self.owner!r}>'
 
 
-#: Why nothing here can run without an EGL library, said once.
+#: The reason given wherever the absence of an EGL library stops an export.
 NO_EGL_LIBRARY = (
     'PyOpenGL has no EGL library to bind to on this machine, so a texture '
     'cannot be exported as a DMA-BUF; EGL ships with the graphics driver, and '

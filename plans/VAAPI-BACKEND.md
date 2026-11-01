@@ -274,7 +274,7 @@ writes the bitstream headers itself:
   field one bit off, which no player will report clearly.
 - **Check colour end to end.** Encode known colours, decode, and compare against
   the BT.709 limited-range values. The VPP conversion and the VUI declaration
-  are set in different places and nothing but this notices when they part.
+  are set in different places and nothing but this test fails when they part.
 - **Check both drivers.** Intel `iHD` and Mesa `radeonsi` are different
   implementations of the same interface, and the packed-header and DPB
   requirements are exactly where they differ. A backend tested on one is a

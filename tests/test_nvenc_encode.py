@@ -353,9 +353,8 @@ class TestMuxing:
     """The recording as a file, checked by something outside this package.
 
     A stream can be well formed, correctly timed, every box where it belongs,
-    and still describe itself in a way that sets a decoder up wrongly. Nothing
-    inside the encoder or the muxer notices that; decoding the result is what
-    does.
+    and still describe itself in a way that sets a decoder up wrongly. Neither
+    the encoder nor the muxer detects that; decoding the result does.
     """
 
     def test_a_muxed_recording_decodes_without_complaint(self, encoder, handles,

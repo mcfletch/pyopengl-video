@@ -393,8 +393,8 @@ class _BitstreamHeaderUnion(Union):
 class mfxBitstream(Structure):
     """The compressed output buffer. pack(8).
 
-    ``Data`` is the caller's; ``DataOffset`` and ``DataLength`` say which part of
-    it the encoder wrote. Time stamps are in 90 kHz units, which is this
+    The caller allocates ``Data``; ``DataOffset`` and ``DataLength`` say which
+    part of it the encoder wrote. Time stamps are in 90 kHz units, which is this
     package's timescale.
     """
 
